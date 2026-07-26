@@ -147,6 +147,36 @@ class LinePlatformService:
         return response.content, content_type
 
 
+    async def get_source_display_name(self, source: dict[str, Any]) -> str | None:
+        source_type = str(source.get("type") or "").strip()
+        user_id = str(source.get("userId") or "").strip()
+        if not source_type or not user_id:
+            return None
+
+        if source_type == "user":
+            endpoint = f"{self.api_base}/profile/{user_id}"
+        elif source_type == "group":
+            group_id = str(source.get("groupId") or "").strip()
+            if not group_id:
+                return None
+            endpoint = f"{self.api_base}/group/{group_id}/member/{user_id}"
+        elif source_type == "room":
+            room_id = str(source.get("roomId") or "").strip()
+            if not room_id:
+                return None
+            endpoint = f"{self.api_base}/room/{room_id}/member/{user_id}"
+        else:
+            return None
+
+        try:
+            profile = await self._request("GET", endpoint, headers=self._headers(None))
+        except LinePlatformError:
+            return None
+
+        display_name = str(profile.get("displayName") or "").strip()
+        return display_name or None
+
+
 line_platform_service = LinePlatformService()
 
 

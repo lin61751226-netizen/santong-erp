@@ -163,6 +163,15 @@ def _binding_base_url(postback_data: str | None) -> str:
     return parsed.get("base", [settings.public_base_url])[0]
 
 
+def _fallback_uploader_name(line_user_id: str | None, display_name: str | None) -> str:
+    if display_name:
+        cleaned = display_name.strip()
+        if cleaned:
+            return cleaned
+    suffix = (line_user_id or "unknown")[-6:]
+    return f"LINE-{suffix}"
+
+
 async def _reply_account_link_prompt(session: Session, reply_token: str, line_user_id: str, base_url: str) -> None:
     try:
         link_data = await start_account_link_session(session, line_user_id, base_url)
@@ -280,6 +289,42 @@ async def _handle_image_message(
     employee: Employee | None,
 ) -> None:
     if not reply_token:
+        return
+    message_id = str(message.get("id", "")).strip()
+    if not message_id:
+        await line_service.reply_text(reply_token, "目前無法取得這張照片的訊息編號，請再重新上傳一次。")
+        return
+
+    if not employee:
+        display_name = await line_platform_service.get_source_display_name(event.get("source", {}))
+        uploader_name = _fallback_uploader_name(line_user_id, display_name)
+
+        try:
+            upload = await google_drive_worklog_service.upload_line_photo(
+                message_id=message_id,
+                employee_name=uploader_name,
+                happened_at=_event_datetime(event),
+            )
+        except (GoogleDriveWorklogError, LinePlatformError) as exc:
+            await line_service.reply_text(
+                reply_token,
+                f"照片暫存到 Google 雲端硬碟失敗，請稍後再試。原因：{exc}",
+            )
+            return
+
+        await line_service.reply_text(
+            reply_token,
+            "\n".join(
+                [
+                    "工作照片已先暫存到 Google 雲端硬碟。",
+                    f"上傳者：{uploader_name}",
+                    f"日期資料夾：{upload.date_folder_name}",
+                    f"檔名：{upload.file_name}",
+                    f"連結：{upload.file_url}",
+                    "目前此 LINE 帳號尚未綁定員工身分，照片已先暫存，之後再從 Rich Menu 完成綁定即可。",
+                ]
+            ),
+        )
         return
     if not employee:
         await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先從 Rich Menu 開始綁定。")
