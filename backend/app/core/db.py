@@ -47,3 +47,15 @@ def _apply_lightweight_migrations() -> None:
             with engine.begin() as connection:
                 for statement in statements:
                     connection.execute(text(statement))
+
+    if "employee" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("employee")}
+        statements = []
+        if "email" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN email VARCHAR")
+        if "assigned_sites" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN assigned_sites JSON")
+        if statements:
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.execute(text(statement))

@@ -103,6 +103,7 @@ class Employee(SQLModel, table=True):
     employee_code: str = Field(index=True, unique=True)
     name: str
     phone: Optional[str] = None
+    email: Optional[str] = None
     line_user_id: Optional[str] = Field(default=None, index=True, unique=True)
     bind_token: str = Field(index=True, unique=True)
     role: Role = Field(default=Role.employee)
@@ -117,6 +118,7 @@ class Employee(SQLModel, table=True):
     licenses: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     training_records: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     machine_skills: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    assigned_sites: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     status: EmployeeStatus = Field(default=EmployeeStatus.active)
 
 

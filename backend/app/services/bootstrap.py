@@ -5,18 +5,34 @@ from sqlmodel import Session, select
 from app.models import Employee, EmployeeStatus, Role, Worksite
 
 
-WORKSITE_NAMES = [
-    "45",
-    "53",
-    "56",
-    "善捷47",
-    "金駿76",
-    "桃園28",
-    "桃園29",
-    "新竹寶山1",
-    "新竹寶山2",
-    "新竹寶山3",
+WORKSITE_DEFINITIONS = [
+    {"code": "45", "name": "45"},
+    {"code": "53", "name": "齊裕53"},
+    {"code": "56", "name": "56"},
+    {"code": "善捷47", "name": "善捷47"},
+    {"code": "金駿76", "name": "金駿76"},
+    {"code": "桃園28", "name": "桃園28"},
+    {"code": "桃園29", "name": "桃園29"},
+    {"code": "新竹寶山1", "name": "新竹寶山1"},
+    {"code": "新竹寶山2", "name": "新竹寶山2"},
+    {"code": "新竹寶山3", "name": "新竹寶山3"},
 ]
+
+
+SITE_ALIASES = {
+    "45": "45",
+    "53": "齊裕53",
+    "56": "56",
+    "47": "善捷47",
+    "善捷47": "善捷47",
+    "金駿76": "金駿76",
+    "桃園28": "桃園28",
+    "桃園29": "桃園29",
+    "齊裕53": "齊裕53",
+    "新竹寶山1": "新竹寶山1",
+    "新竹寶山2": "新竹寶山2",
+    "新竹寶山3": "新竹寶山3",
+}
 
 
 EMPLOYEE_ROSTER = [
@@ -28,6 +44,10 @@ EMPLOYEE_ROSTER = [
         "title": "老闆",
         "department": "經營管理",
         "salary_scheme": "月薪",
+        "phone": "0978909078",
+        "email": "a0900262580@gmail.com",
+        "assigned_sites": ["新竹寶山1", "新竹寶山2", "新竹寶山3"],
+        "machine_skills": [],
         "status": EmployeeStatus.active,
     },
     {
@@ -38,26 +58,38 @@ EMPLOYEE_ROSTER = [
         "title": "系統管理者",
         "department": "系統管理",
         "salary_scheme": "月薪",
+        "phone": "0937069276",
+        "email": "lin61751226@gmail.com",
+        "assigned_sites": [],
+        "machine_skills": [],
         "status": EmployeeStatus.active,
     },
     {
         "employee_code": "BOT001",
-        "name": "三通工程行,line機器人",
+        "name": "三通工程行line機器人",
         "bind_token": "ST-1003",
         "role": Role.external,
-        "title": "LINE機器人",
+        "title": "系統管理者",
         "department": "系統管理",
         "salary_scheme": "系統帳號",
+        "phone": None,
+        "email": None,
+        "assigned_sites": [],
+        "machine_skills": [],
         "status": EmployeeStatus.active,
     },
     {
         "employee_code": "ADMIN002",
-        "name": "秀蓉ε٩(๑> ₃ <)7з",
+        "name": "秀蓉",
         "bind_token": "ST-1004",
         "role": Role.admin,
         "title": "行政人員",
         "department": "行政",
         "salary_scheme": "月薪",
+        "phone": "0921375095",
+        "email": "linxiaoniu4@gmail.com",
+        "assigned_sites": [],
+        "machine_skills": [],
         "status": EmployeeStatus.active,
     },
     {
@@ -65,9 +97,13 @@ EMPLOYEE_ROSTER = [
         "name": "勝忠",
         "bind_token": "ST-1005",
         "role": Role.employee,
-        "title": "現場人員",
+        "title": "堆高機司機",
         "department": "工程",
         "salary_scheme": "日薪",
+        "phone": "0000000053",
+        "email": "zhushengzhong12@gmail.com",
+        "assigned_sites": ["齊裕53"],
+        "machine_skills": ["堆高機"],
         "status": EmployeeStatus.active,
     },
     {
@@ -78,16 +114,24 @@ EMPLOYEE_ROSTER = [
         "title": "現場人員",
         "department": "工程",
         "salary_scheme": "日薪",
+        "phone": None,
+        "email": None,
+        "assigned_sites": [],
+        "machine_skills": [],
         "status": EmployeeStatus.active,
     },
     {
         "employee_code": "EMP003",
-        "name": "達成Ray Rostova",
+        "name": "建成Ray Rostova",
         "bind_token": "ST-1007",
         "role": Role.employee,
-        "title": "現場人員",
+        "title": "堆高機司機",
         "department": "工程",
         "salary_scheme": "日薪",
+        "phone": "0000000053",
+        "email": "rayrostova@gmail.com",
+        "assigned_sites": ["齊裕53"],
+        "machine_skills": ["堆高機"],
         "status": EmployeeStatus.active,
     },
     {
@@ -95,9 +139,13 @@ EMPLOYEE_ROSTER = [
         "name": "林小咪",
         "bind_token": "ST-1008",
         "role": Role.employee,
-        "title": "現場人員",
+        "title": "堆高機司機",
         "department": "工程",
         "salary_scheme": "日薪",
+        "phone": "0937028972",
+        "email": "lin275400@gmail.com",
+        "assigned_sites": ["善捷47", "金駿76", "桃園28", "桃園29"],
+        "machine_skills": ["堆高機"],
         "status": EmployeeStatus.active,
     },
 ]
@@ -109,25 +157,36 @@ LEGACY_EMPLOYEE_CODE_MAP = {
 }
 
 
+def _normalized_sites(site_names: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for item in site_names:
+        canonical = SITE_ALIASES.get(item.strip(), item.strip())
+        if canonical and canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
+
+
 def _ensure_worksites(session: Session) -> dict[str, Worksite]:
     existing_sites = session.exec(select(Worksite).order_by(Worksite.id)).all()
     site_by_code = {site.code: site for site in existing_sites}
     site_by_name = {site.name: site for site in existing_sites}
 
     changed = False
-    for worksite_name in WORKSITE_NAMES:
-        site = site_by_code.get(worksite_name) or site_by_name.get(worksite_name)
+    for definition in WORKSITE_DEFINITIONS:
+        code = definition["code"]
+        name = definition["name"]
+        site = site_by_code.get(code) or site_by_name.get(name)
         if site is None:
-            site = Worksite(code=worksite_name, name=worksite_name, is_active=True)
+            site = Worksite(code=code, name=name, is_active=True)
             session.add(site)
             changed = True
             continue
 
-        if site.code != worksite_name:
-            site.code = worksite_name
+        if site.code != code:
+            site.code = code
             changed = True
-        if site.name != worksite_name:
-            site.name = worksite_name
+        if site.name != name:
+            site.name = name
             changed = True
         if not site.is_active:
             site.is_active = True
@@ -159,7 +218,7 @@ def _rename_legacy_employee_codes(session: Session) -> None:
         session.commit()
 
 
-def _upsert_employee(session: Session, payload: dict) -> None:
+def _upsert_employee(session: Session, payload: dict, worksites: dict[str, Worksite]) -> None:
     employee = session.exec(select(Employee).where(Employee.employee_code == payload["employee_code"])).first()
     if employee is None:
         employee = Employee(
@@ -168,6 +227,9 @@ def _upsert_employee(session: Session, payload: dict) -> None:
             name=payload["name"],
         )
 
+    normalized_sites = _normalized_sites(payload.get("assigned_sites", []))
+    primary_site_name = normalized_sites[0] if normalized_sites else None
+    primary_site = worksites.get(primary_site_name) if primary_site_name else None
     preserved_line_user_id = employee.line_user_id
 
     employee.name = payload["name"]
@@ -178,15 +240,17 @@ def _upsert_employee(session: Session, payload: dict) -> None:
     employee.salary_scheme = payload["salary_scheme"]
     employee.status = payload["status"]
     employee.line_user_id = preserved_line_user_id
-    employee.home_site_id = None
-    employee.phone = employee.phone or None
+    employee.home_site_id = primary_site.id if primary_site else None
+    employee.phone = payload.get("phone")
+    employee.email = payload.get("email")
     employee.hire_date = employee.hire_date or None
     employee.labor_insurance_note = employee.labor_insurance_note or None
     employee.emergency_contact = employee.emergency_contact or None
     employee.contract_expiry = employee.contract_expiry or None
     employee.licenses = list(employee.licenses or [])
     employee.training_records = list(employee.training_records or [])
-    employee.machine_skills = list(employee.machine_skills or [])
+    employee.machine_skills = list(payload.get("machine_skills", employee.machine_skills or []))
+    employee.assigned_sites = normalized_sites
 
     session.add(employee)
 
@@ -207,11 +271,11 @@ def _deactivate_unlisted_employees(session: Session) -> None:
 
 
 def seed_demo_data(session: Session) -> None:
-    _ensure_worksites(session)
+    worksites = _ensure_worksites(session)
     _rename_legacy_employee_codes(session)
 
     for payload in EMPLOYEE_ROSTER:
-        _upsert_employee(session, payload)
+        _upsert_employee(session, payload, worksites)
     session.commit()
 
     _deactivate_unlisted_employees(session)

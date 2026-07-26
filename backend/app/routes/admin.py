@@ -210,7 +210,11 @@ def get_options(
                 "employee_code": item.employee_code,
                 "name": item.name,
                 "role": item.role,
+                "title": item.title,
+                "phone": item.phone,
+                "email": item.email,
                 "home_site_id": item.home_site_id,
+                "assigned_sites": item.assigned_sites,
                 "line_bound": bool(item.line_user_id),
             }
             for item in employees
@@ -273,8 +277,12 @@ def list_employees(
             "employee_code": item.employee_code,
             "name": item.name,
             "role": item.role,
+            "title": item.title,
             "department": item.department,
+            "phone": item.phone,
+            "email": item.email,
             "home_site_name": worksites.get(item.home_site_id).name if item.home_site_id in worksites else "-",
+            "assigned_sites": item.assigned_sites,
             "line_bound": bool(item.line_user_id),
             "bind_token": item.bind_token,
         }
