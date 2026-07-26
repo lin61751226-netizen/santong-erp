@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import mimetypes
 import secrets
+import shutil
 from typing import Any
 from urllib.parse import urlencode
 
@@ -17,6 +18,7 @@ from app.models import Employee, LineLinkSession, LineLinkStatus
 
 RICH_MENU_DIR = DATA_DIR / "richmenus"
 RICH_MENU_DIR.mkdir(parents=True, exist_ok=True)
+STATIC_RICH_MENU_DIR = Path(__file__).resolve().parents[1] / "static" / "richmenus"
 
 
 class LinePlatformError(Exception):
@@ -184,6 +186,10 @@ def _load_font(size: int):
     font_candidates = [
         Path("C:/Windows/Fonts/msjh.ttc"),
         Path("C:/Windows/Fonts/microsoftjhengheiui.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/arphic/uming.ttc"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     ]
     for font_path in font_candidates:
@@ -203,6 +209,17 @@ def _draw_centered_text(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int
 
 
 def generate_default_rich_menu_images() -> dict[str, Path]:
+    bundled_outputs = {
+        "main": STATIC_RICH_MENU_DIR / "santong-main.png",
+        "tools": STATIC_RICH_MENU_DIR / "santong-tools.png",
+    }
+    if all(path.exists() for path in bundled_outputs.values()):
+        for name, bundled_path in bundled_outputs.items():
+            target_path = RICH_MENU_DIR / bundled_path.name
+            if not target_path.exists():
+                shutil.copyfile(bundled_path, target_path)
+        return bundled_outputs
+
     width, height = 2500, 1686
     tab_height = 250
     column_width = width // 4
