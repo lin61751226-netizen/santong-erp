@@ -1,202 +1,217 @@
-from datetime import date, time, timedelta
+from __future__ import annotations
 
 from sqlmodel import Session, select
 
-from app.models import (
-    AckStatus,
-    AssignmentMember,
-    AttendanceEvent,
-    AttendanceEventType,
-    Employee,
-    EmployeeStatus,
-    LeaveRequest,
-    LeaveStatus,
-    Role,
-    WorkAssignment,
-    Worksite,
-)
+from app.models import Employee, EmployeeStatus, Role, Worksite
+
+
+WORKSITE_NAMES = [
+    "45",
+    "53",
+    "56",
+    "善捷47",
+    "金駿76",
+    "桃園28",
+    "桃園29",
+    "新竹寶山1",
+    "新竹寶山2",
+    "新竹寶山3",
+]
+
+
+EMPLOYEE_ROSTER = [
+    {
+        "employee_code": "BOSS001",
+        "name": "三通工程行林老闆",
+        "bind_token": "ST-1001",
+        "role": Role.owner,
+        "title": "老闆",
+        "department": "經營管理",
+        "salary_scheme": "月薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "ADMIN001",
+        "name": "林金谷",
+        "bind_token": "ST-1002",
+        "role": Role.admin,
+        "title": "系統管理者",
+        "department": "系統管理",
+        "salary_scheme": "月薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "BOT001",
+        "name": "三通工程行,line機器人",
+        "bind_token": "ST-1003",
+        "role": Role.external,
+        "title": "LINE機器人",
+        "department": "系統管理",
+        "salary_scheme": "系統帳號",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "ADMIN002",
+        "name": "秀蓉ε٩(๑> ₃ <)7з",
+        "bind_token": "ST-1004",
+        "role": Role.admin,
+        "title": "行政人員",
+        "department": "行政",
+        "salary_scheme": "月薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "EMP001",
+        "name": "勝忠",
+        "bind_token": "ST-1005",
+        "role": Role.employee,
+        "title": "現場人員",
+        "department": "工程",
+        "salary_scheme": "日薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "EMP002",
+        "name": "小咪",
+        "bind_token": "ST-1006",
+        "role": Role.employee,
+        "title": "現場人員",
+        "department": "工程",
+        "salary_scheme": "日薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "EMP003",
+        "name": "達成Ray Rostova",
+        "bind_token": "ST-1007",
+        "role": Role.employee,
+        "title": "現場人員",
+        "department": "工程",
+        "salary_scheme": "日薪",
+        "status": EmployeeStatus.active,
+    },
+    {
+        "employee_code": "EMP004",
+        "name": "林小咪",
+        "bind_token": "ST-1008",
+        "role": Role.employee,
+        "title": "現場人員",
+        "department": "工程",
+        "salary_scheme": "日薪",
+        "status": EmployeeStatus.active,
+    },
+]
+
+
+LEGACY_EMPLOYEE_CODE_MAP = {
+    "ACC001": "BOT001",
+    "SUP047": "ADMIN002",
+}
+
+
+def _ensure_worksites(session: Session) -> dict[str, Worksite]:
+    existing_sites = session.exec(select(Worksite).order_by(Worksite.id)).all()
+    site_by_code = {site.code: site for site in existing_sites}
+    site_by_name = {site.name: site for site in existing_sites}
+
+    changed = False
+    for worksite_name in WORKSITE_NAMES:
+        site = site_by_code.get(worksite_name) or site_by_name.get(worksite_name)
+        if site is None:
+            site = Worksite(code=worksite_name, name=worksite_name, is_active=True)
+            session.add(site)
+            changed = True
+            continue
+
+        if site.code != worksite_name:
+            site.code = worksite_name
+            changed = True
+        if site.name != worksite_name:
+            site.name = worksite_name
+            changed = True
+        if not site.is_active:
+            site.is_active = True
+            changed = True
+        session.add(site)
+
+    if changed:
+        session.commit()
+
+    return {site.name: site for site in session.exec(select(Worksite)).all()}
+
+
+def _rename_legacy_employee_codes(session: Session) -> None:
+    changed = False
+    for old_code, new_code in LEGACY_EMPLOYEE_CODE_MAP.items():
+        employee = session.exec(select(Employee).where(Employee.employee_code == old_code)).first()
+        if not employee:
+            continue
+
+        collision = session.exec(select(Employee).where(Employee.employee_code == new_code)).first()
+        if collision and collision.id != employee.id:
+            continue
+
+        employee.employee_code = new_code
+        session.add(employee)
+        changed = True
+
+    if changed:
+        session.commit()
+
+
+def _upsert_employee(session: Session, payload: dict) -> None:
+    employee = session.exec(select(Employee).where(Employee.employee_code == payload["employee_code"])).first()
+    if employee is None:
+        employee = Employee(
+            employee_code=payload["employee_code"],
+            bind_token=payload["bind_token"],
+            name=payload["name"],
+        )
+
+    preserved_line_user_id = employee.line_user_id
+
+    employee.name = payload["name"]
+    employee.bind_token = payload["bind_token"]
+    employee.role = payload["role"]
+    employee.title = payload["title"]
+    employee.department = payload["department"]
+    employee.salary_scheme = payload["salary_scheme"]
+    employee.status = payload["status"]
+    employee.line_user_id = preserved_line_user_id
+    employee.home_site_id = None
+    employee.phone = employee.phone or None
+    employee.hire_date = employee.hire_date or None
+    employee.labor_insurance_note = employee.labor_insurance_note or None
+    employee.emergency_contact = employee.emergency_contact or None
+    employee.contract_expiry = employee.contract_expiry or None
+    employee.licenses = list(employee.licenses or [])
+    employee.training_records = list(employee.training_records or [])
+    employee.machine_skills = list(employee.machine_skills or [])
+
+    session.add(employee)
+
+
+def _deactivate_unlisted_employees(session: Session) -> None:
+    roster_codes = {item["employee_code"] for item in EMPLOYEE_ROSTER}
+    employees = session.exec(select(Employee)).all()
+    changed = False
+    for employee in employees:
+        if employee.employee_code in roster_codes:
+            continue
+        if employee.status != EmployeeStatus.inactive:
+            employee.status = EmployeeStatus.inactive
+            session.add(employee)
+            changed = True
+    if changed:
+        session.commit()
 
 
 def seed_demo_data(session: Session) -> None:
-    has_employee = session.exec(select(Employee.id)).first()
-    if has_employee:
-        return
+    _ensure_worksites(session)
+    _rename_legacy_employee_codes(session)
 
-    site_names = [
-        "45",
-        "53",
-        "56",
-        "善捷47",
-        "金駿76",
-        "桃園28",
-        "桃園29",
-        "新竹寶山1",
-        "新竹寶山2",
-        "新竹寶山3",
-    ]
-
-    for name in site_names:
-        worksite = Worksite(code=name, name=name)
-        session.add(worksite)
+    for payload in EMPLOYEE_ROSTER:
+        _upsert_employee(session, payload)
     session.commit()
 
-    site_map = {site.name: site for site in session.exec(select(Worksite)).all()}
-
-    employees = [
-        Employee(
-            employee_code="BOSS001",
-            name="三通老闆",
-            bind_token="ST-1001",
-            role=Role.owner,
-            title="老闆",
-            department="管理部",
-            salary_scheme="月薪",
-            emergency_contact="總機 03-1234567",
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="ADMIN001",
-            name="行政主管",
-            bind_token="ST-1002",
-            role=Role.admin,
-            title="行政主管",
-            department="管理部",
-            salary_scheme="月薪",
-            emergency_contact="總機 03-1234567",
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="ACC001",
-            name="會計小姐",
-            bind_token="ST-1003",
-            role=Role.accounting,
-            title="會計",
-            department="財務部",
-            salary_scheme="月薪",
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="SUP047",
-            name="林主任",
-            bind_token="ST-1004",
-            role=Role.site_manager,
-            title="工地主任",
-            department="工務部",
-            home_site_id=site_map["善捷47"].id,
-            salary_scheme="月薪",
-            machine_skills=["堆高機", "現場調度"],
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="EMP001",
-            name="王小明",
-            bind_token="ST-1005",
-            role=Role.employee,
-            title="現場人員",
-            department="工務部",
-            home_site_id=site_map["善捷47"].id,
-            salary_scheme="日薪",
-            machine_skills=["堆高機"],
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="EMP002",
-            name="李小華",
-            bind_token="ST-1006",
-            role=Role.employee,
-            title="現場人員",
-            department="工務部",
-            home_site_id=site_map["善捷47"].id,
-            salary_scheme="日薪",
-            machine_skills=["物料整理"],
-            status=EmployeeStatus.active,
-        ),
-        Employee(
-            employee_code="EMP003",
-            name="陳志宏",
-            bind_token="ST-1007",
-            role=Role.employee,
-            title="機具操作員",
-            department="工務部",
-            home_site_id=site_map["桃園29"].id,
-            salary_scheme="日薪",
-            machine_skills=["堆高機", "吊掛"],
-            status=EmployeeStatus.active,
-        ),
-    ]
-
-    for employee in employees:
-        session.add(employee)
-    session.commit()
-
-    employee_map = {item.employee_code: item for item in session.exec(select(Employee)).all()}
-    tomorrow = date.today() + timedelta(days=1)
-
-    assignment = WorkAssignment(
-        work_date=tomorrow,
-        site_id=site_map["善捷47"].id,
-        work_item="堆高機移料、現場物料整理",
-        supervisor_id=employee_map["SUP047"].id,
-        start_time=time(hour=7, minute=40),
-        end_time=time(hour=17, minute=0),
-        vehicle="3.5T 貨車",
-        equipment="堆高機",
-        notes="進場前完成安全檢查",
-        created_by=employee_map["ADMIN001"].id,
-    )
-    session.add(assignment)
-    session.commit()
-    session.refresh(assignment)
-
-    for code in ["EMP001", "EMP002"]:
-        member = AssignmentMember(
-            assignment_id=assignment.id,
-            employee_id=employee_map[code].id,
-            ack_status=AckStatus.pending,
-        )
-        session.add(member)
-
-    sunday_assignment = WorkAssignment(
-        work_date=date.today(),
-        site_id=site_map["善捷47"].id,
-        work_item="週日臨時移料與安全巡檢",
-        supervisor_id=employee_map["SUP047"].id,
-        start_time=time(hour=7, minute=30),
-        end_time=time(hour=12, minute=0),
-        vehicle="3.5T 貨車",
-        equipment="堆高機",
-        notes="週日出勤需另計加班或換休",
-        created_by=employee_map["ADMIN001"].id,
-    )
-    session.add(sunday_assignment)
-    session.commit()
-    session.refresh(sunday_assignment)
-
-    session.add(
-        AssignmentMember(
-            assignment_id=sunday_assignment.id,
-            employee_id=employee_map["EMP001"].id,
-            ack_status=AckStatus.arrived,
-            last_line_action="到達工地",
-        )
-    )
-    session.add(
-        AttendanceEvent(
-            employee_id=employee_map["EMP001"].id,
-            site_id=site_map["善捷47"].id,
-            assignment_id=sunday_assignment.id,
-            event_type=AttendanceEventType.arrive_site.value,
-        )
-    )
-    session.add(
-        LeaveRequest(
-            employee_id=employee_map["EMP003"].id,
-            leave_type="排休",
-            start_date=tomorrow,
-            end_date=tomorrow,
-            reason="月度排休申請",
-            status=LeaveStatus.pending,
-            policy_note="已超過月初統一排假建議時間，請主管確認。",
-        )
-    )
-    session.commit()
+    _deactivate_unlisted_employees(session)
