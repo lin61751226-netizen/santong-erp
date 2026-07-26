@@ -37,10 +37,17 @@ class DriveUploadResult:
 
 class GoogleDriveWorklogService:
     def is_configured(self) -> bool:
-        return bool(
-            settings.google_service_account_json.strip()
-            and settings.google_drive_worklog_folder_id.strip()
-        )
+        raw = settings.google_service_account_json.strip()
+        folder_id = settings.google_drive_worklog_folder_id.strip()
+        if not raw or not folder_id or len(folder_id) < 10:
+            return False
+        if raw.startswith("{"):
+            try:
+                json.loads(raw)
+            except json.JSONDecodeError:
+                return False
+            return True
+        return Path(raw).exists()
 
     def _credentials(self):
         raw = settings.google_service_account_json.strip()

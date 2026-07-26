@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -30,6 +31,20 @@ class Settings(BaseSettings):
     google_drive_public_share: bool = True
     daily_push_hour: int = 7
     daily_push_minute: int = 0
+
+    @field_validator("google_drive_public_share", mode="before")
+    @classmethod
+    def coerce_google_drive_public_share(cls, value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return True
+        normalized = str(value).strip().lower()
+        if normalized in {"", "1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        return True
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",
