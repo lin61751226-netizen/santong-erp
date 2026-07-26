@@ -8,3 +8,4 @@ __pycache__/
 backend/data/
 backend/.env
 deploy/cloudflared/*.json
+backend/tools/*.exe
