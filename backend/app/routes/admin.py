@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.schemas import (
     AssignmentCreate,
+    EmployeeUpdate,
     LeaveDecision,
     LeaveRequestCreate,
     LineRichMenuDeployRequest,
@@ -47,6 +48,21 @@ from app.services.line import notify_employees, process_webhook_event
 
 router = APIRouter(prefix="/api", tags=["admin"])
 
+SITE_ALIASES = {
+    "45": "45",
+    "53": "齊裕53",
+    "56": "56",
+    "47": "善捷47",
+    "善捷47": "善捷47",
+    "金駿76": "金駿76",
+    "桃園28": "桃園28",
+    "桃園29": "桃園29",
+    "齊裕53": "齊裕53",
+    "新竹寶山1": "新竹寶山1",
+    "新竹寶山2": "新竹寶山2",
+    "新竹寶山3": "新竹寶山3",
+}
+
 
 def _employees_for_actor(session: Session, actor: Employee) -> list[Employee]:
     return list_employees_for_review(session, actor)
@@ -66,6 +82,34 @@ def _resolve_employee_codes(session: Session, employee_codes: list[str]) -> list
         missing_codes = sorted(set(employee_codes) - found_codes)
         raise HTTPException(status_code=404, detail=f"找不到員工代碼：{', '.join(missing_codes)}")
     return employees
+
+
+def _normalize_assigned_sites(site_names: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for site_name in site_names:
+        raw = str(site_name or "").strip()
+        if not raw:
+            continue
+        canonical = SITE_ALIASES.get(raw, raw)
+        if canonical not in normalized:
+            normalized.append(canonical)
+    return normalized
+
+
+def _serialize_employee(worksites: dict[int, Worksite], item: Employee) -> dict:
+    return {
+        "employee_code": item.employee_code,
+        "name": item.name,
+        "role": item.role,
+        "title": item.title,
+        "department": item.department,
+        "phone": item.phone,
+        "email": item.email,
+        "home_site_name": worksites.get(item.home_site_id).name if item.home_site_id in worksites else "-",
+        "assigned_sites": item.assigned_sites,
+        "line_bound": bool(item.line_user_id),
+        "bind_token": item.bind_token,
+    }
 
 
 def _serialize_leave(session: Session, leave_request: LeaveRequest) -> dict:
@@ -272,22 +316,42 @@ def list_employees(
 ):
     employees = _employees_for_actor(session, actor)
     worksites = {item.id: item for item in session.exec(select(Worksite)).all()}
-    return [
-        {
-            "employee_code": item.employee_code,
-            "name": item.name,
-            "role": item.role,
-            "title": item.title,
-            "department": item.department,
-            "phone": item.phone,
-            "email": item.email,
-            "home_site_name": worksites.get(item.home_site_id).name if item.home_site_id in worksites else "-",
-            "assigned_sites": item.assigned_sites,
-            "line_bound": bool(item.line_user_id),
-            "bind_token": item.bind_token,
-        }
-        for item in employees
-    ]
+    return [_serialize_employee(worksites, item) for item in employees]
+
+
+@router.put("/employees/{employee_code}")
+def update_employee(
+    employee_code: str,
+    payload: EmployeeUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到員工代碼")
+
+    ensure_employee_scope(actor, employee)
+
+    normalized_sites = _normalize_assigned_sites(payload.assigned_sites)
+    worksites = {item.name: item for item in session.exec(select(Worksite)).all()}
+    missing_sites = [site_name for site_name in normalized_sites if site_name not in worksites]
+    if missing_sites:
+        raise HTTPException(status_code=400, detail=f"找不到工地：{', '.join(missing_sites)}")
+
+    employee.title = (payload.title or "").strip() or None
+    employee.phone = (payload.phone or "").strip() or None
+    employee.email = (payload.email or "").strip() or None
+    employee.assigned_sites = normalized_sites
+    employee.home_site_id = worksites[normalized_sites[0]].id if normalized_sites else None
+    session.add(employee)
+    session.commit()
+    session.refresh(employee)
+
+    worksites_by_id = {item.id: item for item in session.exec(select(Worksite)).all()}
+    return {
+        "message": "員工資料已更新",
+        "employee": _serialize_employee(worksites_by_id, employee),
+    }
 
 
 @router.get("/assignments")

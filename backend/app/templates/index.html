@@ -341,9 +341,14 @@
                 <th>員工代碼</th>
                 <th>姓名</th>
                 <th>角色</th>
-                <th>工地</th>
+                <th>職稱</th>
+                <th>手機</th>
+                <th>Email</th>
+                <th>多工地</th>
+                <th>主工地</th>
                 <th>LINE</th>
                 <th>綁定碼</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody id="employeeRows"></tbody>
@@ -410,6 +415,7 @@
   <script>
     const state = {
       actorCode: "{{ default_actor_code }}",
+      actor: null,
       employees: [],
       worksites: [],
     };
@@ -435,6 +441,17 @@
 
     function setConsole(message) {
       document.getElementById("console").textContent = message;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replaceAll('"', "&quot;");
     }
 
     function renderStats(data) {
@@ -484,14 +501,20 @@
     }
 
     function renderEmployees(rows) {
+      const canManageEmployees = ["owner", "admin"].includes(state.actor?.role);
       document.getElementById("employeeRows").innerHTML = rows.map((row) => `
         <tr>
-          <td>${row.employee_code}</td>
-          <td>${row.name}</td>
+          <td>${escapeHtml(row.employee_code)}</td>
+          <td>${escapeHtml(row.name)}</td>
           <td><span class="pill">${row.role}</span></td>
-          <td>${row.home_site_name}</td>
+          <td><input id="employee-title-${row.employee_code}" class="table-input" value="${escapeAttr(row.title || "")}" ${canManageEmployees ? "" : "disabled"}></td>
+          <td><input id="employee-phone-${row.employee_code}" class="table-input" value="${escapeAttr(row.phone || "")}" ${canManageEmployees ? "" : "disabled"}></td>
+          <td><input id="employee-email-${row.employee_code}" class="table-input" value="${escapeAttr(row.email || "")}" ${canManageEmployees ? "" : "disabled"}></td>
+          <td><input id="employee-sites-${row.employee_code}" class="table-input employee-sites-input" value="${escapeAttr((row.assigned_sites || []).join(", "))}" ${canManageEmployees ? "" : "disabled"}></td>
+          <td>${escapeHtml(row.home_site_name || "-")}</td>
           <td>${row.line_bound ? "已綁定" : "未綁定"}</td>
-          <td>${row.bind_token}</td>
+          <td>${escapeHtml(row.bind_token)}</td>
+          <td class="table-actions"><button type="button" class="button-secondary button-compact" onclick="updateEmployee('${row.employee_code}')" ${canManageEmployees ? "" : "disabled"}>儲存</button></td>
         </tr>
       `).join("");
     }
@@ -611,6 +634,7 @@
 
     async function loadMeta() {
       const data = await api("/api/meta/options");
+      state.actor = data.actor;
       state.employees = data.employees;
       state.worksites = data.worksites;
       renderSelectOptions();
@@ -634,6 +658,28 @@
     async function loadEmployees() {
       const data = await api("/api/employees");
       renderEmployees(data);
+    }
+
+    async function updateEmployee(employeeCode) {
+      try {
+        const payload = {
+          title: document.getElementById(`employee-title-${employeeCode}`).value.trim(),
+          phone: document.getElementById(`employee-phone-${employeeCode}`).value.trim(),
+          email: document.getElementById(`employee-email-${employeeCode}`).value.trim(),
+          assigned_sites: document.getElementById(`employee-sites-${employeeCode}`).value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        };
+        const data = await api(`/api/employees/${employeeCode}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadMeta(), loadEmployees()]);
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
     }
 
     async function loadAssignments() {

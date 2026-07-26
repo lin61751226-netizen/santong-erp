@@ -19,6 +19,13 @@ class AssignmentCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class EmployeeUpdate(BaseModel):
+    title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    assigned_sites: list[str] = Field(default_factory=list)
+
+
 class NotificationCreate(BaseModel):
     category: NotificationCategory = NotificationCategory.ad_hoc
     target_scope: str = Field(description="all/site/department/employee/management/supervisor")

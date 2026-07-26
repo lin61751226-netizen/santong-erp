@@ -229,6 +229,11 @@ button:hover {
   color: var(--ink);
 }
 
+.button-compact {
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
 .button-danger {
   background: var(--danger);
 }
@@ -241,6 +246,16 @@ button:hover {
 
 .form-grid .full {
   grid-column: 1 / -1;
+}
+
+.table-input {
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.employee-sites-input {
+  min-width: 220px;
 }
 
 .table-wrap {
@@ -284,6 +299,10 @@ th {
   background: var(--accent-soft);
   color: #733d18;
   margin-bottom: 16px;
+}
+
+.table-actions {
+  white-space: nowrap;
 }
 
 .console {
