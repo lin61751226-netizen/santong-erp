@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }}｜LINE 正式綁定</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="shell" style="max-width:760px;">
+    <section class="hero-card" style="margin-top:40px;">
+      <span class="eyebrow">LINE Account Link</span>
+      <h1 style="margin-top:14px;">正式綁定員工身分</h1>
+      <p class="hero-copy">
+        這個流程會依 LINE 官方 account link 機制，將你的 LINE 帳號與三通工程內部員工資料安全綁定。
+      </p>
+    </section>
+
+    <section class="panel" style="margin-top:18px;">
+      {% if error %}
+      <div class="notice" style="background:#f8ddd7;color:#7d2a21;">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/line/account-link" class="form-grid">
+        <input type="hidden" name="link_token" value="{{ link_token }}">
+        <div>
+          <label for="employee_code">員工代碼</label>
+          <input id="employee_code" name="employee_code" placeholder="例如：EMP001" required>
+        </div>
+        <div>
+          <label for="bind_token">綁定碼</label>
+          <input id="bind_token" name="bind_token" placeholder="例如：ST-1005" required>
+        </div>
+        <div class="full">
+          <button type="submit">送出並前往 LINE 驗證</button>
+        </div>
+      </form>
+      <p class="muted" style="margin-top:14px;">
+        如果你不知道綁定碼，請向行政或主管索取。這個綁定連結約 10 分鐘後會失效。
+      </p>
+    </section>
+  </div>
+</body>
+</html>

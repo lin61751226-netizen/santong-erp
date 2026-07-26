@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: santong-erp
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: ENVIRONMENT
+        value: production
+      - key: APP_NAME
+        value: 三通工程自動化管理系統
+      - key: DEFAULT_ACTOR_CODE
+        value: ADMIN001
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: santong-erp-db
+          property: connectionString
+      - key: TIMEZONE
+        value: Asia/Taipei
+      - key: LINE_CHANNEL_SECRET
+        sync: false
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        sync: false
+      - key: DAILY_PUSH_HOUR
+        value: "7"
+      - key: DAILY_PUSH_MINUTE
+        value: "0"
+
+databases:
+  - name: santong-erp-db
+    databaseName: santong
+    user: santong
+    plan: free
+    postgresMajorVersion: "18"

@@ -1,0 +1,481 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+from datetime import date
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+from sqlmodel import Session, select
+
+from app.core.config import settings
+from app.models import (
+    AckStatus,
+    AssignmentMember,
+    DeliveryStatus,
+    Employee,
+    LeaveRequest,
+    LeaveStatus,
+    NotificationBatch,
+    NotificationCategory,
+    NotificationDelivery,
+    WorkAssignment,
+    Worksite,
+)
+from app.services.hr import (
+    ATTENDANCE_COMMAND_MAP,
+    evaluate_leave_policy,
+    find_assignment_for_employee,
+    find_assignment_member,
+    format_policy_notes,
+    get_latest_attendance_event,
+    record_attendance_event,
+)
+from app.services.line_platform import (
+    LinePlatformError,
+    complete_account_link_session,
+    start_account_link_session,
+)
+
+
+class LineService:
+    api_base = "https://api.line.me/v2/bot/message"
+
+    def verify_signature(self, body: bytes, signature: str | None) -> bool:
+        if not settings.line_channel_secret:
+            return True
+        if not signature:
+            return False
+        digest = hmac.new(
+            settings.line_channel_secret.encode("utf-8"),
+            body,
+            hashlib.sha256,
+        ).digest()
+        expected = base64.b64encode(digest).decode("utf-8")
+        return hmac.compare_digest(expected, signature)
+
+    async def _post(self, endpoint: str, payload: dict[str, Any]) -> tuple[bool, str]:
+        if not settings.line_channel_access_token:
+            return True, "LINE token 未設定，已改為模擬送出"
+        headers = {
+            "Authorization": f"Bearer {settings.line_channel_access_token}",
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(f"{self.api_base}/{endpoint}", headers=headers, json=payload)
+        if response.is_success:
+            return True, "sent"
+        return False, response.text
+
+    async def reply_text(self, reply_token: str, text: str) -> tuple[bool, str]:
+        return await self.reply_messages(reply_token, [{"type": "text", "text": text}])
+
+    async def reply_messages(self, reply_token: str, messages: list[dict[str, Any]]) -> tuple[bool, str]:
+        payload = {"replyToken": reply_token, "messages": messages}
+        return await self._post("reply", payload)
+
+    async def push_text(self, user_id: str, text: str) -> tuple[bool, str]:
+        payload = {"to": user_id, "messages": [{"type": "text", "text": text}]}
+        return await self._post("push", payload)
+
+
+line_service = LineService()
+
+
+def _build_schedule_summary(
+    assignment: WorkAssignment,
+    worksite: Worksite,
+    supervisor_name: str | None,
+) -> str:
+    start_time = assignment.start_time.strftime("%H:%M") if assignment.start_time else "-"
+    end_time = assignment.end_time.strftime("%H:%M") if assignment.end_time else "-"
+    return (
+        f"【三通工程每日工作安排】\n"
+        f"日期：{assignment.work_date:%Y/%m/%d}\n"
+        f"工地：{worksite.name}\n"
+        f"工作內容：{assignment.work_item}\n"
+        f"負責主管：{supervisor_name or '-'}\n"
+        f"時間：{start_time} - {end_time}\n"
+        f"車輛/機具：{assignment.vehicle or '-'} / {assignment.equipment or '-'}\n"
+        f"注意事項：{assignment.notes or '-'}"
+    )
+
+
+def _build_leave_summary(leave_request: LeaveRequest, employee: Employee) -> str:
+    return (
+        f"【請假申請通知】\n"
+        f"員工：{employee.name}\n"
+        f"假別：{leave_request.leave_type}\n"
+        f"日期：{leave_request.start_date:%Y/%m/%d} - {leave_request.end_date:%Y/%m/%d}\n"
+        f"原因：{leave_request.reason}\n"
+        f"狀態：待審核"
+    )
+
+
+def _build_my_leave_summary(leaves: list[LeaveRequest]) -> str:
+    if not leaves:
+        return "目前沒有請假申請紀錄。"
+    top_items = leaves[:3]
+    lines = ["【我的請假】"]
+    for leave_item in top_items:
+        lines.append(
+            f"{leave_item.leave_type}｜{leave_item.start_date:%Y/%m/%d}-{leave_item.end_date:%Y/%m/%d}｜{leave_item.status.value}"
+        )
+        if leave_item.policy_note:
+            lines.append(f"備註：{leave_item.policy_note}")
+    return "\n".join(lines)
+
+
+def _build_my_attendance_summary(
+    employee: Employee,
+    assignment: WorkAssignment | None,
+    member: AssignmentMember | None,
+    latest_event,
+) -> str:
+    if not assignment and not latest_event:
+        return "目前尚無打卡或回報資料。"
+    lines = ["【個人狀態】", f"員工：{employee.name}"]
+    if assignment:
+        lines.append(f"工作日：{assignment.work_date:%Y/%m/%d}")
+    if latest_event:
+        lines.append(f"最近打卡：{latest_event.event_type}")
+        lines.append(f"時間：{latest_event.happened_at:%Y/%m/%d %H:%M}")
+    if member:
+        lines.append(f"工作回報：{member.ack_status.value}")
+        lines.append(f"最後動作：{member.last_line_action or '-'}")
+        if member.note:
+            lines.append(f"備註：{member.note}")
+    return "\n".join(lines)
+
+
+def _employee_by_line_user(session: Session, line_user_id: str) -> Employee | None:
+    return session.exec(select(Employee).where(Employee.line_user_id == line_user_id)).first()
+
+
+def _binding_base_url(postback_data: str | None) -> str:
+    if not postback_data:
+        return settings.public_base_url
+    parsed = parse_qs(postback_data)
+    return parsed.get("base", [settings.public_base_url])[0]
+
+
+async def _reply_account_link_prompt(session: Session, reply_token: str, line_user_id: str, base_url: str) -> None:
+    try:
+        link_data = await start_account_link_session(session, line_user_id, base_url)
+    except LinePlatformError as exc:
+        await line_service.reply_text(reply_token, str(exc))
+        return
+
+    await line_service.reply_messages(
+        reply_token,
+        [
+            {
+                "type": "template",
+                "altText": "三通工程 LINE 綁定",
+                "template": {
+                    "type": "buttons",
+                    "title": "三通工程",
+                    "text": "點擊下方按鈕，使用員工代碼與綁定碼完成正式身分綁定。",
+                    "actions": [
+                        {
+                            "type": "uri",
+                            "label": "開始正式綁定",
+                            "uri": link_data["link_url"],
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+
+async def notify_employees(
+    session: Session,
+    sender: Employee | None,
+    employees: list[Employee],
+    category: NotificationCategory,
+    target_scope: str,
+    target_value: str | None,
+    content: str,
+    assignment_id: int | None = None,
+    meeting_id: int | None = None,
+) -> dict[str, Any]:
+    batch = NotificationBatch(
+        sender_id=sender.id if sender else None,
+        category=category,
+        target_scope=target_scope,
+        target_value=target_value,
+        content=content,
+        assignment_id=assignment_id,
+        meeting_id=meeting_id,
+    )
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    sent = 0
+    skipped = 0
+    failed = 0
+
+    for employee in employees:
+        status = DeliveryStatus.pending
+        message = ""
+        if not employee.line_user_id:
+            status = DeliveryStatus.skipped
+            message = "員工尚未綁定 LINE"
+            skipped += 1
+        else:
+            ok, detail = await line_service.push_text(employee.line_user_id, content)
+            if ok and settings.line_channel_access_token:
+                status = DeliveryStatus.sent
+                sent += 1
+                message = detail
+            elif ok:
+                status = DeliveryStatus.simulated
+                skipped += 1
+                message = detail
+            else:
+                status = DeliveryStatus.failed
+                failed += 1
+                message = detail
+
+        session.add(
+            NotificationDelivery(
+                batch_id=batch.id,
+                employee_id=employee.id,
+                line_user_id=employee.line_user_id,
+                delivery_status=status,
+                delivery_message=message,
+            )
+        )
+    session.commit()
+
+    return {
+        "batch_id": batch.id,
+        "recipient_count": len(employees),
+        "sent_count": sent,
+        "skipped_count": skipped,
+        "failed_count": failed,
+    }
+
+
+async def process_webhook_event(session: Session, event: dict[str, Any]) -> None:
+    event_type = event.get("type")
+    reply_token = event.get("replyToken", "")
+    line_user_id = event.get("source", {}).get("userId")
+
+    if event_type == "follow" and reply_token:
+        await line_service.reply_text(
+            reply_token,
+            "歡迎使用三通工程系統。請點 Rich Menu 的「開始綁定」，或輸入：開始綁定",
+        )
+        return
+
+    if event_type == "accountLink":
+        if not line_user_id:
+            return
+        link_info = event.get("link", {})
+        nonce = link_info.get("nonce", "")
+        result = link_info.get("result", "failed")
+        try:
+            completed = complete_account_link_session(session, line_user_id, nonce, result)
+        except LinePlatformError:
+            completed = {"status": "failed"}
+        if reply_token:
+            if completed["status"] == "completed":
+                await line_service.reply_text(
+                    reply_token,
+                    f"綁定完成：{completed['employee_name']} ({completed['employee_code']})",
+                )
+            else:
+                await line_service.reply_text(reply_token, "LINE 正式綁定失敗，請重新從 Rich Menu 開始。")
+        return
+
+    if event_type == "postback":
+        if not reply_token or not line_user_id:
+            return
+        data = event.get("postback", {}).get("data", "")
+        if data.startswith("action=bind:start"):
+            await _reply_account_link_prompt(session, reply_token, line_user_id, _binding_base_url(data))
+            return
+        await line_service.reply_text(reply_token, "已收到選單操作。")
+        return
+
+    if event_type != "message":
+        return
+    message = event.get("message", {})
+    if message.get("type") != "text" or not line_user_id:
+        return
+
+    text = str(message.get("text", "")).strip()
+    employee = _employee_by_line_user(session, line_user_id)
+
+    if text == "開始綁定":
+        await _reply_account_link_prompt(session, reply_token, line_user_id, settings.public_base_url)
+        return
+
+    if text.startswith("綁定 "):
+        bind_value = text.split(" ", 1)[1].strip()
+        target = session.exec(
+            select(Employee).where(
+                (Employee.bind_token == bind_value) | (Employee.employee_code == bind_value)
+            )
+        ).first()
+        if not target:
+            await line_service.reply_text(reply_token, "找不到綁定碼，請向行政確認。")
+            return
+        target.line_user_id = line_user_id
+        session.add(target)
+        session.commit()
+        await line_service.reply_text(reply_token, f"綁定完成：{target.name} ({target.employee_code})")
+        return
+
+    if not employee:
+        await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先點 Rich Menu 的「開始綁定」。")
+        return
+
+    if text == "我的行程":
+        assignment = find_assignment_for_employee(session, employee.id)
+        if not assignment:
+            await line_service.reply_text(reply_token, "今天沒有排定工作。")
+            return
+        worksite = session.get(Worksite, assignment.site_id)
+        supervisor = session.get(Employee, assignment.supervisor_id) if assignment.supervisor_id else None
+        await line_service.reply_text(
+            reply_token,
+            _build_schedule_summary(assignment, worksite, supervisor.name if supervisor else None),
+        )
+        return
+
+    if text == "我的打卡":
+        assignment = find_assignment_for_employee(session, employee.id)
+        member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+        latest_event = get_latest_attendance_event(session, employee.id, date.today())
+        await line_service.reply_text(
+            reply_token,
+            _build_my_attendance_summary(employee, assignment, member, latest_event),
+        )
+        return
+
+    if text == "我的請假":
+        leaves = session.exec(
+            select(LeaveRequest).where(LeaveRequest.employee_id == employee.id).order_by(LeaveRequest.requested_at.desc())
+        ).all()
+        await line_service.reply_text(reply_token, _build_my_leave_summary(leaves))
+        return
+
+    if text.startswith("請假 "):
+        parts = text.split(" ", 4)
+        if len(parts) < 5:
+            await line_service.reply_text(reply_token, "格式錯誤，請使用：請假 事假 2026-07-28 2026-07-28 家中有事")
+            return
+        _, leave_type, start_date_text, end_date_text, reason = parts
+        try:
+            start_date = date.fromisoformat(start_date_text)
+            end_date = date.fromisoformat(end_date_text)
+        except ValueError:
+            await line_service.reply_text(reply_token, "日期格式必須為 YYYY-MM-DD")
+            return
+        if end_date < start_date:
+            await line_service.reply_text(reply_token, "請假結束日期不得早於開始日期")
+            return
+
+        policy = evaluate_leave_policy(session, employee, leave_type, start_date, end_date)
+        if policy.errors:
+            await line_service.reply_text(reply_token, "；".join(policy.errors))
+            return
+
+        leave_request = LeaveRequest(
+            employee_id=employee.id,
+            leave_type=leave_type,
+            start_date=start_date,
+            end_date=end_date,
+            reason=reason,
+            status=LeaveStatus.pending,
+            policy_note=format_policy_notes(policy.notes),
+        )
+        session.add(leave_request)
+        session.commit()
+        session.refresh(leave_request)
+
+        managers = session.exec(
+            select(Employee).where(Employee.role.in_(["owner", "admin", "site_manager"]))
+        ).all()
+        await notify_employees(
+            session=session,
+            sender=employee,
+            employees=managers,
+            category=NotificationCategory.leave,
+            target_scope="management",
+            target_value=None,
+            content=_build_leave_summary(leave_request, employee),
+        )
+        response_lines = ["請假申請已送出，主管審核後會再通知你。"]
+        if leave_request.policy_note:
+            response_lines.append(f"提醒：{leave_request.policy_note}")
+        if policy.conflicts:
+            response_lines.append(f"期間內已有 {len(policy.conflicts)} 筆工作安排，主管核准後會需要改派。")
+        await line_service.reply_text(reply_token, "\n".join(response_lines))
+        return
+
+    if text in ATTENDANCE_COMMAND_MAP:
+        result = record_attendance_event(session, employee, text)
+        reply_lines = [f"已記錄：{text}"]
+        if result.assignment:
+            worksite = session.get(Worksite, result.assignment.site_id)
+            reply_lines.append(f"工地：{worksite.name if worksite else '-'}")
+        if result.anomalies:
+            reply_lines.append(f"提醒：{'；'.join(result.anomalies)}")
+        await line_service.reply_text(reply_token, "\n".join(reply_lines))
+        return
+
+    assignment = find_assignment_for_employee(session, employee.id)
+    member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+    action_map = {
+        "已收到": AckStatus.received,
+        "已到場": AckStatus.arrived,
+        "工作開始": AckStatus.started,
+        "工作完成": AckStatus.completed,
+    }
+    if text in action_map and member:
+        member.ack_status = action_map[text]
+        member.last_line_action = text
+        session.add(member)
+        session.commit()
+        await line_service.reply_text(reply_token, f"已記錄：{text}")
+        return
+
+    if text.startswith("異常回報 "):
+        detail = text.split(" ", 1)[1].strip()
+        if member:
+            member.ack_status = AckStatus.exception
+            member.last_line_action = "異常回報"
+            member.note = detail
+            session.add(member)
+            session.commit()
+        await line_service.reply_text(reply_token, f"異常回報已送出：{detail}")
+        return
+
+    available_commands = [
+        "開始綁定",
+        "我的行程",
+        "我的打卡",
+        "我的請假",
+        "請假 事假 2026-07-28 2026-07-28 家中有事",
+        "上班打卡",
+        "下班打卡",
+        "到達工地",
+        "離開工地",
+        "外出",
+        "返回",
+        "加班開始",
+        "加班結束",
+        "已收到",
+        "已到場",
+        "工作開始",
+        "工作完成",
+        "異常回報 現場缺料",
+    ]
+    await line_service.reply_text(reply_token, f"可用指令：{'、'.join(available_commands)}")

@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">Santong Internal Ops</span>
+        <h1>{{ app_name }}</h1>
+        <p class="hero-copy">
+          這不是測試型 LINE Bot，而是以 LINE 為入口、資料庫為核心、後台為控制中心的第一版內部自動化系統。
+          目前已可處理身分綁定、每日工作安排、通知推播、請假審核、會議記錄與個人考勤查詢。
+        </p>
+      </div>
+      <aside class="hero-card hero-side">
+        <div>
+          <label for="actorSelect">目前操作身分</label>
+          <select id="actorSelect"></select>
+        </div>
+        <div class="badge-list">
+          <span class="badge">LINE webhook</span>
+          <span class="badge">每日 07:00 推播</span>
+          <span class="badge">角色權限</span>
+          <span class="badge">請假 / 考勤</span>
+        </div>
+        <p class="muted">目前後台用模擬身分切換測流程，正式版可再改成公司登入。</p>
+      </aside>
+    </section>
+
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>系統總覽</h2>
+          <p class="muted">先把第一版六大核心流程跑通，再逐步延伸到財務、文件、Google 整合。</p>
+        </div>
+      </div>
+      <div id="stats" class="stats"></div>
+    </section>
+
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>LINE 正式接線</h2>
+          <p class="muted">對齊 LINE 官方 Messaging API：Webhook URL 設定、驗證與 Rich Menu 佈署。</p>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="full">
+          <label for="lineBaseUrl">公開網址 Base URL</label>
+          <input id="lineBaseUrl" placeholder="例如：https://your-domain.example.com">
+        </div>
+        <div class="button-row full">
+          <button type="button" onclick="configureLineWebhook()">設定並驗證 Webhook</button>
+          <button type="button" class="button-secondary" onclick="testLineWebhook()">測試 Webhook</button>
+          <button type="button" class="button-secondary" onclick="deployLineRichMenu()">佈署預設 Rich Menu</button>
+          <button type="button" class="button-secondary" onclick="loadLineStatus()">重新整理 LINE 狀態</button>
+        </div>
+      </div>
+      <div id="lineStatusConsole" class="console" style="margin-top:14px;"></div>
+    </section>
+
+    <div class="grid">
+      <section class="panel span-8">
+        <div class="panel-header">
+          <div>
+            <h2>建立每日工作安排</h2>
+            <p class="muted">會自動檢查已核准請假的員工，避免排班衝突。</p>
+          </div>
+        </div>
+        <form id="assignmentForm" class="form-grid">
+          <div>
+            <label for="workDate">日期</label>
+            <input id="workDate" name="workDate" type="date" required>
+          </div>
+          <div>
+            <label for="siteId">工地</label>
+            <select id="siteId" name="siteId" required></select>
+          </div>
+          <div class="full">
+            <label for="workItem">工作內容</label>
+            <input id="workItem" name="workItem" placeholder="例如：堆高機移料、現場物料整理" required>
+          </div>
+          <div>
+            <label for="supervisorCode">負責主管</label>
+            <select id="supervisorCode" name="supervisorCode"></select>
+          </div>
+          <div>
+            <label for="employeeCodes">執行人員</label>
+            <select id="employeeCodes" name="employeeCodes" multiple size="5"></select>
+          </div>
+          <div>
+            <label for="startTime">開始時間</label>
+            <input id="startTime" name="startTime" type="time">
+          </div>
+          <div>
+            <label for="endTime">結束時間</label>
+            <input id="endTime" name="endTime" type="time">
+          </div>
+          <div>
+            <label for="vehicle">車輛</label>
+            <input id="vehicle" name="vehicle" placeholder="例如：3.5T 貨車">
+          </div>
+          <div>
+            <label for="equipment">機具</label>
+            <input id="equipment" name="equipment" placeholder="例如：堆高機">
+          </div>
+          <div class="full">
+            <label for="assignmentNotes">注意事項</label>
+            <textarea id="assignmentNotes" name="assignmentNotes" placeholder="例如：進場前完成安全檢查"></textarea>
+          </div>
+          <div class="full button-row">
+            <button type="submit">建立工作安排</button>
+            <button type="button" class="button-secondary" onclick="loadAssignments()">重新整理列表</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2>臨時通知</h2>
+            <p class="muted">通知會保留批次與每位收件人的送達紀錄。</p>
+          </div>
+        </div>
+        <form id="notificationForm" class="form-grid">
+          <div>
+            <label for="notifyCategory">通知類別</label>
+            <select id="notifyCategory">
+              <option value="ad_hoc">臨時通知</option>
+              <option value="meeting">會議通知</option>
+              <option value="attendance_alert">考勤異常</option>
+              <option value="site_progress">工地進度</option>
+            </select>
+          </div>
+          <div>
+            <label for="targetScope">發送對象</label>
+            <select id="targetScope">
+              <option value="all">全體員工</option>
+              <option value="site">指定工地</option>
+              <option value="department">指定部門</option>
+              <option value="employee">指定員工</option>
+              <option value="management">管理群組</option>
+              <option value="supervisor">單一主管群</option>
+            </select>
+          </div>
+          <div class="full">
+            <label for="targetValue">目標值</label>
+            <input id="targetValue" placeholder="工地 ID、部門名稱或員工代碼（可逗號分隔）">
+          </div>
+          <div class="full">
+            <label for="notifyContent">通知內容</label>
+            <textarea id="notifyContent" placeholder="輸入要推播的內容"></textarea>
+          </div>
+          <div class="full">
+            <button type="submit">送出通知</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2>工作安排清單</h2>
+            <p class="muted">可檢視當日或指定日期的工地、人員與狀態。</p>
+          </div>
+          <div class="button-row">
+            <input id="assignmentFilterDate" type="date">
+            <button type="button" class="button-secondary" onclick="loadAssignments()">查詢</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>日期</th>
+                <th>工地</th>
+                <th>工作內容</th>
+                <th>主管</th>
+                <th>人員</th>
+                <th>狀態</th>
+              </tr>
+            </thead>
+            <tbody id="assignmentRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-6">
+        <div class="panel-header">
+          <div>
+            <h2>請假審核</h2>
+            <p class="muted">員工可由 LINE 提交，主管與行政可在這裡核准或退回。</p>
+          </div>
+          <div class="button-row">
+            <select id="leaveStatusFilter">
+              <option value="all">全部狀態</option>
+              <option value="pending">待審</option>
+              <option value="approved">已核准</option>
+              <option value="rejected">已退回</option>
+            </select>
+            <button type="button" class="button-secondary" onclick="loadLeaves()">查詢</button>
+          </div>
+        </div>
+        <div id="leaveNotice" class="notice">待審清單會依目前操作身分自動過濾。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>員工</th>
+                <th>假別</th>
+                <th>日期</th>
+                <th>原因 / 規則提醒</th>
+                <th>狀態</th>
+                <th>衝突</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="leaveRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-6">
+        <div class="panel-header">
+          <div>
+            <h2>會議記錄</h2>
+            <p class="muted">會議結論可直接轉為 LINE 決議通知。</p>
+          </div>
+        </div>
+        <form id="meetingForm" class="form-grid">
+          <div class="full">
+            <label for="meetingTitle">會議名稱</label>
+            <input id="meetingTitle" required>
+          </div>
+          <div>
+            <label for="meetingAt">日期時間</label>
+            <input id="meetingAt" type="datetime-local" required>
+          </div>
+          <div>
+            <label for="meetingLocation">地點</label>
+            <input id="meetingLocation">
+          </div>
+          <div class="full">
+            <label for="meetingAttendees">出席人員</label>
+            <input id="meetingAttendees" placeholder="員工代碼，以逗號分隔">
+          </div>
+          <div class="full">
+            <label for="meetingAgenda">討論事項</label>
+            <textarea id="meetingAgenda" required></textarea>
+          </div>
+          <div class="full">
+            <label for="meetingDecisions">決議事項</label>
+            <textarea id="meetingDecisions" required></textarea>
+          </div>
+          <div>
+            <label for="meetingOwner">負責人</label>
+            <select id="meetingOwner"></select>
+          </div>
+          <div>
+            <label for="meetingDueDate">預定完成日</label>
+            <input id="meetingDueDate" type="date">
+          </div>
+          <div class="full">
+            <label><input id="meetingSendSummary" type="checkbox"> 建立後同步發送 LINE 摘要</label>
+          </div>
+          <div class="full">
+            <button type="submit">建立會議記錄</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2>主管異常審核</h2>
+            <p class="muted">集中查看請假衝突、未打卡、遲到與週日出勤等異常。</p>
+          </div>
+          <div class="button-row">
+            <input id="exceptionFilterDate" type="date">
+            <button type="button" class="button-secondary" onclick="loadAttendanceExceptions()">查詢</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>員工</th>
+                <th>日期</th>
+                <th>工地</th>
+                <th>最新狀態</th>
+                <th>異常</th>
+                <th>備註</th>
+              </tr>
+            </thead>
+            <tbody id="exceptionRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2>自動改派建議</h2>
+            <p class="muted">依工地、技能、當日空班與 LINE 綁定狀態，自動排序候補人員。</p>
+          </div>
+        </div>
+        <div id="reassignmentNotice" class="notice">在請假衝突列按「候補建議」後，這裡會顯示改派名單。</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>請假員工</th>
+                <th>工作安排</th>
+                <th>候補建議</th>
+              </tr>
+            </thead>
+            <tbody id="reassignmentRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-8">
+        <div class="panel-header">
+          <div>
+            <h2>員工名冊與綁定狀態</h2>
+            <p class="muted">第一版先把員工代碼、角色與 LINE 綁定碼集中管理。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>員工代碼</th>
+                <th>姓名</th>
+                <th>角色</th>
+                <th>工地</th>
+                <th>LINE</th>
+                <th>綁定碼</th>
+              </tr>
+            </thead>
+            <tbody id="employeeRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-4">
+        <div class="panel-header">
+          <div>
+            <h2>LINE 模擬測試</h2>
+            <p class="muted">尚未接正式 LINE channel 前，可先用這裡測流程。</p>
+          </div>
+        </div>
+        <form id="simulateForm" class="form-grid">
+          <div class="full">
+            <label for="simulateLineUser">LINE User ID</label>
+            <input id="simulateLineUser" value="U-demo-user">
+          </div>
+          <div class="full">
+            <label for="simulateMessage">測試訊息</label>
+            <textarea id="simulateMessage" placeholder="例如：綁定 ST-1005"></textarea>
+          </div>
+          <div class="full">
+            <button type="submit">送入 webhook</button>
+          </div>
+        </form>
+        <div id="console" class="console"></div>
+      </section>
+
+      <section class="panel span-12">
+        <div class="panel-header">
+          <div>
+            <h2>考勤與回報查詢</h2>
+            <p class="muted">第一版用工作回報狀態做簡易考勤；第二版再擴充 GPS、QR Code、拍照打卡。</p>
+          </div>
+          <div class="button-row">
+            <input id="attendanceFilterDate" type="date">
+            <select id="attendanceEmployee"></select>
+            <button type="button" class="button-secondary" onclick="loadAttendance()">查詢</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>員工</th>
+                <th>日期</th>
+                <th>工地</th>
+                <th>狀態</th>
+                <th>最後動作</th>
+                <th>最近時間</th>
+                <th>異常</th>
+                <th>備註</th>
+              </tr>
+            </thead>
+            <tbody id="attendanceRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      actorCode: "{{ default_actor_code }}",
+      employees: [],
+      worksites: [],
+    };
+
+    function api(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set("X-Actor-Code", state.actorCode);
+      if (!headers.has("Content-Type") && options.body) {
+        headers.set("Content-Type", "application/json");
+      }
+      return fetch(path, { ...options, headers }).then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        return data;
+      });
+    }
+
+    function todayString() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function setConsole(message) {
+      document.getElementById("console").textContent = message;
+    }
+
+    function renderStats(data) {
+      const stats = [
+        ["員工數", data.employee_count],
+        ["工地數", data.worksite_count],
+        ["今日工作安排", data.today_assignment_count],
+        ["待審請假", data.pending_leave_count],
+        ["考勤異常", data.attendance_exception_count],
+        ["未綁定員工", data.unbound_employee_count],
+      ];
+      document.getElementById("stats").innerHTML = stats.map(([label, value]) => `
+        <article class="stat">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </article>
+      `).join("");
+    }
+
+    function renderSelectOptions() {
+      const actorSelect = document.getElementById("actorSelect");
+      actorSelect.innerHTML = state.employees.map((employee) => `
+        <option value="${employee.employee_code}" ${employee.employee_code === state.actorCode ? "selected" : ""}>
+          ${employee.employee_code}｜${employee.name}｜${employee.role}
+        </option>
+      `).join("");
+
+      const siteOptions = state.worksites.map((site) => `<option value="${site.id}">${site.name}</option>`).join("");
+      document.getElementById("siteId").innerHTML = siteOptions;
+
+      const employeeOptions = state.employees.map((employee) => `
+        <option value="${employee.employee_code}">
+          ${employee.employee_code}｜${employee.name}
+        </option>
+      `).join("");
+      document.getElementById("employeeCodes").innerHTML = employeeOptions;
+      document.getElementById("attendanceEmployee").innerHTML = `<option value="">全部員工</option>${employeeOptions}`;
+
+      const supervisors = state.employees.filter((employee) => ["owner", "admin", "site_manager"].includes(employee.role));
+      const supervisorOptions = `<option value="">依目前角色自動帶入</option>` + supervisors.map((employee) => `
+        <option value="${employee.employee_code}">
+          ${employee.employee_code}｜${employee.name}
+        </option>
+      `).join("");
+      document.getElementById("supervisorCode").innerHTML = supervisorOptions;
+      document.getElementById("meetingOwner").innerHTML = supervisorOptions;
+    }
+
+    function renderEmployees(rows) {
+      document.getElementById("employeeRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.employee_code}</td>
+          <td>${row.name}</td>
+          <td><span class="pill">${row.role}</span></td>
+          <td>${row.home_site_name}</td>
+          <td>${row.line_bound ? "已綁定" : "未綁定"}</td>
+          <td>${row.bind_token}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderAssignments(rows) {
+      document.getElementById("assignmentRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.work_date}</td>
+          <td>${row.site_name}</td>
+          <td>${row.work_item}<br><span class="muted">${row.notes || ""}</span></td>
+          <td>${row.supervisor_name}</td>
+          <td>${row.members.join("、")}</td>
+          <td><span class="pill">${row.status}</span></td>
+        </tr>
+      `).join("");
+    }
+
+    function renderLeaves(rows) {
+      document.getElementById("leaveNotice").textContent = `共 ${rows.length} 筆請假申請，已依目前操作身分與狀態條件過濾。`;
+      document.getElementById("leaveRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.employee_name}<br><span class="muted">${row.employee_code}</span></td>
+          <td>${row.leave_type}</td>
+          <td>${row.start_date}<br>${row.end_date}</td>
+          <td>
+            ${row.reason}
+            ${row.policy_note ? `<br><span class="muted">提醒：${row.policy_note}</span>` : ""}
+            ${row.review_note ? `<br><span class="muted">審核：${row.review_note}</span>` : ""}
+          </td>
+          <td><span class="pill">${row.status}</span></td>
+          <td>
+            ${row.conflict_count ? `<strong>${row.conflict_count} 筆</strong><br><span class="muted">${row.conflicts.map((item) => `${item.work_date} ${item.site_name}`).join(" / ")}</span><br><button type="button" class="button-secondary" onclick="loadReassignmentSuggestions(${row.id})">候補建議</button>` : "-"}
+          </td>
+          <td class="button-row">
+            ${row.status === "pending" ? `
+              <button type="button" onclick="decideLeave(${row.id}, 'approved')">核准</button>
+              <button type="button" class="button-danger" onclick="decideLeave(${row.id}, 'rejected')">退回</button>
+            ` : `<span class="muted">已完成</span>`}
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    function renderAttendance(rows) {
+      document.getElementById("attendanceRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.employee_name}<br><span class="muted">${row.employee_code}</span></td>
+          <td>${row.work_date}</td>
+          <td>${row.site_name}</td>
+          <td><span class="pill">${row.ack_status}</span></td>
+          <td>${row.last_action || "-"}</td>
+          <td>${row.last_event_at ? row.last_event_at.replace("T", " ").slice(0, 16) : "-"}</td>
+          <td>${row.anomalies.length ? row.anomalies.join("、") : "-"}</td>
+          <td>${row.note || "-"}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderAttendanceExceptions(rows) {
+      document.getElementById("exceptionRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.employee_name}<br><span class="muted">${row.employee_code}</span></td>
+          <td>${row.work_date}</td>
+          <td>${row.site_name}</td>
+          <td><span class="pill">${row.ack_status}</span></td>
+          <td>${row.anomalies.join("、")}</td>
+          <td>${row.note || "-"}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderReassignmentSuggestions(data) {
+      const rows = data.assignments || [];
+      document.getElementById("reassignmentNotice").textContent = rows.length
+        ? `${data.employee_name} 在 ${data.start_date} 至 ${data.end_date} 的衝突工作安排，共找到 ${rows.length} 筆可評估改派。`
+        : `${data.employee_name} 在 ${data.start_date} 至 ${data.end_date} 沒有需要改派的工作安排。`;
+      document.getElementById("reassignmentRows").innerHTML = rows.map((row) => `
+        <tr>
+          <td>${row.absent_employee_name}<br><span class="muted">${row.absent_employee_code}</span></td>
+          <td>
+            ${row.work_date}｜${row.site_name}<br>
+            ${row.work_item}<br>
+            <span class="muted">機具：${row.equipment || "-"}｜車輛：${row.vehicle || "-"}</span>
+          </td>
+          <td>
+            ${row.candidates.length ? row.candidates.map((candidate) => `
+              <div style="margin-bottom:10px;">
+                <strong>${candidate.employee_code}｜${candidate.name}</strong>
+                <span class="pill">分數 ${candidate.score}</span><br>
+                <span class="muted">${candidate.home_site_name}｜${candidate.role}｜${candidate.machine_skills.join("、") || "未填技能"}</span><br>
+                <span class="muted">${candidate.reasons.join("、")}</span><br>
+                <button type="button" class="button-secondary" onclick="applyReassignment(${row.assignment_id}, '${row.absent_employee_code}', '${candidate.employee_code}')">套用這位候補</button>
+              </div>
+            `).join("") : '<span class="muted">目前沒有可直接建議的人員</span>'}
+          </td>
+        </tr>
+      `).join("");
+    }
+
+    async function bootstrap() {
+      document.getElementById("workDate").value = todayString();
+      document.getElementById("assignmentFilterDate").value = todayString();
+      document.getElementById("attendanceFilterDate").value = todayString();
+      document.getElementById("exceptionFilterDate").value = todayString();
+      document.getElementById("meetingAt").value = `${todayString()}T09:00`;
+      await loadMeta();
+      await Promise.all([
+        loadDashboard(),
+        loadEmployees(),
+        loadAssignments(),
+        loadLeaves(),
+        loadAttendance(),
+        loadAttendanceExceptions(),
+        loadLineStatus(),
+      ]);
+    }
+
+    async function loadMeta() {
+      const data = await api("/api/meta/options");
+      state.employees = data.employees;
+      state.worksites = data.worksites;
+      renderSelectOptions();
+    }
+
+    async function loadDashboard() {
+      const data = await api("/api/dashboard");
+      renderStats(data);
+    }
+
+    async function loadLineStatus() {
+      try {
+        const data = await api("/api/line-management/status");
+        document.getElementById("lineBaseUrl").value = data.configured.public_base_url || "";
+        document.getElementById("lineStatusConsole").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("lineStatusConsole").textContent = error.message;
+      }
+    }
+
+    async function loadEmployees() {
+      const data = await api("/api/employees");
+      renderEmployees(data);
+    }
+
+    async function loadAssignments() {
+      const dateValue = document.getElementById("assignmentFilterDate").value;
+      const query = dateValue ? `?target_date=${dateValue}` : "";
+      const data = await api(`/api/assignments${query}`);
+      renderAssignments(data);
+    }
+
+    async function loadLeaves() {
+      const filterValue = document.getElementById("leaveStatusFilter").value;
+      const query = filterValue && filterValue !== "all" ? `?status_filter=${filterValue}` : "";
+      const data = await api(`/api/leave-requests${query}`);
+      renderLeaves(data);
+    }
+
+    async function loadAttendance() {
+      const dateValue = document.getElementById("attendanceFilterDate").value;
+      const employeeCode = document.getElementById("attendanceEmployee").value;
+      const params = new URLSearchParams();
+      if (dateValue) params.set("target_date", dateValue);
+      if (employeeCode) params.set("employee_code", employeeCode);
+      const query = params.toString() ? `?${params.toString()}` : "";
+      const data = await api(`/api/attendance${query}`);
+      renderAttendance(data);
+    }
+
+    async function loadAttendanceExceptions() {
+      const dateValue = document.getElementById("exceptionFilterDate").value;
+      const query = dateValue ? `?target_date=${dateValue}` : "";
+      const data = await api(`/api/attendance/exceptions${query}`);
+      renderAttendanceExceptions(data);
+    }
+
+    async function loadReassignmentSuggestions(leaveId) {
+      try {
+        const data = await api(`/api/leave-requests/${leaveId}/reassignment-suggestions`);
+        renderReassignmentSuggestions(data);
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function applyReassignment(assignmentId, absentEmployeeCode, replacementEmployeeCode) {
+      try {
+        const data = await api(`/api/assignments/${assignmentId}/apply-reassignment`, {
+          method: "POST",
+          body: JSON.stringify({
+            absent_employee_code: absentEmployeeCode,
+            replacement_employee_code: replacementEmployeeCode,
+            notify_replacement: true,
+          }),
+        });
+        await Promise.all([loadAssignments(), loadLeaves(), loadAttendance(), loadAttendanceExceptions()]);
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function configureLineWebhook() {
+      try {
+        const data = await api("/api/line-management/webhook/configure", {
+          method: "POST",
+          body: JSON.stringify({
+            base_url: document.getElementById("lineBaseUrl").value || null,
+            test_after_set: true,
+          }),
+        });
+        document.getElementById("lineStatusConsole").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("lineStatusConsole").textContent = error.message;
+      }
+    }
+
+    async function testLineWebhook() {
+      try {
+        const data = await api("/api/line-management/webhook/test", { method: "POST" });
+        document.getElementById("lineStatusConsole").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("lineStatusConsole").textContent = error.message;
+      }
+    }
+
+    async function deployLineRichMenu() {
+      try {
+        const data = await api("/api/line-management/richmenu/deploy", {
+          method: "POST",
+          body: JSON.stringify({
+            base_url: document.getElementById("lineBaseUrl").value || null,
+            set_default: true,
+          }),
+        });
+        document.getElementById("lineStatusConsole").textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById("lineStatusConsole").textContent = error.message;
+      }
+    }
+
+    async function decideLeave(id, statusValue) {
+      try {
+        const data = await api(`/api/leave-requests/${id}/decision`, {
+          method: "POST",
+          body: JSON.stringify({ status: statusValue, review_note: statusValue === "approved" ? "後台核准" : "後台退回" }),
+        });
+        await Promise.all([loadDashboard(), loadLeaves(), loadAttendance(), loadAttendanceExceptions()]);
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    document.getElementById("actorSelect").addEventListener("change", async (event) => {
+      state.actorCode = event.target.value;
+      await bootstrap();
+      setConsole(`已切換操作身分：${state.actorCode}`);
+    });
+
+    document.getElementById("assignmentForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedEmployees = [...document.getElementById("employeeCodes").selectedOptions].map((option) => option.value);
+      const payload = {
+        work_date: document.getElementById("workDate").value,
+        site_id: Number(document.getElementById("siteId").value),
+        work_item: document.getElementById("workItem").value,
+        supervisor_code: document.getElementById("supervisorCode").value || null,
+        employee_codes: selectedEmployees,
+        start_time: document.getElementById("startTime").value || null,
+        end_time: document.getElementById("endTime").value || null,
+        vehicle: document.getElementById("vehicle").value || null,
+        equipment: document.getElementById("equipment").value || null,
+        notes: document.getElementById("assignmentNotes").value || null,
+      };
+      try {
+        const data = await api("/api/assignments", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadDashboard(), loadAssignments(), loadAttendance(), loadAttendanceExceptions()]);
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    });
+
+    document.getElementById("notificationForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {
+        category: document.getElementById("notifyCategory").value,
+        target_scope: document.getElementById("targetScope").value,
+        target_value: document.getElementById("targetValue").value || null,
+        content: document.getElementById("notifyContent").value,
+      };
+      try {
+        const data = await api("/api/notifications/send", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    });
+
+    document.getElementById("meetingForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const attendeeCodes = document.getElementById("meetingAttendees").value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      const payload = {
+        title: document.getElementById("meetingTitle").value,
+        meeting_at: document.getElementById("meetingAt").value,
+        location: document.getElementById("meetingLocation").value || null,
+        attendee_codes: attendeeCodes,
+        agenda: document.getElementById("meetingAgenda").value,
+        decisions: document.getElementById("meetingDecisions").value,
+        owner_code: document.getElementById("meetingOwner").value || null,
+        due_date: document.getElementById("meetingDueDate").value || null,
+        send_summary: document.getElementById("meetingSendSummary").checked,
+      };
+      try {
+        const data = await api("/api/meetings", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    });
+
+    document.getElementById("simulateForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {
+        line_user_id: document.getElementById("simulateLineUser").value,
+        message: document.getElementById("simulateMessage").value,
+      };
+      try {
+        const data = await api("/api/simulate/line-message", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        await Promise.all([loadDashboard(), loadEmployees(), loadLeaves(), loadAttendance()]);
+        await loadAttendanceExceptions();
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    });
+
+    bootstrap().catch((error) => setConsole(error.message));
+  </script>
+</body>
+</html>
