@@ -202,6 +202,21 @@ class AttendanceEvent(SQLModel, table=True):
     longitude: Optional[float] = None
 
 
+class PhotoUploadLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    employee_id: int = Field(foreign_key="employee.id", index=True)
+    assignment_id: Optional[int] = Field(default=None, foreign_key="workassignment.id", index=True)
+    site_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    line_user_id: Optional[str] = Field(default=None, index=True)
+    source_message_id: Optional[str] = Field(default=None, index=True)
+    file_name: str
+    drive_file_id: str = Field(index=True)
+    drive_folder_id: str
+    drive_url: str
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    note: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+
 class MeetingRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(index=True)

@@ -8,3 +8,5 @@ pydantic-settings>=2.10,<2.11
 apscheduler>=3.11,<3.12
 pillow>=11.3,<11.4
 python-multipart>=0.0.20,<0.0.21
+google-api-python-client>=2.0.0
+google-auth>=2.0.0

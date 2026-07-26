@@ -135,6 +135,17 @@ class LinePlatformService:
             headers=self._headers(None),
         )
 
+    async def get_message_content(self, message_id: str) -> tuple[bytes, str]:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{self.data_base}/message/{message_id}/content",
+                headers=self._headers(None),
+            )
+        if response.status_code >= 400:
+            raise LinePlatformError(f"LINE 圖片下載失敗：{response.status_code} {response.text}")
+        content_type = response.headers.get("content-type", "application/octet-stream")
+        return response.content, content_type
+
 
 line_platform_service = LinePlatformService()
 

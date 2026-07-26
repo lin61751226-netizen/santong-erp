@@ -119,9 +119,19 @@ PUBLIC_BASE_URL=http://127.0.0.1:8000
 TIMEZONE=Asia/Taipei
 LINE_CHANNEL_SECRET=
 LINE_CHANNEL_ACCESS_TOKEN=
+GOOGLE_SERVICE_ACCOUNT_JSON=
+GOOGLE_DRIVE_WORKLOG_FOLDER_ID=1j82gzF2AkiHvJ6sv1ecLvN1E0vQff9F1
+GOOGLE_DRIVE_PUBLIC_SHARE=true
 DAILY_PUSH_HOUR=7
 DAILY_PUSH_MINUTE=0
 ```
+
+### Google Drive 工作相片
+
+- `GOOGLE_DRIVE_WORKLOG_FOLDER_ID` 已對應 `三通工程行_工作相片`
+- `GOOGLE_SERVICE_ACCOUNT_JSON` 可放 service account JSON 內容，或本機 JSON 檔案絕對路徑
+- 需要先把 `三通工程行_工作相片` 分享給 service account 信箱，否則 FastAPI 雖然能收到 LINE 圖片，仍無法寫入 Drive
+- 啟用後，綁定員工直接從 LINE 傳圖片，系統會自動建立 `YYYY-MM-DD` 子資料夾、上傳照片，並把雲端連結寫回系統資料庫
 
 ## Demo 測試資料
 

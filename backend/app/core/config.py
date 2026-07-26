@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Taipei"
     line_channel_secret: str = ""
     line_channel_access_token: str = ""
+    google_service_account_json: str = ""
+    google_drive_worklog_folder_id: str = ""
+    google_drive_public_share: bool = True
     daily_push_hour: int = 7
     daily_push_minute: int = 0
 

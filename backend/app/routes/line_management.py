@@ -43,6 +43,10 @@ async def line_status(
             "channel_secret": bool(settings.line_channel_secret),
             "channel_access_token": bool(settings.line_channel_access_token),
             "public_base_url": settings.public_base_url,
+            "google_drive_worklog_folder_id": settings.google_drive_worklog_folder_id,
+            "google_drive_configured": bool(
+                settings.google_drive_worklog_folder_id and settings.google_service_account_json
+            ),
         },
         "recommended_webhook_url": f"{settings.public_base_url.rstrip('/')}/api/line/webhook",
         "webhook_info": webhook_info,

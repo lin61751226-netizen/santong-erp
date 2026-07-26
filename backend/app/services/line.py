@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -21,9 +21,11 @@ from app.models import (
     NotificationBatch,
     NotificationCategory,
     NotificationDelivery,
+    PhotoUploadLog,
     WorkAssignment,
     Worksite,
 )
+from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service
 from app.services.hr import (
     ATTENDANCE_COMMAND_MAP,
     evaluate_leave_policy,
@@ -261,6 +263,87 @@ async def notify_employees(
     }
 
 
+def _event_datetime(event: dict[str, Any]) -> datetime:
+    timestamp = event.get("timestamp")
+    if not timestamp:
+        return datetime.now(timezone.utc)
+    return datetime.fromtimestamp(int(timestamp) / 1000, tz=timezone.utc)
+
+
+async def _handle_image_message(
+    session: Session,
+    *,
+    event: dict[str, Any],
+    message: dict[str, Any],
+    reply_token: str,
+    line_user_id: str,
+    employee: Employee | None,
+) -> None:
+    if not reply_token:
+        return
+    if not employee:
+        await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先從 Rich Menu 開始綁定。")
+        return
+
+    message_id = str(message.get("id", "")).strip()
+    if not message_id:
+        await line_service.reply_text(reply_token, "找不到圖片內容，請重新傳送一次。")
+        return
+
+    try:
+        upload = await google_drive_worklog_service.upload_line_photo(
+            message_id=message_id,
+            employee_name=employee.name,
+            happened_at=_event_datetime(event),
+        )
+    except (GoogleDriveWorklogError, LinePlatformError) as exc:
+        await line_service.reply_text(reply_token, f"已收到照片，但上傳 Google 雲端硬碟失敗：{exc}")
+        return
+
+    assignment = find_assignment_for_employee(session, employee.id)
+    member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+    site = None
+    if assignment:
+        site = session.get(Worksite, assignment.site_id)
+        report_photos = list(assignment.report_photos or [])
+        report_photos.append(upload.file_url)
+        assignment.report_photos = report_photos
+        session.add(assignment)
+    elif employee.home_site_id:
+        site = session.get(Worksite, employee.home_site_id)
+
+    if member:
+        member.photo_url = upload.file_url
+        member.last_line_action = "上傳照片"
+        session.add(member)
+
+    session.add(
+        PhotoUploadLog(
+            employee_id=employee.id,
+            assignment_id=assignment.id if assignment else None,
+            site_id=site.id if site else None,
+            line_user_id=line_user_id,
+            source_message_id=message_id,
+            file_name=upload.file_name,
+            drive_file_id=upload.file_id,
+            drive_folder_id=upload.folder_id,
+            drive_url=upload.file_url,
+            note="line image upload",
+        )
+    )
+    session.commit()
+
+    reply_lines = [
+        "工作照片已上傳到 Google 雲端硬碟",
+        f"資料夾：{upload.date_folder_name}",
+        f"檔名：{upload.file_name}",
+        f"連結：{upload.file_url}",
+    ]
+    if assignment:
+        reply_lines.append(f"工作安排：{assignment.work_date:%Y/%m/%d} {site.name if site else '-'}")
+    await line_service.reply_text(reply_token, "\n".join(reply_lines))
+
+
 async def process_webhook_event(session: Session, event: dict[str, Any]) -> None:
     event_type = event.get("type")
     reply_token = event.get("replyToken", "")
@@ -306,11 +389,24 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     if event_type != "message":
         return
     message = event.get("message", {})
-    if message.get("type") != "text" or not line_user_id:
+    message_type = message.get("type")
+    employee = _employee_by_line_user(session, line_user_id) if line_user_id else None
+
+    if message_type == "image" and line_user_id:
+        await _handle_image_message(
+            session,
+            event=event,
+            message=message,
+            reply_token=reply_token,
+            line_user_id=line_user_id,
+            employee=employee,
+        )
+        return
+
+    if message_type != "text" or not line_user_id:
         return
 
     text = str(message.get("text", "")).strip()
-    employee = _employee_by_line_user(session, line_user_id)
 
     if text == "開始綁定":
         await _reply_account_link_prompt(session, reply_token, line_user_id, settings.public_base_url)
