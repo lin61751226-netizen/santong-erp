@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,12 +9,19 @@ DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _default_public_base_url() -> str:
+    external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+    if external_hostname:
+        return f"https://{external_hostname}"
+    return "http://127.0.0.1:8000"
+
+
 class Settings(BaseSettings):
     app_name: str = "三通工程自動化管理系統"
     environment: str = "development"
     database_url: str = f"sqlite:///{(DATA_DIR / 'santong.db').as_posix()}"
     default_actor_code: str = "ADMIN001"
-    public_base_url: str = "http://127.0.0.1:8000"
+    public_base_url: str = _default_public_base_url()
     timezone: str = "Asia/Taipei"
     line_channel_secret: str = ""
     line_channel_access_token: str = ""
