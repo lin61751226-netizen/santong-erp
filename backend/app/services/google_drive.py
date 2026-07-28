@@ -5,20 +5,24 @@ import io
 import json
 import mimetypes
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.models import Employee
 from app.services.line_platform import line_platform_service
 
 
 DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
+LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
 
 
 class GoogleDriveWorklogError(Exception):
@@ -72,6 +76,206 @@ class GoogleDriveWorklogService:
     @staticmethod
     def _escape_drive_query(value: str) -> str:
         return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    def _find_child(
+        self,
+        client,
+        *,
+        parent_id: str,
+        name: str,
+        mime_type: str | None = None,
+    ) -> dict | None:
+        query_parts = [
+            f"'{parent_id}' in parents",
+            "trashed = false",
+            f"name = '{self._escape_drive_query(name)}'",
+        ]
+        if mime_type:
+            query_parts.append(f"mimeType = '{mime_type}'")
+        response = (
+            client.files()
+            .list(
+                q=" and ".join(query_parts),
+                spaces="drive",
+                fields="files(id,name,mimeType,modifiedTime)",
+                pageSize=1,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+            )
+            .execute()
+        )
+        files = response.get("files", [])
+        return files[0] if files else None
+
+    def _system_data_folder_id(self, client, *, create: bool) -> str | None:
+        root_folder_id = settings.google_drive_worklog_folder_id.strip()
+        if not root_folder_id:
+            raise GoogleDriveWorklogError("GOOGLE_DRIVE_WORKLOG_FOLDER_ID 尚未設定")
+
+        existing = self._find_child(
+            client,
+            parent_id=root_folder_id,
+            name=SYSTEM_DATA_FOLDER_NAME,
+            mime_type=FOLDER_MIME_TYPE,
+        )
+        if existing:
+            return existing["id"]
+        if not create:
+            return None
+
+        created = (
+            client.files()
+            .create(
+                body={
+                    "name": SYSTEM_DATA_FOLDER_NAME,
+                    "mimeType": FOLDER_MIME_TYPE,
+                    "parents": [root_folder_id],
+                },
+                fields="id",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        return created["id"]
+
+    def _load_line_bindings_document(self) -> dict | None:
+        client = self._build_client()
+        folder_id = self._system_data_folder_id(client, create=False)
+        if not folder_id:
+            return None
+        file_item = self._find_child(
+            client,
+            parent_id=folder_id,
+            name=LINE_BINDINGS_FILE_NAME,
+        )
+        if not file_item:
+            return None
+        try:
+            content = (
+                client.files()
+                .get_media(fileId=file_item["id"], supportsAllDrives=True)
+                .execute()
+            )
+            return json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise GoogleDriveWorklogError("Google Drive 的 LINE 綁定備份格式錯誤") from exc
+
+    def _save_line_bindings_document(self, bindings: list[dict[str, str]]) -> dict:
+        client = self._build_client()
+        folder_id = self._system_data_folder_id(client, create=True)
+        existing = self._find_child(
+            client,
+            parent_id=folder_id,
+            name=LINE_BINDINGS_FILE_NAME,
+        )
+        payload = {
+            "version": 1,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "bindings": bindings,
+        }
+        media = MediaIoBaseUpload(
+            io.BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")),
+            mimetype="application/json",
+            resumable=False,
+        )
+        if existing:
+            saved = (
+                client.files()
+                .update(
+                    fileId=existing["id"],
+                    media_body=media,
+                    fields="id,modifiedTime",
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+        else:
+            saved = (
+                client.files()
+                .create(
+                    body={"name": LINE_BINDINGS_FILE_NAME, "parents": [folder_id]},
+                    media_body=media,
+                    fields="id,modifiedTime",
+                    supportsAllDrives=True,
+                )
+                .execute()
+            )
+        return {
+            "status": "saved",
+            "file_id": saved["id"],
+            "binding_count": len(bindings),
+        }
+
+    async def backup_line_bindings(self, session: Session) -> dict:
+        if not self.is_configured():
+            return {"status": "unconfigured", "binding_count": 0}
+
+        bindings = [
+            {
+                "employee_code": employee.employee_code,
+                "line_user_id": employee.line_user_id,
+            }
+            for employee in session.exec(select(Employee)).all()
+            if employee.line_user_id
+        ]
+        # Never replace a valid Drive backup with an accidentally empty local database.
+        if not bindings:
+            return {"status": "skipped_empty", "binding_count": 0}
+        return await asyncio.to_thread(self._save_line_bindings_document, bindings)
+
+    async def restore_line_bindings(self, session: Session) -> dict:
+        if not self.is_configured():
+            return {"status": "unconfigured", "restored_count": 0}
+
+        document = await asyncio.to_thread(self._load_line_bindings_document)
+        if not document:
+            return {"status": "not_found", "restored_count": 0}
+
+        records = document.get("bindings")
+        if not isinstance(records, list):
+            raise GoogleDriveWorklogError("Google Drive 的 LINE 綁定備份缺少 bindings 清單")
+
+        employees = session.exec(select(Employee)).all()
+        employees_by_code = {employee.employee_code: employee for employee in employees}
+        occupied_user_ids = {
+            employee.line_user_id: employee.employee_code
+            for employee in employees
+            if employee.line_user_id
+        }
+        restored_codes: list[str] = []
+        skipped_codes: list[str] = []
+
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            employee_code = str(record.get("employee_code") or "").strip()
+            line_user_id = str(record.get("line_user_id") or "").strip()
+            employee = employees_by_code.get(employee_code)
+            if not employee or not line_user_id:
+                skipped_codes.append(employee_code or "unknown")
+                continue
+            if employee.line_user_id:
+                if employee.line_user_id != line_user_id:
+                    skipped_codes.append(employee_code)
+                continue
+            occupied_by = occupied_user_ids.get(line_user_id)
+            if occupied_by and occupied_by != employee_code:
+                skipped_codes.append(employee_code)
+                continue
+
+            employee.line_user_id = line_user_id
+            occupied_user_ids[line_user_id] = employee_code
+            session.add(employee)
+            restored_codes.append(employee_code)
+
+        if restored_codes:
+            session.commit()
+        return {
+            "status": "restored",
+            "restored_count": len(restored_codes),
+            "restored_employee_codes": restored_codes,
+            "skipped_employee_codes": skipped_codes,
+        }
 
     def _find_or_create_date_folder(self, folder_name: str) -> str:
         root_folder_id = settings.google_drive_worklog_folder_id.strip()

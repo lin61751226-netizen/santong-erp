@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -13,11 +14,13 @@ from app.routes.line_management import api_router as line_management_api_router
 from app.routes.line_management import page_router as line_management_page_router
 from app.routes.line_webhook import router as line_router
 from app.services.bootstrap import seed_demo_data
+from app.services.google_drive import google_drive_worklog_service
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -25,6 +28,12 @@ async def lifespan(app: FastAPI):
     init_db()
     with session_scope() as session:
         seed_demo_data(session)
+        try:
+            restore_result = await google_drive_worklog_service.restore_line_bindings(session)
+            if restore_result.get("status") in {"restored", "not_found"}:
+                await google_drive_worklog_service.backup_line_bindings(session)
+        except Exception as exc:
+            logger.warning("LINE binding Drive sync failed during startup: %s", exc)
     start_scheduler()
     yield
     stop_scheduler()

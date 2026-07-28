@@ -7,6 +7,7 @@ import secrets
 import shutil
 from typing import Any
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import httpx
 from PIL import Image, ImageDraw, ImageFont
@@ -98,6 +99,14 @@ class LinePlatformService:
         )
         return response["richMenuId"]
 
+    async def list_rich_menus(self) -> list[dict[str, Any]]:
+        response = await self._request(
+            "GET",
+            f"{self.api_base}/richmenu/list",
+            headers=self._headers(None),
+        )
+        return list(response.get("richmenus", []))
+
     async def upload_rich_menu_image(self, rich_menu_id: str, image_path: Path) -> None:
         content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
         await self._request(
@@ -135,6 +144,22 @@ class LinePlatformService:
             "POST",
             f"{self.api_base}/user/{user_id}/richmenu/{rich_menu_id}",
             headers=self._headers(None),
+        )
+
+    async def validate_rich_menu_batch(self, operations: list[dict[str, str]], resume_key: str) -> None:
+        await self._request(
+            "POST",
+            f"{self.api_base}/richmenu/validate/batch",
+            headers=self._headers(),
+            json={"operations": operations, "resumeRequestKey": resume_key},
+        )
+
+    async def replace_rich_menu_links(self, operations: list[dict[str, str]], resume_key: str) -> None:
+        await self._request(
+            "POST",
+            f"{self.api_base}/richmenu/batch",
+            headers=self._headers(),
+            json={"operations": operations, "resumeRequestKey": resume_key},
         )
 
     async def get_message_content(self, message_id: str) -> tuple[bytes, str]:
@@ -353,6 +378,7 @@ def build_default_rich_menu_payloads(base_url: str) -> dict[str, dict[str, Any]]
 
 
 async def deploy_default_rich_menus(base_url: str) -> dict[str, Any]:
+    existing_menus = await line_platform_service.list_rich_menus()
     images = generate_default_rich_menu_images()
     payloads = build_default_rich_menu_payloads(base_url)
 
@@ -366,12 +392,69 @@ async def deploy_default_rich_menus(base_url: str) -> dict[str, Any]:
     await line_platform_service.create_or_update_alias("santong-main", main_id)
     await line_platform_service.create_or_update_alias("santong-tools", tools_id)
 
+    migration = await migrate_santong_rich_menu_links(
+        existing_menus=existing_menus,
+        main_rich_menu_id=main_id,
+        tools_rich_menu_id=tools_id,
+    )
     return {
         "main_rich_menu_id": main_id,
         "tools_rich_menu_id": tools_id,
         "images": {name: str(path) for name, path in images.items()},
         "base_url": base_url,
+        "link_migration": migration,
     }
+
+
+async def migrate_santong_rich_menu_links(
+    *,
+    existing_menus: list[dict[str, Any]],
+    main_rich_menu_id: str,
+    tools_rich_menu_id: str,
+) -> dict[str, Any]:
+    target_ids = {
+        "santong-main": main_rich_menu_id,
+        "santong-tools": tools_rich_menu_id,
+    }
+    operations = []
+    for menu in existing_menus:
+        old_id = str(menu.get("richMenuId") or "")
+        target_id = target_ids.get(str(menu.get("name") or ""))
+        if old_id and target_id and old_id != target_id:
+            operations.append({"type": "link", "from": old_id, "to": target_id})
+
+    if not operations:
+        return {"status": "not_needed", "operation_count": 0}
+
+    resume_key = f"santong-{uuid4().hex}"
+    await line_platform_service.validate_rich_menu_batch(operations, resume_key)
+    await line_platform_service.replace_rich_menu_links(operations, resume_key)
+    return {
+        "status": "accepted",
+        "operation_count": len(operations),
+        "resume_request_key": resume_key,
+    }
+
+
+def bind_employee_line_user(session: Session, employee: Employee, line_user_id: str) -> None:
+    normalized_user_id = line_user_id.strip()
+    if not normalized_user_id:
+        raise LinePlatformError("LINE User ID 不可為空白。")
+
+    existing_employee = session.exec(
+        select(Employee).where(Employee.line_user_id == normalized_user_id)
+    ).first()
+    if existing_employee and existing_employee.id != employee.id:
+        raise LinePlatformError(
+            f"此 LINE 帳號已綁定 {existing_employee.name}，系統不會覆寫既有綁定。"
+        )
+    if employee.line_user_id and employee.line_user_id != normalized_user_id:
+        raise LinePlatformError(
+            f"{employee.name} 已綁定其他 LINE 帳號，系統不會自動覆寫。"
+        )
+
+    employee.line_user_id = normalized_user_id
+    session.add(employee)
 
 
 async def start_account_link_session(session: Session, line_user_id: str, base_url: str) -> dict[str, Any]:
@@ -447,9 +530,8 @@ def complete_account_link_session(session: Session, line_user_id: str, nonce: st
     if not employee:
         raise LinePlatformError("綁定流程存在，但對應員工不存在。")
 
-    employee.line_user_id = line_user_id
+    bind_employee_line_user(session, employee, line_user_id)
     link_session.status = LineLinkStatus.completed
-    session.add(employee)
     session.add(link_session)
     session.commit()
     return {"status": "completed", "employee_code": employee.employee_code, "employee_name": employee.name}

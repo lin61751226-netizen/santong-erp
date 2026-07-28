@@ -38,6 +38,7 @@ from app.services.hr import (
 )
 from app.services.line_platform import (
     LinePlatformError,
+    bind_employee_line_user,
     complete_account_link_session,
     start_account_link_session,
 )
@@ -134,6 +135,16 @@ async def _reply_leave_options(reply_token: str) -> None:
             }
         ],
     )
+
+
+async def _backup_line_bindings(session: Session) -> str | None:
+    try:
+        result = await google_drive_worklog_service.backup_line_bindings(session)
+    except Exception:
+        return "Google Drive 綁定備份失敗，請通知管理者"
+    if result.get("status") == "unconfigured":
+        return "Google Drive 綁定備份尚未設定"
+    return None
 
 
 def _is_group_command(text: str) -> bool:
@@ -488,9 +499,13 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             completed = {"status": "failed"}
         if reply_token:
             if completed["status"] == "completed":
+                backup_warning = await _backup_line_bindings(session)
+                message = f"綁定完成：{completed['employee_name']} ({completed['employee_code']})"
+                if backup_warning:
+                    message += f"\n雲端備份提醒：{backup_warning}"
                 await line_service.reply_text(
                     reply_token,
-                    f"綁定完成：{completed['employee_name']} ({completed['employee_code']})",
+                    message,
                 )
             else:
                 await line_service.reply_text(reply_token, "LINE 正式綁定失敗，請重新從 Rich Menu 開始。")
@@ -508,6 +523,8 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             return
         if data == "action=leave:menu":
             await _reply_leave_options(reply_token)
+            return
+        if data.startswith("action=menu:"):
             return
         await line_service.reply_text(reply_token, "已收到選單操作。")
         return
@@ -551,10 +568,17 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         if not target:
             await line_service.reply_text(reply_token, "找不到綁定碼，請向行政確認。")
             return
-        target.line_user_id = line_user_id
-        session.add(target)
+        try:
+            bind_employee_line_user(session, target, line_user_id)
+        except LinePlatformError as exc:
+            await line_service.reply_text(reply_token, str(exc))
+            return
         session.commit()
-        await line_service.reply_text(reply_token, f"綁定完成：{target.name} ({target.employee_code})")
+        backup_warning = await _backup_line_bindings(session)
+        message = f"綁定完成：{target.name} ({target.employee_code})"
+        if backup_warning:
+            message += f"\n雲端備份提醒：{backup_warning}"
+        await line_service.reply_text(reply_token, message)
         return
 
     if not employee:
