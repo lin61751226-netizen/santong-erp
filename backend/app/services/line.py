@@ -16,6 +16,7 @@ from app.models import (
     AssignmentMember,
     DeliveryStatus,
     Employee,
+    LeaveType,
     LeaveRequest,
     LeaveStatus,
     NotificationBatch,
@@ -84,6 +85,78 @@ class LineService:
 
 
 line_service = LineService()
+
+
+def _quick_reply(items: list[tuple[str, str]]) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": label,
+                    "text": text,
+                },
+            }
+            for label, text in items
+        ]
+    }
+
+
+async def _reply_attendance_options(reply_token: str) -> None:
+    await line_service.reply_messages(
+        reply_token,
+        [
+            {
+                "type": "text",
+                "text": "請選擇出勤打卡項目：",
+                "quickReply": _quick_reply(
+                    [
+                        ("上班打卡", "上班打卡"),
+                        ("下班打卡", "下班打卡"),
+                    ]
+                ),
+            }
+        ],
+    )
+
+
+async def _reply_leave_options(reply_token: str) -> None:
+    await line_service.reply_messages(
+        reply_token,
+        [
+            {
+                "type": "text",
+                "text": "請選擇請假別：",
+                "quickReply": _quick_reply(
+                    [(leave_type.value, f"請假 {leave_type.value}") for leave_type in LeaveType]
+                ),
+            }
+        ],
+    )
+
+
+def _is_group_command(text: str) -> bool:
+    """Keep normal group conversation silent while preserving explicit bot actions."""
+    exact_commands = {
+        "開始綁定",
+        "我的行程",
+        "我的打卡",
+        "我的請假",
+        "上班打卡",
+        "下班打卡",
+        "到達工地",
+        "離開工地",
+        "外出",
+        "返回",
+        "加班開始",
+        "加班結束",
+        "已收到",
+        "已到場",
+        "工作開始",
+        "工作完成",
+    }
+    return text in exact_commands or text.startswith(("綁定 ", "請假 ", "異常回報 "))
 
 
 def _build_schedule_summary(
@@ -392,7 +465,9 @@ async def _handle_image_message(
 async def process_webhook_event(session: Session, event: dict[str, Any]) -> None:
     event_type = event.get("type")
     reply_token = event.get("replyToken", "")
-    line_user_id = event.get("source", {}).get("userId")
+    source = event.get("source", {})
+    line_user_id = source.get("userId")
+    source_type = source.get("type")
 
     if event_type == "follow" and reply_token:
         await line_service.reply_text(
@@ -428,6 +503,12 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         if data.startswith("action=bind:start"):
             await _reply_account_link_prompt(session, reply_token, line_user_id, _binding_base_url(data))
             return
+        if data == "action=attendance:menu":
+            await _reply_attendance_options(reply_token)
+            return
+        if data == "action=leave:menu":
+            await _reply_leave_options(reply_token)
+            return
         await line_service.reply_text(reply_token, "已收到選單操作。")
         return
 
@@ -452,6 +533,9 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         return
 
     text = str(message.get("text", "")).strip()
+
+    if source_type in {"group", "room"} and not _is_group_command(text):
+        return
 
     if text == "開始綁定":
         await _reply_account_link_prompt(session, reply_token, line_user_id, settings.public_base_url)
@@ -509,6 +593,12 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     if text.startswith("請假 "):
         parts = text.split(" ", 4)
+        if len(parts) == 2 and parts[1] in {leave_type.value for leave_type in LeaveType}:
+            await line_service.reply_text(
+                reply_token,
+                f"已選擇：{parts[1]}\n請輸入日期與原因：\n請假 {parts[1]} 2026-07-28 2026-07-28 家中有事",
+            )
+            return
         if len(parts) < 5:
             await line_service.reply_text(reply_token, "格式錯誤，請使用：請假 事假 2026-07-28 2026-07-28 家中有事")
             return

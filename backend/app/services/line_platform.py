@@ -208,12 +208,18 @@ def _draw_centered_text(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int
     draw.multiline_text((x, y), text, font=font, fill=fill, spacing=8, align="center")
 
 
-def generate_default_rich_menu_images() -> dict[str, Path]:
+def generate_default_rich_menu_images(
+    *,
+    force_regenerate: bool = False,
+    output_dir: Path | None = None,
+) -> dict[str, Path]:
+    output_dir = output_dir or RICH_MENU_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
     bundled_outputs = {
         "main": STATIC_RICH_MENU_DIR / "santong-main.png",
         "tools": STATIC_RICH_MENU_DIR / "santong-tools.png",
     }
-    if all(path.exists() for path in bundled_outputs.values()):
+    if not force_regenerate and all(path.exists() for path in bundled_outputs.values()):
         for name, bundled_path in bundled_outputs.items():
             target_path = RICH_MENU_DIR / bundled_path.name
             if not target_path.exists():
@@ -224,9 +230,9 @@ def generate_default_rich_menu_images() -> dict[str, Path]:
     tab_height = 250
     column_width = width // 4
 
-    font_title = _load_font(84)
-    font_tab = _load_font(54)
-    font_body = _load_font(62)
+    font_title = _load_font(96)
+    font_tab = _load_font(68)
+    font_body = _load_font(86)
 
     definitions = [
         (
@@ -237,8 +243,8 @@ def generate_default_rich_menu_images() -> dict[str, Path]:
                 ((0, 0, width // 2, tab_height), "主選單"),
                 ((width // 2, 0, width, tab_height), "工作工具"),
                 ((0, tab_height, column_width, height), "我的\n行程"),
-                ((column_width, tab_height, column_width * 2, height), "我的\n請假"),
-                ((column_width * 2, tab_height, column_width * 3, height), "上班\n打卡"),
+                ((column_width, tab_height, column_width * 2, height), "請假\n申請"),
+                ((column_width * 2, tab_height, column_width * 3, height), "出勤\n打卡"),
                 ((column_width * 3, tab_height, width, height), "開始\n綁定"),
             ],
         ),
@@ -271,7 +277,7 @@ def generate_default_rich_menu_images() -> dict[str, Path]:
             fill = "#23403b" if fill_color != "#ead6b7" else "#5a391f"
             _draw_centered_text(draw, box, label, font, fill)
 
-        image_path = RICH_MENU_DIR / f"santong-{name}.png"
+        image_path = output_dir / f"santong-{name}.png"
         image.save(image_path, format="PNG")
         outputs[name] = image_path
     return outputs
@@ -299,11 +305,11 @@ def build_default_rich_menu_payloads(base_url: str) -> dict[str, dict[str, Any]]
                 },
                 {
                     "bounds": {"x": 625, "y": 250, "width": 625, "height": 1436},
-                    "action": {"type": "message", "label": "我的請假", "text": "我的請假"},
+                    "action": {"type": "postback", "label": "請假申請", "data": "action=leave:menu", "displayText": "請假申請"},
                 },
                 {
                     "bounds": {"x": 1250, "y": 250, "width": 625, "height": 1436},
-                    "action": {"type": "message", "label": "上班打卡", "text": "上班打卡"},
+                    "action": {"type": "postback", "label": "出勤打卡", "data": "action=attendance:menu", "displayText": "出勤打卡"},
                 },
                 {
                     "bounds": {"x": 1875, "y": 250, "width": 625, "height": 1436},
