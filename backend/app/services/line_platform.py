@@ -209,8 +209,10 @@ line_platform_service = LinePlatformService()
 
 def _load_font(size: int):
     font_candidates = [
+        Path("C:/Windows/Fonts/msjhbd.ttc"),
         Path("C:/Windows/Fonts/msjh.ttc"),
         Path("C:/Windows/Fonts/microsoftjhengheiui.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
         Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc"),
         Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
@@ -256,8 +258,8 @@ def generate_default_rich_menu_images(
     column_width = width // 4
 
     font_title = _load_font(96)
-    font_tab = _load_font(68)
-    font_body = _load_font(86)
+    font_tab = _load_font(108)
+    font_body = _load_font(168)
 
     definitions = [
         (
