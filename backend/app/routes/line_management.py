@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import get_session
@@ -78,10 +78,34 @@ async def test_webhook(
 @api_router.post("/richmenu/deploy")
 async def deploy_rich_menu(
     payload: LineRichMenuDeployRequest,
+    session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
     base_url = (payload.base_url or settings.public_base_url).rstrip("/")
-    return await deploy_default_rich_menus(base_url)
+    result = await deploy_default_rich_menus(base_url)
+
+    # Existing users can have an explicit old menu assignment, so update only
+    # the menu pointer for bound users without touching their LINE identity.
+    bound_employees = [
+        employee
+        for employee in session.exec(select(Employee)).all()
+        if employee.line_user_id
+    ]
+    assignment_errors: list[str] = []
+    assigned_count = 0
+    for employee in bound_employees:
+        try:
+            await line_platform_service.link_rich_menu_to_user(
+                employee.line_user_id,
+                result["main_rich_menu_id"],
+            )
+            assigned_count += 1
+        except LinePlatformError as exc:
+            assignment_errors.append(f"{employee.employee_code}: {exc}")
+
+    result["assigned_user_count"] = assigned_count
+    result["assignment_errors"] = assignment_errors
+    return result
 
 
 @page_router.get("/line/account-link", response_class=HTMLResponse)
