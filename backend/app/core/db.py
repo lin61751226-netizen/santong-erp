@@ -55,6 +55,18 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE employee ADD COLUMN email VARCHAR")
         if "assigned_sites" not in columns:
             statements.append("ALTER TABLE employee ADD COLUMN assigned_sites JSON")
+        if "password_hash" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN password_hash VARCHAR")
+        if "failed_login_count" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN failed_login_count INTEGER DEFAULT 0")
+        if "locked_until" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN locked_until TIMESTAMP")
+        if "must_change_password" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN must_change_password BOOLEAN DEFAULT 0")
+        if "session_key" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN session_key VARCHAR")
+        if "session_expires_at" not in columns:
+            statements.append("ALTER TABLE employee ADD COLUMN session_expires_at TIMESTAMP")
         if statements:
             with engine.begin() as connection:
                 for statement in statements:

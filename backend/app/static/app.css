@@ -331,3 +331,48 @@ th {
     grid-column: span 1;
   }
 }
+
+/* ---- 登入 / 改密碼 ---- */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(35, 33, 29, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.auth-overlay.hidden {
+  display: none;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  padding: 30px;
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid rgba(53, 92, 79, 0.12);
+  box-shadow: var(--shadow);
+}
+
+.auth-card h1 {
+  font-size: 28px;
+  margin-top: 12px;
+}
+
+.auth-error {
+  min-height: 20px;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}

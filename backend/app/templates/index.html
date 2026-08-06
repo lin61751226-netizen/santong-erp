@@ -10,6 +10,57 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+  <!-- 登入覆蓋層 -->
+  <div id="loginOverlay" class="auth-overlay">
+    <div class="auth-card">
+      <span class="eyebrow">Santong Internal Ops</span>
+      <h1>後台登入</h1>
+      <p class="muted" style="margin-bottom:18px;">請使用後台帳號（員工代碼）與密碼登入。</p>
+      <form id="loginForm" class="form-grid">
+        <div class="full">
+          <label for="loginCode">員工代碼</label>
+          <input id="loginCode" autocomplete="username" placeholder="例如：ADMIN001" required>
+        </div>
+        <div class="full">
+          <label for="loginPassword">密碼</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="統一預設密碼" required>
+        </div>
+        <div class="full button-row">
+          <button type="submit">登入</button>
+        </div>
+        <div id="loginError" class="auth-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 強制改密碼 / 修改密碼彈窗 -->
+  <div id="changePasswordOverlay" class="auth-overlay hidden">
+    <div class="auth-card">
+      <span class="eyebrow">Santong Internal Ops</span>
+      <h1 id="changePasswordTitle">修改密碼</h1>
+      <p id="changePasswordHint" class="muted" style="margin-bottom:18px;">請設定新的登入密碼。</p>
+      <form id="changePasswordForm" class="form-grid">
+        <div class="full">
+          <label for="currentPassword">目前密碼</label>
+          <input id="currentPassword" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="full">
+          <label for="newPassword">新密碼</label>
+          <input id="newPassword" type="password" autocomplete="new-password" placeholder="至少 8 個字元" required>
+        </div>
+        <div class="full">
+          <label for="confirmPassword">確認新密碼</label>
+          <input id="confirmPassword" type="password" autocomplete="new-password" required>
+        </div>
+        <div class="full button-row">
+          <button type="submit">確認變更</button>
+          <button type="button" class="button-secondary" onclick="closeChangePassword()">取消</button>
+        </div>
+        <div id="changePasswordError" class="auth-error"></div>
+      </form>
+    </div>
+  </div>
+
   <div class="shell">
     <section class="hero">
       <div class="hero-card">
@@ -21,9 +72,13 @@
         </p>
       </div>
       <aside class="hero-card hero-side">
-        <div>
-          <label for="actorSelect">目前操作身分</label>
-          <select id="actorSelect"></select>
+        <div class="user-chip">
+          <div>
+            <div class="muted">目前登入</div>
+            <strong id="userChipName">-</strong>
+            <div id="userChipMeta" class="muted"></div>
+          </div>
+          <button type="button" class="button-secondary button-compact" onclick="logout()">登出</button>
         </div>
         <div class="badge-list">
           <span class="badge">LINE webhook</span>
@@ -31,7 +86,7 @@
           <span class="badge">角色權限</span>
           <span class="badge">請假 / 考勤</span>
         </div>
-        <p class="muted">目前後台用模擬身分切換測流程，正式版可再改成公司登入。</p>
+        <p class="muted">後台採帳號密碼登入，僅 owner / admin 可存取。</p>
       </aside>
     </section>
 
@@ -414,7 +469,6 @@
 
   <script>
     const state = {
-      actorCode: "{{ default_actor_code }}",
       actor: null,
       employees: [],
       worksites: [],
@@ -422,12 +476,16 @@
 
     function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
-      headers.set("X-Actor-Code", state.actorCode);
       if (!headers.has("Content-Type") && options.body) {
         headers.set("Content-Type", "application/json");
       }
-      return fetch(path, { ...options, headers }).then(async (response) => {
+      // 登入後身分以同源 session cookie（santong_session）驗證，不再使用 X-Actor-Code
+      return fetch(path, { ...options, headers, credentials: "same-origin" }).then(async (response) => {
         const data = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          showLogin();
+          throw new Error("登入已過期，請重新登入");
+        }
         if (!response.ok) {
           throw new Error(data.detail || JSON.stringify(data));
         }
@@ -472,13 +530,6 @@
     }
 
     function renderSelectOptions() {
-      const actorSelect = document.getElementById("actorSelect");
-      actorSelect.innerHTML = state.employees.map((employee) => `
-        <option value="${employee.employee_code}" ${employee.employee_code === state.actorCode ? "selected" : ""}>
-          ${employee.employee_code}｜${employee.name}｜${employee.role}
-        </option>
-      `).join("");
-
       const siteOptions = state.worksites.map((site) => `<option value="${site.id}">${site.name}</option>`).join("");
       document.getElementById("siteId").innerHTML = siteOptions;
 
@@ -638,6 +689,14 @@
       state.employees = data.employees;
       state.worksites = data.worksites;
       renderSelectOptions();
+      renderUserChip();
+    }
+
+    function renderUserChip() {
+      if (!state.actor) return;
+      const roleLabel = { owner: "經營者", admin: "管理員", site_manager: "工地主管", employee: "員工" }[state.actor.role] || state.actor.role;
+      document.getElementById("userChipName").textContent = `${state.actor.employee_code}｜${state.actor.name}`;
+      document.getElementById("userChipMeta").textContent = `角色：${roleLabel}`;
     }
 
     async function loadDashboard() {
@@ -793,10 +852,58 @@
       }
     }
 
-    document.getElementById("actorSelect").addEventListener("change", async (event) => {
-      state.actorCode = event.target.value;
-      await bootstrap();
-      setConsole(`已切換操作身分：${state.actorCode}`);
+    document.getElementById("loginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const errorEl = document.getElementById("loginError");
+      errorEl.textContent = "";
+      const code = document.getElementById("loginCode").value.trim();
+      const password = document.getElementById("loginPassword").value;
+      try {
+        const data = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ employee_code: code, password }),
+        }).then(async (response) => {
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.detail || "登入失敗");
+          return body;
+        });
+        document.getElementById("loginOverlay").classList.add("hidden");
+        document.getElementById("loginForm").reset();
+        if (data.must_change_password) {
+          openChangePassword(true);
+        } else {
+          await bootstrap();
+        }
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    });
+
+    document.getElementById("changePasswordForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const errorEl = document.getElementById("changePasswordError");
+      errorEl.textContent = "";
+      const current = document.getElementById("currentPassword").value;
+      const next = document.getElementById("newPassword").value;
+      const confirm = document.getElementById("confirmPassword").value;
+      if (next !== confirm) {
+        errorEl.textContent = "兩次輸入的新密碼不一致";
+        return;
+      }
+      try {
+        const data = await api("/api/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({ current_password: current, new_password: next }),
+        });
+        document.getElementById("changePasswordOverlay").classList.add("hidden");
+        document.getElementById("changePasswordForm").reset();
+        document.getElementById("console").textContent = JSON.stringify(data, null, 2);
+        await bootstrap();
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
     });
 
     document.getElementById("assignmentForm").addEventListener("submit", async (event) => {
@@ -892,7 +999,50 @@
       }
     });
 
-    bootstrap().catch((error) => setConsole(error.message));
+    // ---- 登入 / 登出 / 改密碼 ----
+    function showLogin() {
+      document.getElementById("loginOverlay").classList.remove("hidden");
+      document.getElementById("changePasswordOverlay").classList.add("hidden");
+    }
+
+    function openChangePassword(forced) {
+      document.getElementById("changePasswordTitle").textContent = forced ? "首次登入請修改密碼" : "修改密碼";
+      document.getElementById("changePasswordHint").textContent = forced
+        ? "為確保安全，請先設定您自己的新密碼，之後才能使用後台功能。"
+        : "請輸入目前密碼並設定新密碼。";
+      document.getElementById("changePasswordOverlay").classList.remove("hidden");
+      document.getElementById("currentPassword").focus();
+    }
+
+    function closeChangePassword() {
+      document.getElementById("changePasswordOverlay").classList.add("hidden");
+      document.getElementById("changePasswordForm").reset();
+      document.getElementById("changePasswordError").textContent = "";
+    }
+
+    async function logout() {
+      try {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+      } catch (error) {
+        // 即使登出端點失敗也回到登入畫面
+      }
+      state.actor = null;
+      showLogin();
+    }
+
+    // 頁面載入：嘗試取得目前登入狀態；未登入則顯示登入畫面
+    (async function initAuth() {
+      try {
+        const data = await api("/api/auth/me");
+        if (data.must_change_password) {
+          openChangePassword(true);
+        } else {
+          await bootstrap();
+        }
+      } catch (error) {
+        showLogin();
+      }
+    })();
   </script>
 </body>
 </html>

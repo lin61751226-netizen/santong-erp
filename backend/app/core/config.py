@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     google_drive_public_share: bool = True
     daily_push_hour: int = 7
     daily_push_minute: int = 0
+    # 後台登入與權限
+    default_password: str = "Santong@2026"
+    login_fail_limit: int = 3
+    login_lock_minutes: int = 15
+    session_expire_minutes: int = 480
+    session_secret_key: str = ""
 
     @field_validator("google_drive_public_share", mode="before")
     @classmethod

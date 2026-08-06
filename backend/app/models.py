@@ -118,6 +118,12 @@ class Employee(SQLModel, table=True):
     licenses: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     training_records: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     machine_skills: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    password_hash: Optional[str] = None
+    failed_login_count: int = Field(default=0)
+    locked_until: Optional[datetime] = None
+    must_change_password: bool = Field(default=False)
+    session_key: Optional[str] = None
+    session_expires_at: Optional[datetime] = None
     assigned_sites: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     status: EmployeeStatus = Field(default=EmployeeStatus.active)
 

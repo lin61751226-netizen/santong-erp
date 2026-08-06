@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
+from app.core.config import settings
+from app.core.security import hash_password
 from app.models import Employee, EmployeeStatus, Role, Worksite
 
 
@@ -251,6 +253,14 @@ def _upsert_employee(session: Session, payload: dict, worksites: dict[str, Works
     employee.training_records = list(employee.training_records or [])
     employee.machine_skills = list(payload.get("machine_skills", employee.machine_skills or []))
     employee.assigned_sites = normalized_sites
+
+    # 後台登入帳號（owner/admin）若尚未設定密碼，以統一預設密碼初始化並強制改密碼；
+    # 已設定過密碼（已改過密碼）的帳號一律不覆蓋，確保使用者改過的密碼不會被 seed 重置。
+    if employee.role in {Role.owner, Role.admin} and not employee.password_hash:
+        employee.password_hash = hash_password(settings.default_password)
+        employee.must_change_password = True
+        employee.failed_login_count = 0
+        employee.locked_until = None
 
     session.add(employee)
 

@@ -26,6 +26,21 @@ class EmployeeUpdate(BaseModel):
     assigned_sites: list[str] = Field(default_factory=list)
 
 
+class LoginRequest(BaseModel):
+    employee_code: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequest(BaseModel):
+    employee_code: str
+    new_password: str
+
+
 class NotificationCreate(BaseModel):
     category: NotificationCategory = NotificationCategory.ad_hoc
     target_scope: str = Field(description="all/site/department/employee/management/supervisor")
