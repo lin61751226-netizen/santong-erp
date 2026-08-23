@@ -25,11 +25,13 @@
 這個版本已經內建：
 
 - 員工、工地、工作安排、通知、請假、考勤、會議資料表
-- 角色權限基礎
+- 角色權限基礎（owner/admin 可登入後台）
+- 後台正式登入（統一預設密碼 + 強制改密碼 + 3 次失敗鎖定）
 - LINE webhook 驗簽與文字指令處理
 - 每日 07:00 工作安排排程推播
 - 可操作的管理後台首頁
-- Demo 種子資料
+- Demo 種子資料（8 員工 + 10 工地）
+- Google Drive 工作相片自動上傳
 
 ## 專案結構
 
@@ -124,6 +126,11 @@ GOOGLE_DRIVE_WORKLOG_FOLDER_ID=1j82gzF2AkiHvJ6sv1ecLvN1E0vQff9F1
 GOOGLE_DRIVE_PUBLIC_SHARE=true
 DAILY_PUSH_HOUR=7
 DAILY_PUSH_MINUTE=0
+DEFAULT_PASSWORD=Santong@2026
+LOGIN_FAIL_LIMIT=3
+LOGIN_LOCK_MINUTES=15
+SESSION_EXPIRE_MINUTES=480
+SESSION_SECRET_KEY=
 ```
 
 ### Google Drive 工作相片
@@ -137,50 +144,54 @@ DAILY_PUSH_MINUTE=0
 
 系統第一次啟動會自動建立下列測試資料：
 
-- 工地：`45`, `53`, `56`, `善捷47`, `金駿76`, `桃園28`, `桃園29`, `新竹寶山1`, `新竹寶山2`, `新竹寶山3`
-- 員工：
-  - `BOSS001` 三通老闆
-  - `ADMIN001` 行政主管
-  - `ACC001` 會計小姐
-  - `SUP047` 林主任
-  - `EMP001` 王小明
-  - `EMP002` 李小華
-  - `EMP003` 陳志宏
+- 工地：`45`, `齊裕53`, `56`, `善捷47`, `金駿76`, `桃園28`, `桃園29`, `新竹寶山1`, `新竹寶山2`, `新竹寶山3`
+- 員工（8 人）：
+  - `BOSS001` 三通工程行林老闆（owner，可登入後台）
+  - `ADMIN001` 林金谷（admin，可登入後台）
+  - `BOT001` 三通工程行 line 機器人（external，系統帳號）
+  - `ADMIN002` 秀蓉（admin，可登入後台）
+  - `EMP001` 勝忠（employee）
+  - `EMP002` 小咪（employee）
+  - `EMP003` 建成（employee）
+  - `EMP004` 林小咪（employee）
 
 對應的 LINE 綁定碼：
 
-- `ST-1001`
-- `ST-1002`
-- `ST-1003`
-- `ST-1004`
-- `ST-1005`
-- `ST-1006`
-- `ST-1007`
+- `ST-1001` ~ `ST-1008`
+
+## 後台登入
+
+後台採帳號密碼登入，僅 `owner` 與 `admin` 角色可存取。
+
+- 可登入帳號：`BOSS001`（老闆）、`ADMIN001`（系統管理者）、`ADMIN002`（行政人員）
+- 統一預設密碼：`Santong@2026`（首次登入後強制改密碼）
+- 登入失敗 3 次鎖定 15 分鐘
+- Session 以簽名 cookie `santong_session` 驗證（httponly + samesite=lax，production 下 secure）
 
 ## 後台操作方式
 
 首頁可直接完成：
 
-- 切換操作身分
 - 建立每日工作安排
 - 發送臨時通知
 - 建立會議記錄並可同步發送摘要
 - 查看待審請假並核准／退回
 - 查詢當日考勤
 - 模擬 LINE 訊息測試流程
-
-目前後台登入先採 `X-Actor-Code` 模式模擬角色權限，方便你先跑流程；正式版可再接帳密、Google Workspace SSO 或公司 AD。
+- 查看 LINE 綁定狀態與部署 Rich Menu
 
 ## 正式上線前建議
 
 第一版上線前，建議優先補這幾件：
 
-1. 將 SQLite 改為 PostgreSQL 正式資料庫
-2. 將後台模擬身分切換改為正式登入
-3. 串接 LINE Rich Menu 與 webhook 正式 channel
-4. 補上 Google Drive / Calendar 整合
+1. ~~將 SQLite 改為 PostgreSQL 正式資料庫~~（已完成，Render 正式站使用 PostgreSQL）
+2. ~~將後台模擬身分切換改為正式登入~~（已完成，8/7 上線統一預設密碼 + 強制改密碼 + 角色範圍 + 失敗鎖定）
+3. ~~串接 LINE Rich Menu 與 webhook 正式 channel~~（已完成）
+4. ~~補上 Google Drive / Calendar 整合~~（Google Drive 工作相片上傳已完成）
 5. 將既有 Excel 的員工、工地、排班、收支資料做匯入腳本
 6. 將考勤擴充到 GPS / QR Code / 拍照打卡
+7. `reset-password` 端點加權限保護（目前未要求登入，作為緊急復原工具）
+8. 後台使用者管理 UI（新增/停用帳號、重設密碼按鈕）
 
 ## 官方文件依據
 
