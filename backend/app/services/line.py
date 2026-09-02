@@ -401,12 +401,9 @@ async def _handle_image_message(
             reply_token,
             "\n".join(
                 [
-                    "工作照片已先暫存到 Google 雲端硬碟。",
-                    f"上傳者：{uploader_name}",
-                    f"日期資料夾：{upload.date_folder_name}",
+                    "工作照片已上傳到 Google 雲端硬碟。",
                     f"檔名：{upload.file_name}",
                     f"連結：{upload.file_url}",
-                    "目前此 LINE 帳號尚未綁定員工身分，照片已先暫存，之後再從 Rich Menu 完成綁定即可。",
                 ]
             ),
         )
