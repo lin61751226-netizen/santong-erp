@@ -397,16 +397,7 @@ async def _handle_image_message(
             )
             return
 
-        await line_service.reply_text(
-            reply_token,
-            "\n".join(
-                [
-                    "工作照片已上傳到 Google 雲端硬碟。",
-                    f"檔名：{upload.file_name}",
-                    f"連結：{upload.file_url}",
-                ]
-            ),
-        )
+        # 靜默上傳，不回覆 LINE 訊息
         return
     if not employee:
         await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先從 Rich Menu 開始綁定。")
@@ -460,15 +451,7 @@ async def _handle_image_message(
     )
     session.commit()
 
-    reply_lines = [
-        "工作照片已上傳到 Google 雲端硬碟",
-        f"資料夾：{upload.date_folder_name}",
-        f"檔名：{upload.file_name}",
-        f"連結：{upload.file_url}",
-    ]
-    if assignment:
-        reply_lines.append(f"工作安排：{assignment.work_date:%Y/%m/%d} {site.name if site else '-'}")
-    await line_service.reply_text(reply_token, "\n".join(reply_lines))
+    # 靜默上傳，不回覆 LINE 訊息
 
 
 async def process_webhook_event(session: Session, event: dict[str, Any]) -> None:
