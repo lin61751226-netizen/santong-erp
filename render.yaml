@@ -28,6 +28,12 @@ services:
         sync: false
       - key: GOOGLE_DRIVE_PUBLIC_SHARE
         value: "true"
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
       - key: DAILY_PUSH_HOUR
         value: "7"
       - key: DAILY_PUSH_MINUTE

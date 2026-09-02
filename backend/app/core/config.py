@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     google_service_account_json: str = ""
     google_drive_worklog_folder_id: str = ""
     google_drive_public_share: bool = True
+    # OAuth 2.0 使用者認證（優先於 service account，解決 service account 無儲存配額問題）
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_refresh_token: str = ""
     daily_push_hour: int = 7
     daily_push_minute: int = 0
     # 後台登入與權限

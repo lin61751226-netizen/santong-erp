@@ -10,6 +10,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from sqlmodel import Session, select
@@ -23,6 +24,7 @@ DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
 LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
+OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 class GoogleDriveWorklogError(Exception):
@@ -40,10 +42,16 @@ class DriveUploadResult:
 
 
 class GoogleDriveWorklogService:
-    def is_configured(self) -> bool:
+    def _has_oauth(self) -> bool:
+        return bool(
+            settings.google_oauth_client_id.strip()
+            and settings.google_oauth_client_secret.strip()
+            and settings.google_oauth_refresh_token.strip()
+        )
+
+    def _has_service_account(self) -> bool:
         raw = settings.google_service_account_json.strip()
-        folder_id = settings.google_drive_worklog_folder_id.strip()
-        if not raw or not folder_id or len(folder_id) < 10:
+        if not raw:
             return False
         if raw.startswith("{"):
             try:
@@ -53,7 +61,26 @@ class GoogleDriveWorklogService:
             return True
         return Path(raw).exists()
 
+    def is_configured(self) -> bool:
+        folder_id = settings.google_drive_worklog_folder_id.strip()
+        if not folder_id or len(folder_id) < 10:
+            return False
+        # OAuth 2.0 或 service account 任一種認證可用即可
+        return self._has_oauth() or self._has_service_account()
+
     def _credentials(self):
+        # 優先使用 OAuth 2.0 使用者認證（解決 service account 無儲存配額問題）
+        if self._has_oauth():
+            return OAuthCredentials(
+                token=None,
+                refresh_token=settings.google_oauth_refresh_token.strip(),
+                token_uri=OAUTH_TOKEN_URI,
+                client_id=settings.google_oauth_client_id.strip(),
+                client_secret=settings.google_oauth_client_secret.strip(),
+                scopes=DRIVE_SCOPE,
+            )
+
+        # Fallback：service account（僅供備援，無法上傳檔案到個人 Drive）
         raw = settings.google_service_account_json.strip()
         if not raw:
             raise GoogleDriveWorklogError("GOOGLE_SERVICE_ACCOUNT_JSON 尚未設定")
