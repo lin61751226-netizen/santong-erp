@@ -1,6 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import io
 import json
 import mimetypes
@@ -25,6 +27,10 @@ FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
 LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
 OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+logger = logging.getLogger(__name__)
+MAX_UPLOAD_RETRIES = 3
+RETRY_DELAY_SECONDS = 2
 
 
 class GoogleDriveWorklogError(Exception):
@@ -346,48 +352,61 @@ class GoogleDriveWorklogService:
         content_type: str,
         folder_name: str,
     ) -> DriveUploadResult:
-        client = self._build_client()
-        folder_id = self._find_or_create_date_folder(folder_name)
-        stream = io.BytesIO(content)
-        media = MediaIoBaseUpload(stream, mimetype=content_type, resumable=False)
-        created = (
-            client.files()
-            .create(
-                body={"name": file_name, "parents": [folder_id]},
-                media_body=media,
-                fields="id,webViewLink",
-                supportsAllDrives=True,
-            )
-            .execute()
-        )
-        file_id = created["id"]
-
-        if settings.google_drive_public_share:
+        last_exception = None
+        for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
             try:
-                client.permissions().create(
-                    fileId=file_id,
-                    body={"type": "anyone", "role": "reader"},
-                    fields="id",
-                    supportsAllDrives=True,
-                ).execute()
-            except Exception:
-                pass
+                logger.info(f"上傳嘗試 {attempt}/{MAX_UPLOAD_RETRIES}: {file_name} (大小: {len(content)} bytes)")
+                client = self._build_client()
+                folder_id = self._find_or_create_date_folder(folder_name)
+                stream = io.BytesIO(content)
+                media = MediaIoBaseUpload(stream, mimetype=content_type, resumable=False)
+                created = (
+                    client.files()
+                    .create(
+                        body={"name": file_name, "parents": [folder_id]},
+                        media_body=media,
+                        fields="id,webViewLink",
+                        supportsAllDrives=True,
+                    )
+                    .execute()
+                )
+                file_id = created["id"]
+                logger.info(f"檔案上傳成功: {file_name} (ID: {file_id})")
 
-        metadata = (
-            client.files()
-            .get(fileId=file_id, fields="id,webViewLink", supportsAllDrives=True)
-            .execute()
-        )
-        file_url = metadata.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
-        return DriveUploadResult(
-            file_id=file_id,
-            file_name=file_name,
-            file_url=file_url,
-            folder_id=folder_id,
-            date_folder_name=folder_name,
-            content_type=content_type,
-        )
+                if settings.google_drive_public_share:
+                    try:
+                        client.permissions().create(
+                            fileId=file_id,
+                            body={"type": "anyone", "role": "reader"},
+                            fields="id",
+                            supportsAllDrives=True,
+                        ).execute()
+                    except Exception as e:
+                        logger.warning(f"設定公開分享失敗（不影響上傳）: {e}")
 
+                metadata = (
+                    client.files()
+                    .get(fileId=file_id, fields="id,webViewLink", supportsAllDrives=True)
+                    .execute()
+                )
+                file_url = metadata.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+                return DriveUploadResult(
+                    file_id=file_id,
+                    file_name=file_name,
+                    file_url=file_url,
+                    folder_id=folder_id,
+                    date_folder_name=folder_name,
+                    content_type=content_type,
+                )
+            except Exception as e:
+                last_exception = e
+                logger.error(f"上傳失敗（嘗試 {attempt}/{MAX_UPLOAD_RETRIES}）: {file_name}, 錯誤: {e}")
+                if attempt < MAX_UPLOAD_RETRIES:
+                    logger.info(f"等待 {RETRY_DELAY_SECONDS} 秒後重試...")
+                    time.sleep(RETRY_DELAY_SECONDS)
+
+        logger.error(f"檔案上傳最終失敗（已重試 {MAX_UPLOAD_RETRIES} 次）: {file_name}")
+        raise GoogleDriveWorklogError(f"檔案上傳失敗（已重試 {MAX_UPLOAD_RETRIES} 次）: {last_exception}")
     async def upload_line_photo(
         self,
         *,
@@ -395,23 +414,28 @@ class GoogleDriveWorklogService:
         employee_name: str,
         happened_at: datetime,
     ) -> DriveUploadResult:
+        logger.info(f"開始處理 LINE 相片上傳: message_id={message_id}, 員工={employee_name}")
         if not self.is_configured():
+            logger.error("Google Drive 工作相片上傳尚未完成設定")
             raise GoogleDriveWorklogError("Google Drive 工作相片上傳尚未完成設定")
 
         content, content_type = await line_platform_service.get_message_content(message_id)
+        logger.info(f"已從 LINE 取得相片內容: {len(content)} bytes, 類型: {content_type}")
         local_dt = happened_at.astimezone(ZoneInfo(settings.timezone))
         folder_name = local_dt.strftime("%Y-%m-%d")
         extension = mimetypes.guess_extension(content_type or "") or ".jpg"
         safe_name = employee_name.strip().replace("/", "-").replace("\\", "-")
         file_name = f"{safe_name}_{local_dt.strftime('%Y%m%d_%H%M%S')}{extension}"
+        logger.info(f"準備上傳到 Google Drive: 資料夾={folder_name}, 檔名={file_name}")
 
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._upload_bytes,
             file_name=file_name,
             content=content,
             content_type=content_type or "image/jpeg",
             folder_name=folder_name,
         )
-
-
+        logger.info(f"LINE 相片上傳完成: {file_name} -> {result.file_url}")
+        return result
 google_drive_worklog_service = GoogleDriveWorklogService()
+

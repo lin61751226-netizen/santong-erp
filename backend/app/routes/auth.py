@@ -21,6 +21,7 @@ from app.core.security import (
     verify_password,
     verify_signed_token,
 )
+from app.deps import require_roles
 from app.models import Employee, Role
 from app.schemas import ChangePasswordRequest, LoginRequest, PasswordResetRequest
 
@@ -196,8 +197,9 @@ def change_password(
 def reset_password(
     payload: PasswordResetRequest,
     session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
-    """管理者重設他人密碼（重設為統一預設密碼並強制改密碼）。僅作為後台復原工具，未要求登入以利正式環境緊急復原。"""
+    """管理者重設他人密碼（重設為統一預設密碼並強制改密碼）。僅 owner/admin 可執行。"""
     employee = _employee_by_code(session, payload.employee_code.strip())
     if employee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="找不到員工代碼")
@@ -209,7 +211,7 @@ def reset_password(
     employee.locked_until = None
     session.add(employee)
     session.commit()
-    return {"message": f"{employee.employee_code} 的密碼已重設為預設密碼，下次登入需改密碼"}
+    return {"message": f"{employee.employee_code} 的密碼已重設為預設密碼，下次登入需改密碼", "reset_by": actor.employee_code}
 
 
 def _resolve_session_employee(
@@ -236,3 +238,5 @@ def _validate_new_password(password: str) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密碼至少需要 8 個字元")
     if len(password) > 128:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密碼過長")
+
+
