@@ -1,7 +1,8 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date
 
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlmodel import select
 
@@ -12,6 +13,18 @@ from app.services.line import _build_schedule_summary, notify_employees
 
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+
+async def wake_up_service() -> None:
+    """定期呼叫 /health 端點，避免 Render free plan 休眠導致 LINE Webhook 逾時。"""
+    health_url = f"{settings.public_base_url.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(health_url)
+            if response.status_code == 200:
+                pass  # 喚醒成功，不需記錄
+    except Exception:
+        pass  # 網路錯誤時靜默忽略，避免影響其他排程
 
 
 async def push_daily_assignments() -> None:
@@ -51,10 +64,19 @@ def start_scheduler() -> None:
         id="daily-assignment-push",
         replace_existing=True,
     )
+    # 每 10 分鐘喚醒服務，避免 Render free plan 休眠
+    scheduler.add_job(
+        wake_up_service,
+        "interval",
+        minutes=10,
+        id="service-wake-up",
+        replace_existing=True,
+    )
     scheduler.start()
 
 
 def stop_scheduler() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
 

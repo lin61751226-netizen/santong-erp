@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime, time
 from enum import Enum
@@ -277,3 +277,21 @@ class LineLinkSession(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
     completed_at: Optional[datetime] = None
+
+
+class LoginStatus(str, Enum):
+    success = "success"
+    failed = "failed"
+    locked = "locked"
+
+
+class LoginLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    employee_code: Optional[str] = Field(default=None, index=True)
+    employee_name: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = Field(default=None, sa_column=Column(Text))
+    status: LoginStatus = Field(default=LoginStatus.failed)
+    failure_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+

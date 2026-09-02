@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -22,7 +22,7 @@ from app.core.security import (
     verify_signed_token,
 )
 from app.deps import require_roles
-from app.models import Employee, Role
+from app.models import Employee, LoginLog, LoginStatus, Role
 from app.schemas import ChangePasswordRequest, LoginRequest, PasswordResetRequest
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -32,6 +32,32 @@ SESSION_COOKIE_NAME = "santong_session"
 
 def _now() -> datetime:
     return datetime.utcnow()
+
+
+def _log_login(
+    session: Session,
+    request: Request,
+    employee_code: str,
+    employee_name: str | None,
+    status: LoginStatus,
+    failure_reason: str | None = None,
+) -> None:
+    """記錄登入稽核日誌。"""
+    try:
+        ip_address = request.client.host if request.client else None
+        user_agent = request.headers.get("user-agent")
+        log = LoginLog(
+            employee_code=employee_code,
+            employee_name=employee_name,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            status=status,
+            failure_reason=failure_reason,
+        )
+        session.add(log)
+        session.commit()
+    except Exception:
+        session.rollback()
 
 
 def _employee_by_code(session: Session, employee_code: str) -> Employee | None:
@@ -69,6 +95,7 @@ def _clear_session_cookie(response: Response) -> None:
 def login(
     payload: LoginRequest,
     response: Response,
+    request: Request,
     session: Session = Depends(get_session),
 ):
     employee = _employee_by_code(session, payload.employee_code.strip())
@@ -91,11 +118,13 @@ def login(
         )
 
     if employee.status != "active":
+        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "帳號未啟用")
         raise invalid_credentials
 
     # 鎖定檢查
     if employee.locked_until and employee.locked_until > now:
         remaining = int((employee.locked_until - now).total_seconds() // 60) + 1
+        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "帳號已鎖定")
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail=f"登入失敗次數過多，帳號已鎖定，請於 {remaining} 分鐘後再試",
@@ -108,6 +137,7 @@ def login(
             employee.failed_login_count = 0
             session.add(employee)
             session.commit()
+            _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "登入失敗次數過多，帳號鎖定")
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
                 detail=f"登入失敗 {settings.login_fail_limit} 次，帳號已鎖定 {settings.login_lock_minutes} 分鐘",
@@ -115,6 +145,7 @@ def login(
         session.add(employee)
         session.commit()
         remaining_attempts = settings.login_fail_limit - employee.failed_login_count
+        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "密碼錯誤")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"帳號或密碼錯誤（還剩 {remaining_attempts} 次嘗試機會）",
@@ -163,6 +194,7 @@ def me(
     employee = _resolve_session_employee(session, cookie_session)
     if employee is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="尚未登入")
+    _log_login(session, request, employee.employee_code, employee.name, LoginStatus.success)
     return {
         "employee_code": employee.employee_code,
         "name": employee.name,
@@ -204,6 +236,7 @@ def reset_password(
     if employee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="找不到員工代碼")
     if not _is_backoffice_role(employee):
+        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "無後台登入權限")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="此帳號無後台登入權限")
     employee.password_hash = hash_password(settings.default_password)
     employee.must_change_password = True
@@ -227,6 +260,7 @@ def _resolve_session_employee(
         select(Employee).where(Employee.session_key == raw_token)
     ).first()
     if employee is None:
+        _log_login(session, request, payload.employee_code.strip(), None, LoginStatus.failed, "帳號不存在")
         return None
     if employee.session_expires_at is None or employee.session_expires_at < _now():
         return None
@@ -238,5 +272,6 @@ def _validate_new_password(password: str) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密碼至少需要 8 個字元")
     if len(password) > 128:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="新密碼過長")
+
 
 

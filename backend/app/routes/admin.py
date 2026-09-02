@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -14,8 +14,11 @@ from app.models import (
     EmployeeStatus,
     LeaveRequest,
     LeaveStatus,
+    LoginLog,
+    LoginStatus,
     MeetingRecord,
     NotificationCategory,
+    PhotoUploadLog,
     Role,
     WorkAssignment,
     Worksite,
@@ -43,6 +46,7 @@ from app.services.hr import (
     get_covering_leave,
     list_employees_for_review,
 )
+from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 
 
@@ -759,3 +763,125 @@ async def simulate_line_message(
     }
     await process_webhook_event(session, event)
     return {"message": "模擬訊息已送入 webhook 流程"}
+
+
+@router.get("/login-logs")
+def list_login_logs(
+    employee_code: Optional[str] = Query(default=None),
+    status_filter: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    statement = select(LoginLog)
+    if employee_code:
+        statement = statement.where(LoginLog.employee_code == employee_code)
+    if status_filter:
+        statement = statement.where(LoginLog.status == status_filter)
+    logs = session.exec(statement.order_by(LoginLog.created_at.desc()).limit(limit)).all()
+    return [
+        {
+            "id": log.id,
+            "employee_code": log.employee_code,
+            "employee_name": log.employee_name,
+            "ip_address": log.ip_address,
+            "user_agent": log.user_agent,
+            "status": log.status,
+            "failure_reason": log.failure_reason,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in logs
+    ]
+
+
+@router.put("/employees/{employee_code}/status")
+def update_employee_status(
+    employee_code: str,
+    payload: dict,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到員工代碼")
+    ensure_employee_scope(actor, employee)
+    new_status = payload.get("status")
+    if new_status not in [EmployeeStatus.active.value, EmployeeStatus.inactive.value]:
+        raise HTTPException(status_code=400, detail="狀態必須是 active 或 inactive")
+    employee.status = new_status
+    session.add(employee)
+    session.commit()
+    session.refresh(employee)
+    return {
+        "message": f"員工狀態已更新為 {new_status}",
+        "employee_code": employee.employee_code,
+        "status": employee.status,
+    }
+
+
+@router.post("/employees/{employee_code}/reset-password")
+def reset_employee_password(
+    employee_code: str,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到員工代碼")
+    ensure_employee_scope(actor, employee)
+    import secrets
+    import string
+    alphabet = string.ascii_letters + string.digits
+    new_password = "".join(secrets.choice(alphabet) for _ in range(12))
+    employee.password_hash = hash_password(new_password)
+    employee.must_change_password = True
+    employee.failed_login_count = 0
+    employee.locked_until = None
+    session.add(employee)
+    session.commit()
+    return {
+        "message": "密碼已重設，請將新密碼告知員工",
+        "employee_code": employee.employee_code,
+        "new_password": new_password,
+        "must_change_password": True,
+    }
+
+
+@router.get("/photo-uploads")
+def list_photo_uploads(
+    employee_code: Optional[str] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(PhotoUploadLog)
+    if employee_code:
+        employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+        if employee:
+            statement = statement.where(PhotoUploadLog.employee_id == employee.id)
+    if date_from:
+        statement = statement.where(PhotoUploadLog.uploaded_at >= date_from)
+    if date_to:
+        statement = statement.where(PhotoUploadLog.uploaded_at < date_to + timedelta(days=1))
+    if actor.role == Role.site_manager and actor.home_site_id:
+        statement = statement.where(PhotoUploadLog.site_id == actor.home_site_id)
+    elif actor.role == Role.employee:
+        statement = statement.where(PhotoUploadLog.employee_id == actor.id)
+    logs = session.exec(statement.order_by(PhotoUploadLog.uploaded_at.desc()).limit(limit)).all()
+    result = []
+    for log in logs:
+        employee = session.get(Employee, log.employee_id) if log.employee_id else None
+        worksite = session.get(Worksite, log.site_id) if log.site_id else None
+        result.append({
+            "id": log.id,
+            "employee_code": employee.employee_code if employee else None,
+            "employee_name": employee.name if employee else None,
+            "site_name": worksite.name if worksite else None,
+            "file_name": log.file_name,
+            "drive_url": log.drive_url,
+            "uploaded_at": log.uploaded_at.isoformat() if log.uploaded_at else None,
+            "note": log.note,
+        })
+    return result

@@ -1043,6 +1043,225 @@
         showLogin();
       }
     })();
+  
+    // ---- 使用者管理 ----
+    async function loadUserManagement() {
+      try {
+        const employees = await api("/api/employees");
+        const rows = document.getElementById("userManagementRows");
+        rows.innerHTML = employees.map((emp) => {
+          const statusBadge = emp.status === "active"
+            ? '<span class="badge" style="background:#d4edda;color:#155724;">啟用</span>'
+            : '<span class="badge" style="background:#f8d7da;color:#721c24;">停用</span>';
+          const lineBadge = emp.line_bound ? '<span class="badge">已綁定</span>' : '<span class="badge" style="background:#e2e3e5;">未綁定</span>';
+          const toggleBtn = emp.status === "active"
+            ? '<button type="button" class="button-secondary button-compact" onclick="toggleEmployeeStatus(\'' + emp.employee_code + '\', \'inactive\')">停用</button>'
+            : '<button type="button" class="button-secondary button-compact" onclick="toggleEmployeeStatus(\'' + emp.employee_code + '\', \'active\')">啟用</button>';
+          return `<tr>
+            <td>${emp.employee_code}</td>
+            <td>${emp.name}</td>
+            <td>${emp.role}</td>
+            <td>${statusBadge}</td>
+            <td>${lineBadge}</td>
+            <td style="white-space:nowrap;">${toggleBtn} <button type="button" class="button-secondary button-compact" onclick="resetEmployeePassword('${emp.employee_code}')">重設密碼</button></td>
+          </tr>`;
+        }).join("");
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function toggleEmployeeStatus(employeeCode, newStatus) {
+      const action = newStatus === 'active' ? '啟用' : '停用';
+      if (!confirm('確定要' + action + '帳號 ' + employeeCode + ' 嗎？')) return;
+      try {
+        const data = await api('/api/employees/' + employeeCode + '/status', {
+          method: 'PUT',
+          body: JSON.stringify({ status: newStatus }),
+        });
+        setConsole(JSON.stringify(data, null, 2));
+        await loadUserManagement();
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function resetEmployeePassword(employeeCode) {
+      if (!confirm('確定要重設 ' + employeeCode + ' 的密碼嗎？新密碼會顯示在畫面上。')) return;
+      try {
+        const data = await api('/api/employees/' + employeeCode + '/reset-password', {
+          method: 'POST',
+        });
+        alert('密碼已重設！新密碼：' + data.new_password + '\n請將此密碼告知員工，員工首次登入時會要求修改密碼。');
+        setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    // ---- 相片上傳記錄 ----
+    async function loadPhotoUploads() {
+      try {
+        const params = new URLSearchParams();
+        const employeeCode = document.getElementById('photoFilterEmployee').value.trim();
+        const dateFrom = document.getElementById('photoFilterDateFrom').value;
+        const dateTo = document.getElementById('photoFilterDateTo').value;
+        if (employeeCode) params.set('employee_code', employeeCode);
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        params.set('limit', '100');
+        const data = await api('/api/photo-uploads?' + params.toString());
+        const rows = document.getElementById('photoUploadRows');
+        if (data.length === 0) {
+          rows.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888;">無上傳記錄</td></tr>';
+          return;
+        }
+        rows.innerHTML = data.map((item) => {
+          const link = item.drive_url
+            ? '<a href="' + item.drive_url + '" target="_blank">檢視</a>'
+            : '-';
+          return `<tr>
+            <td>${item.uploaded_at ? new Date(item.uploaded_at).toLocaleString('zh-TW') : '-'}</td>
+            <td>${item.employee_name || item.employee_code || '-'}</td>
+            <td>${item.site_name || '-'}</td>
+            <td>${item.file_name || '-'}</td>
+            <td>${link}</td>
+          </tr>`;
+        }).join("");
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    // ---- 登入稽核日誌 ----
+    async function loadLoginLogs() {
+      try {
+        const params = new URLSearchParams();
+        const employeeCode = document.getElementById('loginLogFilterEmployee').value.trim();
+        const statusFilter = document.getElementById('loginLogFilterStatus').value;
+        if (employeeCode) params.set('employee_code', employeeCode);
+        if (statusFilter) params.set('status_filter', statusFilter);
+        params.set('limit', '100');
+        const data = await api('/api/login-logs?' + params.toString());
+        const rows = document.getElementById('loginLogRows');
+        if (data.length === 0) {
+          rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無登入記錄</td></tr>';
+          return;
+        }
+        rows.innerHTML = data.map((item) => {
+          const statusBadge = item.status === 'success'
+            ? '<span class="badge" style="background:#d4edda;color:#155724;">成功</span>'
+            : item.status === 'locked'
+            ? '<span class="badge" style="background:#fff3cd;color:#856404;">鎖定</span>'
+            : '<span class="badge" style="background:#f8d7da;color:#721c24;">失敗</span>';
+          return `<tr>
+            <td>${item.created_at ? new Date(item.created_at).toLocaleString('zh-TW') : '-'}</td>
+            <td>${item.employee_code || '-'}</td>
+            <td>${item.employee_name || '-'}</td>
+            <td>${item.ip_address || '-'}</td>
+            <td>${statusBadge}</td>
+            <td>${item.failure_reason || '-'}</td>
+          </tr>`;
+        }).join("");
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
   </script>
+
+    <!-- 使用者管理 -->
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>使用者管理</h2>
+          <p class="muted">啟用/停用帳號、重設密碼。僅 owner / admin 可操作。</p>
+        </div>
+        <div class="button-row">
+          <button type="button" class="button-secondary" onclick="loadUserManagement()">重新整理</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>員工代碼</th>
+              <th>姓名</th>
+              <th>角色</th>
+              <th>狀態</th>
+              <th>LINE 綁定</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="userManagementRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 相片上傳記錄 -->
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>相片上傳記錄</h2>
+          <p class="muted">查詢 LINE 上傳的工作相片記錄。</p>
+        </div>
+        <div class="button-row">
+          <input id="photoFilterEmployee" placeholder="員工代碼">
+          <input id="photoFilterDateFrom" type="date">
+          <input id="photoFilterDateTo" type="date">
+          <button type="button" class="button-secondary" onclick="loadPhotoUploads()">查詢</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>上傳時間</th>
+              <th>員工</th>
+              <th>工地</th>
+              <th>檔名</th>
+              <th>連結</th>
+            </tr>
+          </thead>
+          <tbody id="photoUploadRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 登入稽核日誌 -->
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>登入稽核日誌</h2>
+          <p class="muted">記錄所有後台登入嘗試，包含成功、失敗與鎖定。僅 owner / admin 可檢視。</p>
+        </div>
+        <div class="button-row">
+          <input id="loginLogFilterEmployee" placeholder="員工代碼">
+          <select id="loginLogFilterStatus">
+            <option value="">全部狀態</option>
+            <option value="success">成功</option>
+            <option value="failed">失敗</option>
+            <option value="locked">鎖定</option>
+          </select>
+          <button type="button" class="button-secondary" onclick="loadLoginLogs()">查詢</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>時間</th>
+              <th>員工代碼</th>
+              <th>姓名</th>
+              <th>IP</th>
+              <th>狀態</th>
+              <th>失敗原因</th>
+            </tr>
+          </thead>
+          <tbody id="loginLogRows"></tbody>
+        </table>
+      </div>
+    </section>
+
 </body>
 </html>
