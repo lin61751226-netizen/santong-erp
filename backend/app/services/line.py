@@ -40,6 +40,7 @@ from app.services.line_platform import (
     LinePlatformError,
     bind_employee_line_user,
     complete_account_link_session,
+    line_platform_service,
     start_account_link_session,
 )
 
