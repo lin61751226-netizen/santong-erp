@@ -241,6 +241,29 @@ def get_latest_attendance_event(
     ).first()
 
 
+def get_today_arrival_site(
+    session: Session,
+    employee_id: int,
+) -> Worksite | None:
+    """取得員工今日最近一次「到達工地」打卡的工地。"""
+    target_date = date.today()
+    start_at = datetime.combine(target_date, time.min)
+    end_at = datetime.combine(target_date, time.max)
+    event = session.exec(
+        select(AttendanceEvent)
+        .where(
+            AttendanceEvent.employee_id == employee_id,
+            AttendanceEvent.event_type == AttendanceEventType.arrive_site.value,
+            AttendanceEvent.happened_at >= start_at,
+            AttendanceEvent.happened_at <= end_at,
+        )
+        .order_by(AttendanceEvent.happened_at.desc())
+    ).first()
+    if event and event.site_id:
+        return session.get(Worksite, event.site_id)
+    return None
+
+
 def find_assignment_for_employee(
     session: Session,
     employee_id: int,
