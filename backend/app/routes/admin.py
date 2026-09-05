@@ -1029,7 +1029,7 @@ def update_forklift_status(
     forklift_id: int,
     status: str = Query(..., description="堆高機狀態：operating/available/maintenance/inactive"),
     session: Session = Depends(get_session),
-    actor: Employee = Depends(require_roles(["owner", "admin", "site_manager"])),
+    actor: Employee = Depends(require_roles("owner", "admin", "site_manager")),
 ):
     forklift = session.get(Forklift, forklift_id)
     if not forklift:

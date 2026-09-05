@@ -90,7 +90,15 @@
       </aside>
     </section>
 
-    <section class="panel span-12">
+    <nav class="workspace-nav" aria-label="後台功能導覽">
+      <button type="button" class="workspace-tab is-active" data-workspace-tab="overview" onclick="setWorkspace('overview')">今日總覽</button>
+      <button type="button" class="workspace-tab" data-workspace-tab="operations" onclick="setWorkspace('operations')">派工與審核</button>
+      <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機管理</button>
+      <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
+      <button type="button" class="workspace-tab" data-workspace-tab="settings" onclick="setWorkspace('settings')">LINE 與系統</button>
+    </nav>
+
+    <section class="panel span-12" data-workspace="overview">
       <div class="panel-header">
         <div>
           <h2>系統總覽</h2>
@@ -101,25 +109,23 @@
     </section>
 
 
-    <section class="panel span-12">
+    <section class="panel span-12" data-workspace="fleet">
       <div class="panel-header">
         <div>
-          <h2>堆高機管理</h2>
-          <p class="muted">堆高機車隊管理、每日點檢、操作員指派、工地調度與安全提醒。</p>
+          <h2>堆高機出租管理</h2>
+          <p class="muted">出租、客戶、設備與財務資料在獨立工作頁操作，避免和每日派工混在一起。</p>
         </div>
         <div class="button-row">
-          <button type="button" class="button-secondary" onclick="window.open('https://quantflow-tw-trading.h341395.chatgpt.site/', '_blank')">在新視窗開啟</button>
+          <button type="button" onclick="window.location.href='/forklift'">開啟出租管理</button>
         </div>
       </div>
-      <iframe
-        src="https://quantflow-tw-trading.h341395.chatgpt.site/"
-        style="width:100%; height:800px; border:1px solid #e0e0e0; border-radius:8px; background:#fff;"
-        title="堆高機管理系統"
-        loading="lazy">
-      </iframe>
+      <div class="action-callout">
+        <strong>租賃資料獨立管理</strong>
+        <span>在出租管理頁可處理客戶、設備、出租記錄、財務統計與報表；本頁保留每日車隊狀態與安全點檢。</span>
+      </div>
     </section>
 
-    <section class="panel span-12">
+    <section class="panel span-12" data-workspace="fleet">
       <div class="panel-header">
         <div>
           <h2>堆高機車隊管理</h2>
@@ -147,7 +153,7 @@
       </div>
     </section>
 
-    <section class="panel span-12">
+    <section class="panel span-12" data-workspace="fleet">
       <div class="panel-header">
         <div>
           <h2>堆高機點檢記錄</h2>
@@ -177,7 +183,7 @@
     </section>
 
 
-    <section class="panel span-12">
+    <section class="panel span-12" data-workspace="settings">
       <div class="panel-header">
         <div>
           <h2>LINE 正式接線</h2>
@@ -200,7 +206,7 @@
     </section>
 
     <div class="grid">
-      <section class="panel span-8">
+      <section class="panel span-8" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>建立每日工作安排</h2>
@@ -255,7 +261,7 @@
         </form>
       </section>
 
-      <section class="panel span-4">
+      <section class="panel span-4" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>臨時通知</h2>
@@ -297,7 +303,7 @@
         </form>
       </section>
 
-      <section class="panel span-12">
+      <section class="panel span-12" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>工作安排清單</h2>
@@ -325,7 +331,7 @@
         </div>
       </section>
 
-      <section class="panel span-6">
+      <section class="panel span-6" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>請假審核</h2>
@@ -360,7 +366,7 @@
         </div>
       </section>
 
-      <section class="panel span-6">
+      <section class="panel span-6" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>會議記錄</h2>
@@ -409,7 +415,7 @@
         </form>
       </section>
 
-      <section class="panel span-12">
+      <section class="panel span-12" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>主管異常審核</h2>
@@ -437,7 +443,7 @@
         </div>
       </section>
 
-      <section class="panel span-12">
+      <section class="panel span-12" data-workspace="operations">
         <div class="panel-header">
           <div>
             <h2>自動改派建議</h2>
@@ -459,7 +465,7 @@
         </div>
       </section>
 
-      <section class="panel span-8">
+      <section class="panel span-8" data-workspace="people">
         <div class="panel-header">
           <div>
             <h2>員工名冊與綁定狀態</h2>
@@ -488,7 +494,7 @@
         </div>
       </section>
 
-      <section class="panel span-4">
+      <section class="panel span-4" data-workspace="settings">
         <div class="panel-header">
           <div>
             <h2>LINE 模擬測試</h2>
@@ -511,7 +517,7 @@
         <div id="console" class="console"></div>
       </section>
 
-      <section class="panel span-12">
+      <section class="panel span-12" data-workspace="people">
         <div class="panel-header">
           <div>
             <h2>考勤與回報查詢</h2>
@@ -541,6 +547,96 @@
           </table>
         </div>
       </section>
+
+      <section class="panel span-12" data-workspace="settings">
+        <div class="panel-header">
+          <div>
+            <h2>使用者管理</h2>
+            <p class="muted">啟用或停用帳號、重設密碼與確認 LINE 綁定狀態。僅 owner / admin 可操作。</p>
+          </div>
+          <div class="button-row">
+            <button type="button" class="button-secondary" onclick="loadUserManagement()">重新整理</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>員工代碼</th>
+                <th>姓名</th>
+                <th>角色</th>
+                <th>狀態</th>
+                <th>LINE 綁定</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="userManagementRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-12" data-workspace="settings">
+        <div class="panel-header">
+          <div>
+            <h2>工作相片上傳記錄</h2>
+            <p class="muted">依員工或日期查詢 LINE 工作相片是否已儲存至 Google Drive。</p>
+          </div>
+          <div class="button-row">
+            <input id="photoFilterEmployee" placeholder="員工代碼">
+            <input id="photoFilterDateFrom" type="date">
+            <input id="photoFilterDateTo" type="date">
+            <button type="button" class="button-secondary" onclick="loadPhotoUploads()">查詢</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>上傳時間</th>
+                <th>員工</th>
+                <th>工地</th>
+                <th>檔名</th>
+                <th>連結</th>
+              </tr>
+            </thead>
+            <tbody id="photoUploadRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel span-12" data-workspace="settings">
+        <div class="panel-header">
+          <div>
+            <h2>登入稽核日誌</h2>
+            <p class="muted">查詢後台登入成功、失敗與帳號鎖定紀錄。僅 owner / admin 可檢視。</p>
+          </div>
+          <div class="button-row">
+            <input id="loginLogFilterEmployee" placeholder="員工代碼">
+            <select id="loginLogFilterStatus">
+              <option value="">全部狀態</option>
+              <option value="success">成功</option>
+              <option value="failed">失敗</option>
+              <option value="locked">鎖定</option>
+            </select>
+            <button type="button" class="button-secondary" onclick="loadLoginLogs()">查詢</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>員工代碼</th>
+                <th>姓名</th>
+                <th>IP</th>
+                <th>狀態</th>
+                <th>失敗原因</th>
+              </tr>
+            </thead>
+            <tbody id="loginLogRows"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -550,6 +646,20 @@
       employees: [],
       worksites: [],
     };
+
+    function setWorkspace(workspace, shouldScroll = true) {
+      document.querySelectorAll("[data-workspace]").forEach((panel) => {
+        panel.hidden = panel.dataset.workspace !== workspace;
+      });
+      document.querySelectorAll("[data-workspace-tab]").forEach((tab) => {
+        const isActive = tab.dataset.workspaceTab === workspace;
+        tab.classList.toggle("is-active", isActive);
+        tab.setAttribute("aria-pressed", String(isActive));
+      });
+      if (shouldScroll) {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
 
     function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
@@ -747,6 +857,7 @@
       document.getElementById("assignmentFilterDate").value = todayString();
       document.getElementById("attendanceFilterDate").value = todayString();
       document.getElementById("exceptionFilterDate").value = todayString();
+      document.getElementById("inspectionFilterDate").value = todayString();
       document.getElementById("meetingAt").value = `${todayString()}T09:00`;
       await loadMeta();
       await Promise.all([
@@ -757,7 +868,13 @@
         loadAttendance(),
         loadAttendanceExceptions(),
         loadLineStatus(),
+        loadForklifts(),
+        loadForkliftInspections(),
+        loadUserManagement(),
+        loadPhotoUploads(),
+        loadLoginLogs(),
       ]);
+      setWorkspace("overview", false);
     }
 
     async function loadMeta() {
@@ -1340,99 +1457,6 @@
     }
 
   </script>
-
-    <!-- 使用者管理 -->
-    <section class="panel span-12">
-      <div class="panel-header">
-        <div>
-          <h2>使用者管理</h2>
-          <p class="muted">啟用/停用帳號、重設密碼。僅 owner / admin 可操作。</p>
-        </div>
-        <div class="button-row">
-          <button type="button" class="button-secondary" onclick="loadUserManagement()">重新整理</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>員工代碼</th>
-              <th>姓名</th>
-              <th>角色</th>
-              <th>狀態</th>
-              <th>LINE 綁定</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="userManagementRows"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- 相片上傳記錄 -->
-    <section class="panel span-12">
-      <div class="panel-header">
-        <div>
-          <h2>相片上傳記錄</h2>
-          <p class="muted">查詢 LINE 上傳的工作相片記錄。</p>
-        </div>
-        <div class="button-row">
-          <input id="photoFilterEmployee" placeholder="員工代碼">
-          <input id="photoFilterDateFrom" type="date">
-          <input id="photoFilterDateTo" type="date">
-          <button type="button" class="button-secondary" onclick="loadPhotoUploads()">查詢</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>上傳時間</th>
-              <th>員工</th>
-              <th>工地</th>
-              <th>檔名</th>
-              <th>連結</th>
-            </tr>
-          </thead>
-          <tbody id="photoUploadRows"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- 登入稽核日誌 -->
-    <section class="panel span-12">
-      <div class="panel-header">
-        <div>
-          <h2>登入稽核日誌</h2>
-          <p class="muted">記錄所有後台登入嘗試，包含成功、失敗與鎖定。僅 owner / admin 可檢視。</p>
-        </div>
-        <div class="button-row">
-          <input id="loginLogFilterEmployee" placeholder="員工代碼">
-          <select id="loginLogFilterStatus">
-            <option value="">全部狀態</option>
-            <option value="success">成功</option>
-            <option value="failed">失敗</option>
-            <option value="locked">鎖定</option>
-          </select>
-          <button type="button" class="button-secondary" onclick="loadLoginLogs()">查詢</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>時間</th>
-              <th>員工代碼</th>
-              <th>姓名</th>
-              <th>IP</th>
-              <th>狀態</th>
-              <th>失敗原因</th>
-            </tr>
-          </thead>
-          <tbody id="loginLogRows"></tbody>
-        </table>
-      </div>
-    </section>
 
 </body>
 </html>
