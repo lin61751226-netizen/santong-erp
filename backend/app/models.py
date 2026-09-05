@@ -340,3 +340,37 @@ class ForkliftRental(SQLModel, table=True):
     status: str = Field(default="進行中")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+
+
+class ForkliftStatus(str, Enum):
+    operating = "operating"       # 作業中
+    available = "available"       # 可調度
+    maintenance = "maintenance"   # 待檢修
+    inactive = "inactive"         # 停用
+
+
+class Forklift(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    forklift_code: str = Field(index=True)           # 堆高機編號（1號、2號等）
+    model: Optional[str] = None                        # 型號（自排 2.5噸柴油車等）
+    status: ForkliftStatus = Field(default=ForkliftStatus.available)
+    current_site_id: Optional[int] = Field(default=None, foreign_key="worksite.id")
+    current_operator_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    fuel_level: Optional[int] = Field(default=100)    # 油量百分比
+    next_maintenance_date: Optional[date] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ForkliftInspection(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    forklift_id: int = Field(foreign_key="forklift.id", index=True)
+    operator_id: int = Field(foreign_key="employee.id", index=True)
+    site_id: Optional[int] = Field(default=None, foreign_key="worksite.id")
+    inspection_date: date = Field(index=True)
+    # 點檢項目結果（JSON）：{"engine_oil": true, "coolant": true, ...}
+    inspection_items: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    all_passed: bool = Field(default=True)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)

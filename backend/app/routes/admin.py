@@ -12,6 +12,8 @@ from app.models import (
     AssignmentMember,
     Employee,
     EmployeeStatus,
+    Forklift,
+    ForkliftInspection,
     LeaveRequest,
     LeaveStatus,
     LoginLog,
@@ -883,5 +885,69 @@ def list_photo_uploads(
             "drive_url": log.drive_url,
             "uploaded_at": log.uploaded_at.isoformat() if log.uploaded_at else None,
             "note": log.note,
+        })
+    return result
+
+
+
+@router.get("/forklifts")
+def list_forklifts(
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    forklifts = session.exec(select(Forklift).order_by(Forklift.forklift_code)).all()
+    result = []
+    for f in forklifts:
+        site = session.get(Worksite, f.current_site_id) if f.current_site_id else None
+        operator = session.get(Employee, f.current_operator_id) if f.current_operator_id else None
+        result.append({
+            "id": f.id,
+            "forklift_code": f.forklift_code,
+            "model": f.model,
+            "status": f.status,
+            "site_name": site.name if site else None,
+            "operator_name": operator.name if operator else None,
+            "fuel_level": f.fuel_level,
+            "next_maintenance_date": f.next_maintenance_date.isoformat() if f.next_maintenance_date else None,
+        })
+    return result
+
+
+@router.get("/forklift-inspections")
+def list_forklift_inspections(
+    date_filter: Optional[date] = Query(default=None),
+    site_id: Optional[int] = Query(default=None),
+    forklift_id: Optional[int] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(ForkliftInspection)
+    if date_filter:
+        statement = statement.where(ForkliftInspection.inspection_date == date_filter)
+    if site_id:
+        statement = statement.where(ForkliftInspection.site_id == site_id)
+    if forklift_id:
+        statement = statement.where(ForkliftInspection.forklift_id == forklift_id)
+    if actor.role == Role.site_manager and actor.home_site_id:
+        statement = statement.where(ForkliftInspection.site_id == actor.home_site_id)
+    inspections = session.exec(
+        statement.order_by(ForkliftInspection.inspection_date.desc(), ForkliftInspection.id.desc()).limit(limit)
+    ).all()
+    result = []
+    for insp in inspections:
+        forklift = session.get(Forklift, insp.forklift_id)
+        operator = session.get(Employee, insp.operator_id)
+        site = session.get(Worksite, insp.site_id) if insp.site_id else None
+        result.append({
+            "id": insp.id,
+            "forklift_code": forklift.forklift_code if forklift else None,
+            "forklift_model": forklift.model if forklift else None,
+            "operator_name": operator.name if operator else None,
+            "site_name": site.name if site else None,
+            "inspection_date": insp.inspection_date.isoformat(),
+            "all_passed": insp.all_passed,
+            "notes": insp.notes,
+            "created_at": insp.created_at.isoformat() if insp.created_at else None,
         })
     return result

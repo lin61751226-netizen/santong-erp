@@ -16,6 +16,7 @@ from app.models import (
     AssignmentMember,
     DeliveryStatus,
     Employee,
+    Forklift,
     LeaveType,
     LeaveRequest,
     LeaveStatus,
@@ -36,6 +37,7 @@ from app.services.hr import (
     get_latest_attendance_event,
     record_attendance_event,
 )
+from app.services import forklift_service
 from app.services.line_platform import (
     LinePlatformError,
     bind_employee_line_user,
@@ -566,6 +568,129 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先點 Rich Menu 的「開始綁定」。")
         return
 
+    # ---- 堆高機點檢流程 ----
+    if text == "點檢" or text == "堆高機點檢" or text == "開始點檢":
+        forklift_service.start_session(line_user_id, employee.id)
+        site_items = forklift_service.build_site_quick_replies(session)
+        if not site_items:
+            await line_service.reply_text(reply_token, "目前沒有可用的工地。")
+            forklift_service.clear_session(line_user_id)
+            return
+        await line_service.reply_messages(
+            reply_token,
+            [{
+                "type": "text",
+                "text": "🚜 堆高機每日點檢\n\n請先選擇工地：",
+                "quickReply": {"items": [
+                    {"type": "action", "action": {"type": "message", "label": label, "text": text}}
+                    for label, text in site_items
+                ]},
+            }],
+        )
+        return
+
+    if text.startswith("點檢工地:"):
+        session_state = forklift_service.get_session(line_user_id)
+        if not session_state or session_state.step != "select_site":
+            await line_service.reply_text(reply_token, "請先輸入「點檢」開始點檢流程。")
+            return
+        try:
+            site_id = int(text.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await line_service.reply_text(reply_token, "工地選擇無效，請重新輸入「點檢」。")
+            forklift_service.clear_session(line_user_id)
+            return
+        site = session.get(Worksite, site_id)
+        if not site:
+            await line_service.reply_text(reply_token, "找不到該工地，請重新輸入「點檢」。")
+            forklift_service.clear_session(line_user_id)
+            return
+        session_state.site_id = site_id
+        session_state.step = "select_forklift"
+        forklift_items = forklift_service.build_forklift_quick_replies(session, site_id)
+        if not forklift_items:
+            await line_service.reply_text(reply_token, f"{site.name} 目前沒有可用的堆高機。\n請重新輸入「點檢」選擇其他工地。")
+            forklift_service.clear_session(line_user_id)
+            return
+        await line_service.reply_messages(
+            reply_token,
+            [{
+                "type": "text",
+                "text": f"工地：{site.name}\n\n請選擇要點檢的堆高機：",
+                "quickReply": {"items": [
+                    {"type": "action", "action": {"type": "message", "label": label, "text": text}}
+                    for label, text in forklift_items
+                ]},
+            }],
+        )
+        return
+
+    if text.startswith("點檢堆高機:"):
+        session_state = forklift_service.get_session(line_user_id)
+        if not session_state or session_state.step != "select_forklift":
+            await line_service.reply_text(reply_token, "請先輸入「點檢」開始點檢流程。")
+            return
+        try:
+            forklift_id = int(text.split(":", 1)[1])
+        except (ValueError, IndexError):
+            await line_service.reply_text(reply_token, "堆高機選擇無效，請重新輸入「點檢」。")
+            forklift_service.clear_session(line_user_id)
+            return
+        forklift = session.get(Forklift, forklift_id)
+        if not forklift:
+            await line_service.reply_text(reply_token, "找不到該堆高機，請重新輸入「點檢」。")
+            forklift_service.clear_session(line_user_id)
+            return
+        session_state.forklift_id = forklift_id
+        session_state.step = "inspecting"
+        session_state.current_item_index = 0
+        item = forklift_service.get_current_item(session_state)
+        await line_service.reply_messages(
+            reply_token,
+            [{
+                "type": "text",
+                "text": f"堆高機：{forklift.forklift_code}（{forklift.model}）\n\n開始點檢（第 1/10 項）\n\n【{item['label']}】\n\n請回覆：正常 或 異常",
+                "quickReply": {"items": [
+                    {"type": "action", "action": {"type": "message", "label": "✅ 正常", "text": "正常"}},
+                    {"type": "action", "action": {"type": "message", "label": "⚠️ 異常", "text": "異常"}},
+                    {"type": "action", "action": {"type": "message", "label": "取消點檢", "text": "取消點檢"}},
+                ]},
+            }],
+        )
+        return
+
+    if text == "取消點檢":
+        forklift_service.clear_session(line_user_id)
+        await line_service.reply_text(reply_token, "已取消點檢流程。")
+        return
+
+    # 點檢過程中回覆「正常」或「異常」
+    session_state = forklift_service.get_session(line_user_id)
+    if session_state and session_state.step == "inspecting":
+        is_normal = text == "正常"
+        has_next = forklift_service.record_item_result(session_state, is_normal)
+        if has_next:
+            item = forklift_service.get_current_item(session_state)
+            current_num = session_state.current_item_index + 1
+            await line_service.reply_messages(
+                reply_token,
+                [{
+                    "type": "text",
+                    "text": f"第 {current_num}/10 項\n\n【{item['label']}】\n\n請回覆：正常 或 異常",
+                    "quickReply": {"items": [
+                        {"type": "action", "action": {"type": "message", "label": "✅ 正常", "text": "正常"}},
+                        {"type": "action", "action": {"type": "message", "label": "⚠️ 異常", "text": "異常"}},
+                        {"type": "action", "action": {"type": "message", "label": "取消點檢", "text": "取消點檢"}},
+                    ]},
+                }],
+            )
+        else:
+            inspection = forklift_service.save_inspection(session, session_state)
+            summary = forklift_service.build_inspection_summary(session, inspection)
+            forklift_service.clear_session(line_user_id)
+            await line_service.reply_text(reply_token, summary)
+        return
+
     if text == "我的行程":
         assignment = find_assignment_for_employee(session, employee.id)
         if not assignment:
@@ -696,6 +821,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     available_commands = [
         "開始綁定",
+        "點檢（堆高機每日點檢）",
         "我的行程",
         "我的打卡",
         "我的請假",

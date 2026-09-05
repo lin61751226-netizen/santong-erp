@@ -122,6 +122,62 @@
     <section class="panel span-12">
       <div class="panel-header">
         <div>
+          <h2>堆高機車隊管理</h2>
+          <p class="muted">6 台堆高機即時狀態、工地、操作員與油量。</p>
+        </div>
+        <div class="button-row">
+          <button type="button" class="button-secondary" onclick="loadForklifts()">重新整理</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>堆高機</th>
+              <th>型號</th>
+              <th>狀態</th>
+              <th>目前工地</th>
+              <th>操作員</th>
+              <th>油量</th>
+            </tr>
+          </thead>
+          <tbody id="forkliftRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
+          <h2>堆高機點檢記錄</h2>
+          <p class="muted">查詢 LINE 上傳的堆高機每日點檢記錄。</p>
+        </div>
+        <div class="button-row">
+          <input id="inspectionFilterDate" type="date">
+          <button type="button" class="button-secondary" onclick="loadForkliftInspections()">查詢</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>堆高機</th>
+              <th>操作員</th>
+              <th>工地</th>
+              <th>點檢結果</th>
+              <th>備註</th>
+            </tr>
+          </thead>
+          <tbody id="forkliftInspectionRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+
+    <section class="panel span-12">
+      <div class="panel-header">
+        <div>
           <h2>LINE 正式接線</h2>
           <p class="muted">對齊 LINE 官方 Messaging API：Webhook URL 設定、驗證與 Rich Menu 佈署。</p>
         </div>
@@ -1180,6 +1236,69 @@
             <td>${item.ip_address || '-'}</td>
             <td>${statusBadge}</td>
             <td>${item.failure_reason || '-'}</td>
+          </tr>`;
+        }).join("");
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+  
+    // ---- 堆高機車隊管理 ----
+    async function loadForklifts() {
+      try {
+        const data = await api("/api/forklifts");
+        const rows = document.getElementById("forkliftRows");
+        if (data.length === 0) {
+          rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無堆高機資料</td></tr>';
+          return;
+        }
+        rows.innerHTML = data.map((f) => {
+          const statusMap = {
+            operating: '<span class="badge" style="background:#cce5ff;color:#004085;">作業中</span>',
+            available: '<span class="badge" style="background:#d4edda;color:#155724;">可調度</span>',
+            maintenance: '<span class="badge" style="background:#fff3cd;color:#856404;">待檢修</span>',
+            inactive: '<span class="badge" style="background:#f8d7da;color:#721c24;">停用</span>',
+          };
+          const fuelColor = f.fuel_level >= 70 ? '#28a745' : f.fuel_level >= 40 ? '#ffc107' : '#dc3545';
+          return `<tr>
+            <td><strong>${f.forklift_code}</strong></td>
+            <td>${f.model || '-'}</td>
+            <td>${statusMap[f.status] || f.status}</td>
+            <td>${f.site_name || '-'}</td>
+            <td>${f.operator_name || '未指派'}</td>
+            <td><span style="color:${fuelColor};font-weight:bold;">${f.fuel_level}%</span></td>
+          </tr>`;
+        }).join("");
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    // ---- 堆高機點檢記錄 ----
+    async function loadForkliftInspections() {
+      try {
+        const params = new URLSearchParams();
+        const dateFilter = document.getElementById("inspectionFilterDate").value;
+        if (dateFilter) params.set("date_filter", dateFilter);
+        params.set("limit", "100");
+        const data = await api("/api/forklift-inspections?" + params.toString());
+        const rows = document.getElementById("forkliftInspectionRows");
+        if (data.length === 0) {
+          rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無點檢記錄</td></tr>';
+          return;
+        }
+        rows.innerHTML = data.map((item) => {
+          const resultBadge = item.all_passed
+            ? '<span class="badge" style="background:#d4edda;color:#155724;">全部正常</span>'
+            : '<span class="badge" style="background:#f8d7da;color:#721c24;">有異常</span>';
+          return `<tr>
+            <td>${item.inspection_date}</td>
+            <td>${item.forklift_code}（${item.forklift_model || '-'}）</td>
+            <td>${item.operator_name || '-'}</td>
+            <td>${item.site_name || '-'}</td>
+            <td>${resultBadge}</td>
+            <td>${item.notes || '-'}</td>
           </tr>`;
         }).join("");
       } catch (error) {

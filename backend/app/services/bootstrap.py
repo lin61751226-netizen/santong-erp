@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.security import hash_password
-from app.models import Employee, EmployeeStatus, Role, Worksite
+from app.models import Employee, EmployeeStatus, Forklift, ForkliftStatus, Role, Worksite
 
 
 WORKSITE_DEFINITIONS = [
@@ -109,20 +109,6 @@ EMPLOYEE_ROSTER = [
         "status": EmployeeStatus.active,
     },
     {
-        "employee_code": "EMP002",
-        "name": "小咪",
-        "bind_token": "ST-1006",
-        "role": Role.employee,
-        "title": "現場人員",
-        "department": "工程",
-        "salary_scheme": "日薪",
-        "phone": None,
-        "email": None,
-        "assigned_sites": [],
-        "machine_skills": [],
-        "status": EmployeeStatus.active,
-    },
-    {
         "employee_code": "EMP003",
         "name": "建成Ray Rostova",
         "bind_token": "ST-1007",
@@ -157,6 +143,16 @@ LEGACY_EMPLOYEE_CODE_MAP = {
     "ACC001": "BOT001",
     "SUP047": "ADMIN002",
 }
+
+FORKLIFT_DEFINITIONS = [
+    {"code": "1號", "model": "自排 2.5噸柴油車", "site_name": "永森45", "fuel_level": 68},
+    {"code": "2號", "model": "手排 2.5噸柴油車", "site_name": "齊裕53", "fuel_level": 92},
+    {"code": "3號", "model": "自排 3.0噸柴油車", "site_name": "金駿76", "fuel_level": 74},
+    {"code": "5號", "model": "手排 3.0噸柴油車", "site_name": "桃園28", "fuel_level": 54},
+    {"code": "6號", "model": "自排 2.5噸柴油車", "site_name": "桃園29", "fuel_level": 80},
+    {"code": "7號", "model": "手排 3.0噸柴油車", "site_name": "新竹寶山1", "fuel_level": 85},
+]
+
 
 
 def _normalized_sites(site_names: list[str]) -> list[str]:
@@ -280,6 +276,43 @@ def _deactivate_unlisted_employees(session: Session) -> None:
         session.commit()
 
 
+
+
+def _ensure_forklifts(session: Session, worksites: dict[str, Worksite]) -> None:
+    existing = {f.forklift_code: f for f in session.exec(select(Forklift)).all()}
+    changed = False
+    for definition in FORKLIFT_DEFINITIONS:
+        code = definition["code"]
+        forklift = existing.get(code)
+        site = worksites.get(definition["site_name"])
+        if forklift is None:
+            forklift = Forklift(
+                forklift_code=code,
+                model=definition["model"],
+                status=ForkliftStatus.available,
+                current_site_id=site.id if site else None,
+                fuel_level=definition["fuel_level"],
+            )
+            session.add(forklift)
+            changed = True
+        else:
+            if forklift.model != definition["model"]:
+                forklift.model = definition["model"]
+                changed = True
+            if site and forklift.current_site_id != site.id:
+                forklift.current_site_id = site.id
+                changed = True
+            if forklift.fuel_level is None:
+                forklift.fuel_level = definition["fuel_level"]
+                changed = True
+            if forklift.status == ForkliftStatus.inactive:
+                forklift.status = ForkliftStatus.available
+                changed = True
+            session.add(forklift)
+    if changed:
+        session.commit()
+
+
 def seed_demo_data(session: Session) -> None:
     worksites = _ensure_worksites(session)
     _rename_legacy_employee_codes(session)
@@ -289,6 +322,7 @@ def seed_demo_data(session: Session) -> None:
     session.commit()
 
     _deactivate_unlisted_employees(session)
+    _ensure_forklifts(session, worksites)
 
     # 自動解鎖管理員帳號（owner/admin），防止被永久鎖定導致無法登入後台
     for emp in session.exec(
