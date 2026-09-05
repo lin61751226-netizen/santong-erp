@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlmodel import Session, select
 
@@ -69,7 +69,7 @@ EMPLOYEE_ROSTER = [
     {
         "employee_code": "BOT001",
         "name": "三通工程行line機器人",
-        "bind_token": "ST-1003",
+        "bind_token": "ST-1009",
         "role": Role.external,
         "title": "系統管理者",
         "department": "系統管理",
@@ -83,7 +83,7 @@ EMPLOYEE_ROSTER = [
     {
         "employee_code": "ADMIN002",
         "name": "秀蓉",
-        "bind_token": "ST-1004",
+        "bind_token": "ST-1003",
         "role": Role.admin,
         "title": "行政人員",
         "department": "行政",
@@ -137,7 +137,7 @@ EMPLOYEE_ROSTER = [
         "status": EmployeeStatus.active,
     },
     {
-        "employee_code": "EMP004",
+        "employee_code": "EMP005",
         "name": "林小咪",
         "bind_token": "ST-1008",
         "role": Role.employee,
@@ -289,3 +289,14 @@ def seed_demo_data(session: Session) -> None:
     session.commit()
 
     _deactivate_unlisted_employees(session)
+
+    # 自動解鎖管理員帳號（owner/admin），防止被永久鎖定導致無法登入後台
+    for emp in session.exec(
+        select(Employee).where(Employee.role.in_([Role.owner, Role.admin]))
+    ).all():
+        if emp.locked_until or emp.failed_login_count:
+            emp.locked_until = None
+            emp.failed_login_count = 0
+            session.add(emp)
+    session.commit()
+
