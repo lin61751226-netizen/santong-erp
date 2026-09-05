@@ -18,6 +18,7 @@ from app.routes.line_webhook import router as line_router
 from app.services.bootstrap import seed_demo_data
 from app.services.google_drive import google_drive_worklog_service
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.line_platform import deploy_default_rich_menus
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -37,6 +38,20 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("LINE binding Drive sync failed during startup: %s", exc)
     start_scheduler()
+
+    # 服務啟動時自動佈署 Rich Menu（確保按鈕配置為最新版本）
+    if settings.environment == "production" and settings.line_channel_access_token:
+        try:
+            logger.info("啟動時自動佈署 Rich Menu...")
+            result = await deploy_default_rich_menus(settings.public_base_url.rstrip("/"))
+            logger.info(
+                "Rich Menu 自動佈署成功：main=%s, tools=%s",
+                result.get("main_rich_menu_id"),
+                result.get("tools_rich_menu_id"),
+            )
+        except Exception as exc:
+            logger.error("Rich Menu 自動佈署失敗：%s: %s", type(exc).__name__, exc, exc_info=True)
+
     yield
     stop_scheduler()
 
