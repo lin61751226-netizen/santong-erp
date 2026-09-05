@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>堆高機出租管理 — {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/forklift.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <div class="app flex">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar flex flex-col">
+      <div class="sidebar__header py-16 px-16">
+        <h3 class="m-0">堆高機出租管理</h3>
+        <a href="/" style="font-size:13px;color:var(--color-text-secondary);text-decoration:none;">← 返回工程後台</a>
+      </div>
+      <nav class="sidebar__nav flex flex-col gap-8 px-16">
+        <button class="nav-link btn btn--outline" data-view="dashboard">儀表板</button>
+        <button class="nav-link btn btn--outline" data-view="customers">客戶管理</button>
+        <button class="nav-link btn btn--outline" data-view="equipment">設備管理</button>
+        <button class="nav-link btn btn--outline" data-view="rentals">出租管理</button>
+        <button class="nav-link btn btn--outline" data-view="financial">財務管理</button>
+        <button class="nav-link btn btn--outline" data-view="reports">報表功能</button>
+        <hr />
+        <div id="userInfo" style="font-size:13px;color:var(--color-text-secondary);"></div>
+        <button class="btn btn--secondary" id="logoutBtn">登出</button>
+      </nav>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main id="mainContent" class="content flex flex-col container py-16 px-16">
+      <div id="loading" style="text-align:center;padding:60px;color:var(--color-text-secondary);">載入中...</div>
+    </main>
+  </div>
+
+  <!-- Dialog for forms (re-used) -->
+  <dialog id="modalDialog">
+    <form method="dialog" id="modalForm" class="card">
+      <div class="card__header flex justify-between items-center">
+        <h4 id="modalTitle">表單</h4>
+        <button class="btn btn--outline btn--sm" id="closeModal">關閉</button>
+      </div>
+      <div class="card__body" id="modalBody"></div>
+      <div class="card__footer flex gap-8 justify-end">
+        <button class="btn btn--secondary" id="modalCancel">取消</button>
+        <button class="btn btn--primary" id="modalSubmit">確定</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/forklift.js"></script>
+</body>
+</html>

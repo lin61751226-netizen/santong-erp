@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.db import init_db, session_scope
 from app.routes.admin import router as admin_router
 from app.routes.auth import router as auth_router
+from app.routes.forklift import router as forklift_router
 from app.routes.line_management import api_router as line_management_api_router
 from app.routes.line_management import page_router as line_management_page_router
 from app.routes.line_webhook import router as line_router
@@ -47,6 +48,7 @@ app.include_router(auth_router)
 app.include_router(line_router)
 app.include_router(line_management_api_router)
 app.include_router(line_management_page_router)
+app.include_router(forklift_router)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -57,6 +59,17 @@ def admin_home(request: Request):
             "request": request,
             "app_name": settings.app_name,
             "default_actor_code": settings.default_actor_code,
+        },
+    )
+
+
+@app.get("/forklift", response_class=HTMLResponse)
+def forklift_home(request: Request):
+    return templates.TemplateResponse(
+        "forklift.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
         },
     )
 

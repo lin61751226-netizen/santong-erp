@@ -295,3 +295,48 @@ class LoginLog(SQLModel, table=True):
     failure_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
+
+# ---- 堆高機出租管理系統 ----
+
+class ForkliftCustomer(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    customer_code: str = Field(index=True, unique=True)
+    name: str = Field(index=True)
+    tax_id: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    credit_limit: int = Field(default=0)
+    payment_terms: Optional[str] = None
+    grade: str = Field(default="B")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ForkliftEquipment(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    equipment_code: str = Field(index=True, unique=True)
+    name: str
+    brand: Optional[str] = None
+    capacity: float = Field(default=0)
+    fuel_type: Optional[str] = None
+    status: str = Field(default="可租")
+    daily_rate: int = Field(default=0)
+    monthly_rate: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ForkliftRental(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    rental_code: str = Field(index=True, unique=True)
+    customer_id: int = Field(foreign_key="forkliftcustomer.id", index=True)
+    equipment_id: int = Field(foreign_key="forkliftequipment.id", index=True)
+    start_date: date = Field(index=True)
+    end_date: date = Field(index=True)
+    days: int = Field(default=0)
+    daily_rate: int = Field(default=0)
+    total_amount: int = Field(default=0)
+    deposit: int = Field(default=0)
+    tax: int = Field(default=0)
+    status: str = Field(default="進行中")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+

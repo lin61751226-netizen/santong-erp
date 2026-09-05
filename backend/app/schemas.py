@@ -97,3 +97,73 @@ class LineWebhookConfigureRequest(BaseModel):
 class LineRichMenuDeployRequest(BaseModel):
     base_url: Optional[str] = None
     set_default: bool = True
+
+
+# ---- 堆高機出租管理 ----
+
+class ForkliftCustomerCreate(BaseModel):
+    name: str
+    tax_id: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    credit_limit: int = 0
+    payment_terms: Optional[str] = None
+    grade: str = "B"
+
+
+class ForkliftCustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    tax_id: Optional[str] = None
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    credit_limit: Optional[int] = None
+    payment_terms: Optional[str] = None
+    grade: Optional[str] = None
+
+
+class ForkliftEquipmentCreate(BaseModel):
+    name: str
+    brand: Optional[str] = None
+    capacity: float = 0
+    fuel_type: Optional[str] = None
+    status: str = "可租"
+    daily_rate: int = 0
+    monthly_rate: int = 0
+
+
+class ForkliftEquipmentUpdate(BaseModel):
+    name: Optional[str] = None
+    brand: Optional[str] = None
+    capacity: Optional[float] = None
+    fuel_type: Optional[str] = None
+    status: Optional[str] = None
+    daily_rate: Optional[int] = None
+    monthly_rate: Optional[int] = None
+
+
+class ForkliftRentalCreate(BaseModel):
+    customer_id: int
+    equipment_id: int
+    start_date: str
+    end_date: str
+    days: int
+    daily_rate: int
+    total_amount: int
+    deposit: int
+    tax: int
+    status: str = "進行中"
+
+
+class ForkliftRentalUpdate(BaseModel):
+    customer_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    days: Optional[int] = None
+    daily_rate: Optional[int] = None
+    total_amount: Optional[int] = None
+    deposit: Optional[int] = None
+    tax: Optional[int] = None
+    status: Optional[str] = None
