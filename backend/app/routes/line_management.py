@@ -82,7 +82,15 @@ async def deploy_rich_menu(
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
     base_url = (payload.base_url or settings.public_base_url).rstrip("/")
-    result = await deploy_default_rich_menus(base_url)
+    print(f"[deploy_rich_menu] 開始佈署，base_url={base_url}")
+    try:
+        result = await deploy_default_rich_menus(base_url)
+        print(f"[deploy_rich_menu] 佈署成功，main_id={result.get('main_rich_menu_id')}, tools_id={result.get('tools_rich_menu_id')}")
+    except Exception as exc:
+        print(f"[deploy_rich_menu] 佈署失敗: {type(exc).__name__}: {exc}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"佈署失敗: {type(exc).__name__}: {exc}")
 
     # Existing users can have an explicit old menu assignment, so update only
     # the menu pointer for bound users without touching their LINE identity.
