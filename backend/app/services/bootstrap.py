@@ -325,12 +325,17 @@ def seed_demo_data(session: Session) -> None:
     _ensure_forklifts(session, worksites)
 
     # 自動解鎖管理員帳號（owner/admin），防止被永久鎖定導致無法登入後台
+    unlocked_count = 0
     for emp in session.exec(
         select(Employee).where(Employee.role.in_([Role.owner, Role.admin]))
     ).all():
         if emp.locked_until or emp.failed_login_count:
+            print(f"[bootstrap] 自動解鎖管理員帳號：{emp.employee_code} {emp.name}")
             emp.locked_until = None
             emp.failed_login_count = 0
             session.add(emp)
+            unlocked_count += 1
     session.commit()
+    if unlocked_count:
+        print(f"[bootstrap] 已自動解鎖 {unlocked_count} 個管理員帳號")
 
