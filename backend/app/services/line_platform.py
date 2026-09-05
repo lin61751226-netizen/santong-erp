@@ -246,12 +246,22 @@ def generate_default_rich_menu_images(
         "main": STATIC_RICH_MENU_DIR / "santong-main.png",
         "tools": STATIC_RICH_MENU_DIR / "santong-tools.png",
     }
+    # 每次部署都重新生成圖片，確保按鈕佈局最新
     if not force_regenerate and all(path.exists() for path in bundled_outputs.values()):
-        for name, bundled_path in bundled_outputs.items():
-            target_path = RICH_MENU_DIR / bundled_path.name
-            if not target_path.exists():
-                shutil.copyfile(bundled_path, target_path)
-        return bundled_outputs
+        # 檢查圖片是否過期（以檔案修改時間判斷）
+        import time
+        current_time = time.time()
+        all_fresh = True
+        for path in bundled_outputs.values():
+            if path.exists() and (current_time - path.stat().st_mtime) > 86400:
+                all_fresh = False
+                break
+        if all_fresh:
+            for name, bundled_path in bundled_outputs.items():
+                target_path = RICH_MENU_DIR / bundled_path.name
+                if not target_path.exists():
+                    shutil.copyfile(bundled_path, target_path)
+            return bundled_outputs
 
     width, height = 2500, 1686
     tab_height = 250
@@ -282,10 +292,11 @@ def generate_default_rich_menu_images(
             [
                 ((0, 0, width // 2, tab_height), "主選單"),
                 ((width // 2, 0, width, tab_height), "工作工具"),
-                ((0, tab_height, column_width, height), "到達\n工地"),
-                ((column_width, tab_height, column_width * 2, height), "工作\n開始"),
-                ((column_width * 2, tab_height, column_width * 3, height), "工作\n完成"),
-                ((column_width * 3, tab_height, width, height), "異常\n回報"),
+                ((0, tab_height, width // 5, height), "到達\n工地"),
+                ((width // 5, tab_height, width // 5 * 2, height), "堆高機\n點檢"),
+                ((width // 5 * 2, tab_height, width // 5 * 3, height), "工作\n開始"),
+                ((width // 5 * 3, tab_height, width // 5 * 4, height), "工作\n完成"),
+                ((width // 5 * 4, tab_height, width, height), "異常\n回報"),
             ],
         ),
     ]
@@ -359,19 +370,23 @@ def build_default_rich_menu_payloads(base_url: str) -> dict[str, dict[str, Any]]
                     "action": {"type": "postback", "label": "工作工具", "data": "action=menu:tools", "displayText": "工作工具"},
                 },
                 {
-                    "bounds": {"x": 0, "y": 250, "width": 625, "height": 1436},
+                    "bounds": {"x": 0, "y": 250, "width": 500, "height": 1436},
                     "action": {"type": "message", "label": "到達工地", "text": "到達工地"},
                 },
                 {
-                    "bounds": {"x": 625, "y": 250, "width": 625, "height": 1436},
+                    "bounds": {"x": 500, "y": 250, "width": 500, "height": 1436},
+                    "action": {"type": "message", "label": "堆高機點檢", "text": "點檢"},
+                },
+                {
+                    "bounds": {"x": 1000, "y": 250, "width": 500, "height": 1436},
                     "action": {"type": "message", "label": "工作開始", "text": "工作開始"},
                 },
                 {
-                    "bounds": {"x": 1250, "y": 250, "width": 625, "height": 1436},
+                    "bounds": {"x": 1500, "y": 250, "width": 500, "height": 1436},
                     "action": {"type": "message", "label": "工作完成", "text": "工作完成"},
                 },
                 {
-                    "bounds": {"x": 1875, "y": 250, "width": 625, "height": 1436},
+                    "bounds": {"x": 2000, "y": 250, "width": 500, "height": 1436},
                     "action": {"type": "message", "label": "異常回報", "text": "異常回報 現場缺料"},
                 },
             ],

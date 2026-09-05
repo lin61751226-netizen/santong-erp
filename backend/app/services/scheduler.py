@@ -8,8 +8,8 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import session_scope
-from app.models import AssignmentMember, Employee, NotificationCategory, WorkAssignment, Worksite
-from app.services.line import _build_schedule_summary, notify_employees
+from app.models import AssignmentMember, Employee, ForkliftInspection, NotificationCategory, WorkAssignment, Worksite
+from app.services.line import _build_schedule_summary, line_service, notify_employees
 
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -53,6 +53,34 @@ async def push_daily_assignments() -> None:
             )
 
 
+async def push_forklift_inspection_reminder() -> None:
+    """每日上班時間提醒員工完成堆高機點檢。"""
+    with session_scope() as session:
+        employees = session.exec(
+            select(Employee).where(Employee.status == "active", Employee.line_user_id.isnot(None))
+        ).all()
+
+        today = date.today()
+        for employee in employees:
+            existing = session.exec(
+                select(ForkliftInspection).where(
+                    ForkliftInspection.operator_id == employee.id,
+                    ForkliftInspection.inspection_date == today,
+                )
+            ).first()
+            if existing:
+                continue
+
+            reminder = (
+                "🚜 堆高機每日點檢提醒\n\n"
+                f"{employee.name} 早安！\n\n"
+                "今日尚未完成堆高機點檢，\n"
+                "請點 Rich Menu 的「堆高機點檢」完成點檢。\n\n"
+                "點檢完成後再開始工作，確保行車安全。"
+            )
+            await line_service.push_text(employee.line_user_id, reminder)
+
+
 def start_scheduler() -> None:
     if scheduler.running:
         return
@@ -62,6 +90,15 @@ def start_scheduler() -> None:
         hour=settings.daily_push_hour,
         minute=settings.daily_push_minute,
         id="daily-assignment-push",
+        replace_existing=True,
+    )
+    # 每日早上 7:30 提醒員工完成堆高機點檢
+    scheduler.add_job(
+        push_forklift_inspection_reminder,
+        "cron",
+        hour=7,
+        minute=30,
+        id="forklift-inspection-reminder",
         replace_existing=True,
     )
     # 每 10 分鐘喚醒服務，避免 Render free plan 休眠

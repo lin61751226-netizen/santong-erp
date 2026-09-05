@@ -139,6 +139,7 @@
               <th>目前工地</th>
               <th>操作員</th>
               <th>油量</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="forkliftRows"></tbody>
@@ -155,6 +156,7 @@
         <div class="button-row">
           <input id="inspectionFilterDate" type="date">
           <button type="button" class="button-secondary" onclick="loadForkliftInspections()">查詢</button>
+          <button type="button" class="button-secondary" onclick="exportForkliftInspections()">匯出 CSV</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -1250,9 +1252,10 @@
         const data = await api("/api/forklifts");
         const rows = document.getElementById("forkliftRows");
         if (data.length === 0) {
-          rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無堆高機資料</td></tr>';
+          rows.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;">無堆高機資料</td></tr>';
           return;
         }
+        const canManage = ["owner", "admin", "site_manager"].includes(state.actor?.role);
         rows.innerHTML = data.map((f) => {
           const statusMap = {
             operating: '<span class="badge" style="background:#cce5ff;color:#004085;">作業中</span>',
@@ -1261,17 +1264,36 @@
             inactive: '<span class="badge" style="background:#f8d7da;color:#721c24;">停用</span>',
           };
           const fuelColor = f.fuel_level >= 70 ? '#28a745' : f.fuel_level >= 40 ? '#ffc107' : '#dc3545';
+          const statusSelect = canManage ? `
+            <select onchange="updateForkliftStatus(${f.id}, this.value)" style="padding:4px 8px;border-radius:4px;border:1px solid #ccc;font-size:13px;">
+              <option value="operating" ${f.status === 'operating' ? 'selected' : ''}>作業中</option>
+              <option value="available" ${f.status === 'available' ? 'selected' : ''}>可調度</option>
+              <option value="maintenance" ${f.status === 'maintenance' ? 'selected' : ''}>待檢修</option>
+              <option value="inactive" ${f.status === 'inactive' ? 'selected' : ''}>停用</option>
+            </select>` : (statusMap[f.status] || f.status);
           return `<tr>
             <td><strong>${f.forklift_code}</strong></td>
             <td>${f.model || '-'}</td>
-            <td>${statusMap[f.status] || f.status}</td>
+            <td>${statusSelect}</td>
             <td>${f.site_name || '-'}</td>
             <td>${f.operator_name || '未指派'}</td>
             <td><span style="color:${fuelColor};font-weight:bold;">${f.fuel_level}%</span></td>
+            <td>${canManage ? '<span class="muted" style="font-size:12px;">下拉修改狀態</span>' : '-'}</td>
           </tr>`;
         }).join("");
       } catch (error) {
         setConsole(error.message);
+      }
+    }
+
+    async function updateForkliftStatus(forkliftId, status) {
+      try {
+        const data = await api(`/api/forklifts/${forkliftId}/status?status=${status}`, { method: "PUT" });
+        setConsole(`${data.forklift_code} 狀態已更新為：${data.status}`);
+        await loadForklifts();
+      } catch (error) {
+        setConsole(error.message);
+        await loadForklifts();
       }
     }
 
@@ -1304,6 +1326,17 @@
       } catch (error) {
         setConsole(error.message);
       }
+    }
+
+    function exportForkliftInspections() {
+      const params = new URLSearchParams();
+      const dateFilter = document.getElementById("inspectionFilterDate").value;
+      if (dateFilter) {
+        params.set("start_date", dateFilter);
+        params.set("end_date", dateFilter);
+      }
+      const url = `/api/forklift-inspections/export?${params.toString()}`;
+      window.open(url, "_blank");
     }
 
   </script>

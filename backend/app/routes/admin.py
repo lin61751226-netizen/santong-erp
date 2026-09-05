@@ -1,9 +1,12 @@
 ﻿from __future__ import annotations
 
+import csv
 from datetime import date, datetime, timedelta
+from io import StringIO
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from app.core.db import get_session
@@ -14,6 +17,7 @@ from app.models import (
     EmployeeStatus,
     Forklift,
     ForkliftInspection,
+    ForkliftStatus,
     LeaveRequest,
     LeaveStatus,
     LoginLog,
@@ -951,3 +955,95 @@ def list_forklift_inspections(
             "created_at": insp.created_at.isoformat() if insp.created_at else None,
         })
     return result
+
+
+
+@router.get("/forklift-inspections/export")
+def export_forklift_inspections_csv(
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    site_id: Optional[int] = Query(default=None),
+    forklift_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(ForkliftInspection)
+    if start_date:
+        statement = statement.where(ForkliftInspection.inspection_date >= start_date)
+    if end_date:
+        statement = statement.where(ForkliftInspection.inspection_date <= end_date)
+    if site_id:
+        statement = statement.where(ForkliftInspection.site_id == site_id)
+    if forklift_id:
+        statement = statement.where(ForkliftInspection.forklift_id == forklift_id)
+    if actor.role == Role.site_manager and actor.home_site_id:
+        statement = statement.where(ForkliftInspection.site_id == actor.home_site_id)
+
+    inspections = session.exec(
+        statement.order_by(ForkliftInspection.inspection_date.desc(), ForkliftInspection.id.desc())
+    ).all()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "點檢日期", "堆高機編號", "堆高機型號", "操作員", "工地",
+        "全部通過", "引擎機油", "冷卻水", "電瓶液", "輪胎磨損",
+        "喇叭", "燈光", "剎車系統", "油壓系統", "貨叉與鏈條", "安全帶與後照鏡",
+        "備註",
+    ])
+
+    item_keys = [
+        "engine_oil", "coolant", "battery", "tires", "horn",
+        "lights", "brakes", "hydraulic", "fork_chain", "safety_belt",
+    ]
+
+    for insp in inspections:
+        forklift = session.get(Forklift, insp.forklift_id)
+        operator = session.get(Employee, insp.operator_id)
+        site = session.get(Worksite, insp.site_id) if insp.site_id else None
+        row = [
+            insp.inspection_date.isoformat(),
+            forklift.forklift_code if forklift else "",
+            forklift.model if forklift else "",
+            operator.name if operator else "",
+            site.name if site else "",
+            "是" if insp.all_passed else "否",
+        ]
+        for key in item_keys:
+            result = insp.inspection_items.get(key, True) if insp.inspection_items else True
+            row.append("正常" if result else "異常")
+        row.append(insp.notes or "")
+        writer.writerow(row)
+
+    output.seek(0)
+    filename = f"forklift_inspections_{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@router.put("/forklifts/{forklift_id}/status")
+def update_forklift_status(
+    forklift_id: int,
+    status: str = Query(..., description="堆高機狀態：operating/available/maintenance/inactive"),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(["owner", "admin", "site_manager"])),
+):
+    forklift = session.get(Forklift, forklift_id)
+    if not forklift:
+        raise HTTPException(status_code=404, detail="找不到堆高機")
+    valid_statuses = [s.value for s in ForkliftStatus]
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"狀態無效，有效值：{', '.join(valid_statuses)}")
+    forklift.status = status
+    session.add(forklift)
+    session.commit()
+    session.refresh(forklift)
+    return {
+        "id": forklift.id,
+        "forklift_code": forklift.forklift_code,
+        "status": forklift.status,
+        "message": "狀態已更新",
+    }

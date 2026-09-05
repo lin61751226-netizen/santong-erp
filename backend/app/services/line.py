@@ -831,6 +831,17 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     assignment = find_assignment_for_employee(session, employee.id)
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+
+    # 「工作開始」前提醒完成堆高機點檢（不強制阻擋）
+    if text == "工作開始":
+        today_inspections = forklift_service.list_today_inspections_by_operator(session, employee.id)
+        if not today_inspections:
+            await line_service.reply_text(
+                reply_token,
+                "⚠️ 提醒：今日尚未完成堆高機點檢\n\n建議先點 Rich Menu 的「堆高機點檢」完成點檢，再開始工作。\n\n若今日不開堆高機，可直接繼續工作。",
+            )
+            # 仍然繼續記錄工作開始，不強制阻擋
+
     action_map = {
         "已收到": AckStatus.received,
         "已到場": AckStatus.arrived,

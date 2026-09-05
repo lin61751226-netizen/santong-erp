@@ -242,3 +242,13 @@ def list_today_inspections(session: Session, forklift_id: int) -> list[ForkliftI
             ForkliftInspection.inspection_date == date.today(),
         )
     ).all()
+
+
+def list_today_inspections_by_operator(session: Session, operator_id: int) -> list[ForkliftInspection]:
+    """查詢某操作員今日的點檢記錄。"""
+    return session.exec(
+        select(ForkliftInspection).where(
+            ForkliftInspection.operator_id == operator_id,
+            ForkliftInspection.inspection_date == date.today(),
+        )
+    ).all()
