@@ -44,6 +44,11 @@ class ForkliftCreate(BaseModel):
     next_maintenance_date: Optional[date] = None
 
 
+class WorksiteCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=100)
+
+
 class MasterOptionCreate(BaseModel):
     # option_type: work_item（工作內容）/ equipment（機具設備）
     option_type: str

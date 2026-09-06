@@ -169,6 +169,29 @@
     <section class="panel span-12" data-workspace="fleet">
       <div class="panel-header">
         <div>
+          <h2>工地管理</h2>
+          <p class="muted">新增工地供派工、打卡與車隊使用；刪除採停用方式，保留歷史資料。</p>
+        </div>
+      </div>
+      <div class="inline-form-card">
+        <form id="createWorksiteForm" class="form-grid">
+          <div><label for="newWorksiteCode">工地代碼</label><input id="newWorksiteCode" required placeholder="例如：57"></div>
+          <div><label for="newWorksiteName">工地名稱</label><input id="newWorksiteName" required placeholder="例如：新竹寶山4"></div>
+          <div class="full"><button type="submit">新增工地</button></div>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>代碼</th><th>工地名稱</th><th>操作</th></tr></thead>
+          <tbody id="worksiteRows"></tbody>
+        </table>
+      </div>
+      <p id="worksiteFeedback" class="notice" role="status" aria-live="polite">新增或刪除工地後，相關下拉選單會自動更新。</p>
+    </section>
+
+    <section class="panel span-12" data-workspace="fleet">
+      <div class="panel-header">
+        <div>
           <h2>堆高機點檢記錄</h2>
           <p class="muted">依月份或單日查詢。CSV 包含操作員與全部 10 項結果，可直接用 Excel 開啟。</p>
         </div>
@@ -971,6 +994,7 @@
         loadAttendance(),
         loadAttendanceExceptions(),
         loadLineStatus(),
+        loadWorksites(),
         loadForklifts(),
         loadForkliftInspections(),
         loadForkliftNotifications(),
@@ -1297,6 +1321,42 @@
         document.getElementById("newForkliftFuel").value = "100";
         await loadForklifts();
       } catch (error) { document.getElementById("fleetFeedback").textContent = error.message; }
+    });
+
+    async function loadWorksites() {
+      const rows = document.getElementById("worksiteRows");
+      const canManage = ["owner", "admin"].includes(state.actor?.role);
+      rows.innerHTML = state.worksites.length ? state.worksites.map((site) => `
+        <tr>
+          <td>${escapeHtml(site.code || "-")}</td>
+          <td>${escapeHtml(site.name)}</td>
+          <td><button type="button" class="button-danger button-compact" onclick="deleteWorksite(${site.id}, '${escapeAttr(site.name)}')" ${canManage ? "" : "disabled"}>刪除</button></td>
+        </tr>
+      `).join("") : '<tr><td colspan="3">目前沒有啟用中的工地</td></tr>';
+    }
+
+    async function deleteWorksite(id, name) {
+      if (!window.confirm(`確定要刪除工地「${name}」嗎？系統會停用工地並保留歷史資料。`)) return;
+      try {
+        const data = await api(`/api/worksites/${id}`, { method: "DELETE" });
+        document.getElementById("worksiteFeedback").textContent = data.message;
+        await loadMeta();
+        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard()]);
+      } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
+    }
+
+    document.getElementById("createWorksiteForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const data = await api("/api/worksites", { method: "POST", body: JSON.stringify({
+          code: document.getElementById("newWorksiteCode").value,
+          name: document.getElementById("newWorksiteName").value,
+        })});
+        document.getElementById("worksiteFeedback").textContent = `${data.message}：${data.worksite.name}`;
+        event.target.reset();
+        await loadMeta();
+        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard()]);
+      } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
     });
 
     document.getElementById("createEmployeeForm").addEventListener("submit", async (event) => {

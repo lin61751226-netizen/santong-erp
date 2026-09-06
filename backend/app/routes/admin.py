@@ -42,6 +42,7 @@ from app.schemas import (
     MasterOptionCreate,
     ForkliftCareUpdate,
     ForkliftCreate,
+    WorksiteCreate,
     LeaveDecision,
     LeaveRequestCreate,
     LineRichMenuDeployRequest,
@@ -319,6 +320,43 @@ def get_options(
         "leave_statuses": [status_item.value for status_item in LeaveStatus],
         "leave_types": ["事假", "病假", "特休", "公假", "排休", "其他"],
     }
+
+
+@router.post("/worksites", status_code=status.HTTP_201_CREATED)
+def create_worksite(
+    payload: WorksiteCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    code = payload.code.strip()
+    name = payload.name.strip()
+    if not code or not name:
+        raise HTTPException(status_code=400, detail="工地代碼與名稱不可空白")
+    if session.exec(select(Worksite).where(Worksite.code == code)).first():
+        raise HTTPException(status_code=409, detail="工地代碼已存在")
+    if session.exec(select(Worksite).where(Worksite.name == name)).first():
+        raise HTTPException(status_code=409, detail="工地名稱已存在")
+    worksite = Worksite(code=code, name=name, is_active=True)
+    session.add(worksite)
+    session.commit()
+    session.refresh(worksite)
+    return {"message": "工地已新增", "worksite": {"id": worksite.id, "code": worksite.code, "name": worksite.name}}
+
+
+@router.delete("/worksites/{site_id}")
+def delete_worksite(
+    site_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    worksite = session.get(Worksite, site_id)
+    if not worksite or not worksite.is_active:
+        raise HTTPException(status_code=404, detail="找不到啟用中的工地")
+    # 採停用而非實體刪除，保留歷史派工、考勤、點檢與照片關聯。
+    worksite.is_active = False
+    session.add(worksite)
+    session.commit()
+    return {"message": "工地已刪除（停用），歷史資料已保留", "id": site_id}
 
 
 @router.get("/master-options")
