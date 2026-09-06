@@ -214,7 +214,24 @@ class LinePlatformService:
 line_platform_service = LinePlatformService()
 
 
+# 專案內打包的開源中文字體（Noto Sans TC，思源黑體繁中），
+# 確保本機 Windows 與 Render Linux 都能正確渲染中文，不依賴系統字體。
+_BUNDLED_FONT = Path(__file__).resolve().parents[1] / "static" / "fonts" / "NotoSansTC.ttf"
+
+
 def _load_font(size: int):
+    # 最優先：專案內打包的中文字體（可變字體，套用 Bold 變體讓按鈕文字醒目）
+    if _BUNDLED_FONT.exists():
+        try:
+            font = ImageFont.truetype(str(_BUNDLED_FONT), size=size)
+            try:
+                font.set_variation_by_name("Bold")
+            except Exception:
+                pass
+            return font
+        except Exception as exc:
+            print(f"[_load_font] 專案字體載入失敗，改用系統字體：{exc}")
+
     font_candidates = [
         Path("C:/Windows/Fonts/msjhbd.ttc"),
         Path("C:/Windows/Fonts/msjh.ttc"),
@@ -293,7 +310,7 @@ def generate_default_rich_menu_images(
                 ((0, 0, width // 2, tab_height), "主選單"),
                 ((width // 2, 0, width, tab_height), "工作工具"),
                 ((0, tab_height, width // 5, height), "到達\n工地"),
-                ((width // 5, tab_height, width // 5 * 2, height), "每日\n點檢"),
+                ((width // 5, tab_height, width // 5 * 2, height), "堆高機\n點檢"),
                 ((width // 5 * 2, tab_height, width // 5 * 3, height), "工作\n開始"),
                 ((width // 5 * 3, tab_height, width // 5 * 4, height), "工作\n完成"),
                 ((width // 5 * 4, tab_height, width, height), "異常\n回報"),
