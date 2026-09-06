@@ -2,6 +2,7 @@
 
 import csv
 import calendar
+import secrets
 from datetime import date, datetime, timedelta
 from io import StringIO
 from typing import Optional
@@ -11,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from app.core.db import get_session
+from app.core.config import settings
 from app.deps import ensure_employee_scope, ensure_site_scope, get_current_actor, require_roles
 from app.models import (
     AssignmentMember,
@@ -35,9 +37,11 @@ from app.models import (
 )
 from app.schemas import (
     AssignmentCreate,
+    EmployeeCreate,
     EmployeeUpdate,
     MasterOptionCreate,
     ForkliftCareUpdate,
+    ForkliftCreate,
     LeaveDecision,
     LeaveRequestCreate,
     LineRichMenuDeployRequest,
@@ -440,6 +444,44 @@ def list_employees(
     employees = _employees_for_actor(session, actor)
     worksites = {item.id: item for item in session.exec(select(Worksite)).all()}
     return [_serialize_employee(worksites, item) for item in employees]
+
+
+@router.post("/employees", status_code=status.HTTP_201_CREATED)
+def create_employee(
+    payload: EmployeeCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    code = payload.employee_code.strip()
+    name = payload.name.strip()
+    if not code or not name:
+        raise HTTPException(status_code=400, detail="員工代碼與姓名不可空白")
+    if session.exec(select(Employee).where(Employee.employee_code == code)).first():
+        raise HTTPException(status_code=409, detail="員工代碼已存在")
+    normalized_sites = _normalize_assigned_sites(payload.assigned_sites)
+    worksites = {item.name: item for item in session.exec(select(Worksite)).all()}
+    missing_sites = [site_name for site_name in normalized_sites if site_name not in worksites]
+    if missing_sites:
+        raise HTTPException(status_code=400, detail=f"找不到工地：{', '.join(missing_sites)}")
+    employee = Employee(
+        employee_code=code,
+        name=name,
+        role=payload.role,
+        title=(payload.title or "").strip() or None,
+        phone=(payload.phone or "").strip() or None,
+        email=(payload.email or "").strip() or None,
+        assigned_sites=normalized_sites,
+        home_site_id=worksites[normalized_sites[0]].id if normalized_sites else None,
+        bind_token=secrets.token_urlsafe(8),
+    )
+    if employee.role in {Role.owner, Role.admin}:
+        employee.password_hash = hash_password(settings.default_password)
+        employee.must_change_password = True
+    session.add(employee)
+    session.commit()
+    session.refresh(employee)
+    worksites_by_id = {item.id: item for item in session.exec(select(Worksite)).all()}
+    return {"message": "員工已新增", "employee": _serialize_employee(worksites_by_id, employee)}
 
 
 @router.put("/employees/{employee_code}")
@@ -1029,6 +1071,35 @@ def list_forklifts(
             "warnings": check_forklift_warnings(session, f.id),
         })
     return result
+
+
+@router.post("/forklifts", status_code=status.HTTP_201_CREATED)
+def create_forklift(
+    payload: ForkliftCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    code = payload.forklift_code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="堆高機編號不可空白")
+    if session.exec(select(Forklift).where(Forklift.forklift_code == code)).first():
+        raise HTTPException(status_code=409, detail="堆高機編號已存在")
+    if payload.site_id is not None:
+        site = session.get(Worksite, payload.site_id)
+        if not site or not site.is_active:
+            raise HTTPException(status_code=400, detail="目前工地不存在或已停用")
+        ensure_site_scope(actor, payload.site_id)
+    forklift = Forklift(
+        forklift_code=code,
+        model=(payload.model or "").strip() or None,
+        current_site_id=payload.site_id,
+        fuel_level=payload.fuel_level,
+        next_maintenance_date=payload.next_maintenance_date,
+    )
+    session.add(forklift)
+    session.commit()
+    session.refresh(forklift)
+    return {"message": "堆高機已新增", "id": forklift.id, "forklift_code": forklift.forklift_code}
 
 
 def _inspection_range(date_filter, start_date, end_date, month):

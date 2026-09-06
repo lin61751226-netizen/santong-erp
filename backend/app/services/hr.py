@@ -307,6 +307,8 @@ def record_attendance_event(
     employee: Employee,
     command: str,
     note: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
 ) -> AttendanceRecordResult:
     assignment = find_assignment_for_employee(session, employee.id, date.today())
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
@@ -316,6 +318,8 @@ def record_attendance_event(
         assignment_id=assignment.id if assignment else None,
         event_type=ATTENDANCE_COMMAND_MAP[command],
         note=note,
+        latitude=latitude,
+        longitude=longitude,
     )
     session.add(event)
 
@@ -410,6 +414,8 @@ def build_attendance_rows(
                 "ack_status": summary_status,
                 "last_action": latest_event.event_type if latest_event else (member.last_line_action if member else None),
                 "last_event_at": latest_event.happened_at.isoformat() if latest_event else None,
+                "latitude": latest_event.latitude if latest_event else None,
+                "longitude": latest_event.longitude if latest_event else None,
                 "note": member.note if member and member.note else (leave.policy_note if leave else None),
                 "anomalies": sorted(set(anomalies)),
                 "leave_status": leave.status.value if leave else None,

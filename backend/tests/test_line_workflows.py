@@ -6,13 +6,14 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models import Employee
+from app.models import AttendanceEvent, Employee
 from app.services.google_drive import GoogleDriveWorklogService
 from app.services.line import (
     _reply_attendance_options,
     _reply_leave_options,
     line_service,
     process_webhook_event,
+    _pending_location_attendance,
 )
 from app.services.line_platform import LinePlatformError, bind_employee_line_user
 from app.services.line_platform import line_platform_service, migrate_santong_rich_menu_links
@@ -38,6 +39,38 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             [item["action"]["label"] for item in actions],
             ["上班打卡", "下班打卡"],
         )
+
+    async def test_attendance_check_in_requires_location_and_saves_coordinates(self) -> None:
+        with Session(self.engine) as session:
+            employee = Employee(
+                employee_code="EMP-LOC",
+                name="定位員工",
+                bind_token="TOKEN-LOC",
+                line_user_id="U-loc",
+            )
+            session.add(employee)
+            session.commit()
+            reply = AsyncMock(return_value=(True, "sent"))
+            start_event = {
+                "type": "message", "replyToken": "reply-start",
+                "source": {"type": "user", "userId": "U-loc"},
+                "message": {"type": "text", "text": "上班打卡"},
+            }
+            location_event = {
+                "type": "message", "replyToken": "reply-location",
+                "source": {"type": "user", "userId": "U-loc"},
+                "message": {"type": "location", "latitude": 25.033964, "longitude": 121.564468, "address": "台北市"},
+            }
+            with patch.object(line_service, "reply_messages", reply):
+                await process_webhook_event(session, start_event)
+                self.assertEqual(_pending_location_attendance["U-loc"], "上班打卡")
+                await process_webhook_event(session, location_event)
+
+            saved = session.query(AttendanceEvent).filter(AttendanceEvent.employee_id == employee.id).one()
+            self.assertEqual(saved.event_type, "上班打卡")
+            self.assertAlmostEqual(saved.latitude, 25.033964)
+            self.assertAlmostEqual(saved.longitude, 121.564468)
+            self.assertNotIn("U-loc", _pending_location_attendance)
 
     async def test_leave_menu_contains_all_leave_types(self) -> None:
         reply = AsyncMock(return_value=(True, "sent"))

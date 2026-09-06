@@ -402,6 +402,18 @@ th {
   }
 }
 
+.inline-form-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line, #d9e0e7);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.inline-form-card h3 {
+  margin: 0 0 .4rem;
+}
+
 /* ---- 登入 / 改密碼 ---- */
 .auth-overlay {
   position: fixed;

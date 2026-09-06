@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.models import LeaveStatus, MeetingStatus, NotificationCategory
+from app.models import LeaveStatus, MeetingStatus, NotificationCategory, Role
 
 
 class AssignmentCreate(BaseModel):
@@ -24,6 +24,24 @@ class EmployeeUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     assigned_sites: list[str] = Field(default_factory=list)
+
+
+class EmployeeCreate(BaseModel):
+    employee_code: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=100)
+    role: Role = Role.employee
+    title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    assigned_sites: list[str] = Field(default_factory=list)
+
+
+class ForkliftCreate(BaseModel):
+    forklift_code: str = Field(min_length=1, max_length=50)
+    model: Optional[str] = None
+    site_id: Optional[int] = None
+    fuel_level: Optional[int] = Field(default=100, ge=0, le=100)
+    next_maintenance_date: Optional[date] = None
 
 
 class MasterOptionCreate(BaseModel):

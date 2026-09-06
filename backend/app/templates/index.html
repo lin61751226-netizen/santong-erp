@@ -152,6 +152,17 @@
           <tbody id="forkliftRows"></tbody>
         </table>
       </div>
+      <div class="inline-form-card">
+        <h3>新增堆高機</h3>
+        <form id="createForkliftForm" class="form-grid">
+          <div><label for="newForkliftCode">編號</label><input id="newForkliftCode" required placeholder="例如：7號"></div>
+          <div><label for="newForkliftModel">型號</label><input id="newForkliftModel" placeholder="例如：電動 2.5 噸"></div>
+          <div><label for="newForkliftSite">目前工地</label><select id="newForkliftSite"><option value="">尚未指定</option></select></div>
+          <div><label for="newForkliftFuel">油量（%）</label><input id="newForkliftFuel" type="number" min="0" max="100" value="100"></div>
+          <div><label for="newForkliftMaintenance">下次保養日期</label><input id="newForkliftMaintenance" type="date"></div>
+          <div class="full"><button type="submit">新增堆高機</button></div>
+        </form>
+      </div>
       <p id="fleetFeedback" class="notice" role="status" aria-live="polite">填寫油量與保養日期後，按該車輛的「儲存」。</p>
     </section>
 
@@ -511,6 +522,21 @@
             <tbody id="employeeRows"></tbody>
           </table>
         </div>
+        <div class="inline-form-card">
+          <h3>新增員工</h3>
+          <p class="muted">新增後會產生新的綁定碼；既有員工與 LINE 綁定不會被修改。</p>
+          <form id="createEmployeeForm" class="form-grid">
+            <div><label for="newEmployeeCode">員工代碼</label><input id="newEmployeeCode" required placeholder="例如：EMP010"></div>
+            <div><label for="newEmployeeName">姓名</label><input id="newEmployeeName" required></div>
+            <div><label for="newEmployeeTitle">職稱</label><input id="newEmployeeTitle"></div>
+            <div><label for="newEmployeePhone">手機</label><input id="newEmployeePhone" type="tel"></div>
+            <div><label for="newEmployeeEmail">Email</label><input id="newEmployeeEmail" type="email"></div>
+            <div><label for="newEmployeeRole">角色</label><select id="newEmployeeRole"><option value="employee">一般員工</option><option value="site_manager">工地主任</option><option value="admin">管理者</option></select></div>
+            <div class="full"><label for="newEmployeeSites">所屬工地（可多個，以逗號分隔）</label><input id="newEmployeeSites" placeholder="例如：桃園29, 新竹寶山1"></div>
+            <div class="full"><button type="submit">新增員工</button></div>
+          </form>
+          <p id="employeeCreateFeedback" class="notice" role="status" aria-live="polite"></p>
+        </div>
       </section>
 
       <section class="panel span-4" data-workspace="settings">
@@ -558,6 +584,7 @@
                 <th>狀態</th>
                 <th>最後動作</th>
                 <th>最近時間</th>
+                <th>定位</th>
                 <th>異常</th>
                 <th>備註</th>
               </tr>
@@ -786,6 +813,7 @@
     function renderSelectOptions() {
       const siteOptions = state.worksites.map((site) => `<option value="${site.id}">${site.name}</option>`).join("");
       document.getElementById("siteId").innerHTML = siteOptions;
+      document.getElementById("newForkliftSite").innerHTML = '<option value="">尚未指定</option>' + siteOptions;
 
       const employeeOptions = state.employees.map((employee) => `
         <option value="${employee.employee_code}">
@@ -876,6 +904,7 @@
           <td><span class="pill">${row.ack_status}</span></td>
           <td>${row.last_action || "-"}</td>
           <td>${formatTW(row.last_event_at)}</td>
+          <td>${row.latitude != null && row.longitude != null ? `${Number(row.latitude).toFixed(5)}, ${Number(row.longitude).toFixed(5)}` : "未定位"}</td>
           <td>${row.anomalies.length ? row.anomalies.join("、") : "-"}</td>
           <td>${row.note || "-"}</td>
         </tr>
@@ -1251,6 +1280,42 @@
       } catch (error) {
         setConsole(error.message);
       }
+    });
+
+    document.getElementById("createForkliftForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const data = await api("/api/forklifts", { method: "POST", body: JSON.stringify({
+          forklift_code: document.getElementById("newForkliftCode").value,
+          model: document.getElementById("newForkliftModel").value || null,
+          site_id: document.getElementById("newForkliftSite").value ? Number(document.getElementById("newForkliftSite").value) : null,
+          fuel_level: Number(document.getElementById("newForkliftFuel").value),
+          next_maintenance_date: document.getElementById("newForkliftMaintenance").value || null,
+        })});
+        document.getElementById("fleetFeedback").textContent = `${data.message}：${data.forklift_code}`;
+        event.target.reset();
+        document.getElementById("newForkliftFuel").value = "100";
+        await loadForklifts();
+      } catch (error) { document.getElementById("fleetFeedback").textContent = error.message; }
+    });
+
+    document.getElementById("createEmployeeForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const feedback = document.getElementById("employeeCreateFeedback");
+      try {
+        const data = await api("/api/employees", { method: "POST", body: JSON.stringify({
+          employee_code: document.getElementById("newEmployeeCode").value,
+          name: document.getElementById("newEmployeeName").value,
+          title: document.getElementById("newEmployeeTitle").value || null,
+          phone: document.getElementById("newEmployeePhone").value || null,
+          email: document.getElementById("newEmployeeEmail").value || null,
+          role: document.getElementById("newEmployeeRole").value,
+          assigned_sites: document.getElementById("newEmployeeSites").value.split(",").map(item => item.trim()).filter(Boolean),
+        })});
+        feedback.textContent = `${data.message}：${data.employee.name}，綁定碼：${data.employee.bind_token}`;
+        event.target.reset();
+        await Promise.all([loadMeta(), loadEmployees(), loadDashboard()]);
+      } catch (error) { feedback.textContent = error.message; }
     });
 
     document.getElementById("simulateForm").addEventListener("submit", async (event) => {

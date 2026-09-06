@@ -93,6 +93,10 @@ class LineService:
 
 line_service = LineService()
 
+# LINE location events arrive as a separate message after the user chooses a
+# check-in action. This short-lived state avoids changing the existing schema.
+_pending_location_attendance: dict[str, str] = {}
+
 
 def _quick_reply(items: list[tuple[str, str]]) -> dict[str, Any]:
     return {
@@ -125,6 +129,20 @@ async def _reply_attendance_options(reply_token: str) -> None:
                 ),
             }
         ],
+    )
+
+
+async def _reply_location_prompt(reply_token: str, command: str) -> None:
+    await line_service.reply_messages(
+        reply_token,
+        [{
+            "type": "text",
+            "text": f"請點下方「傳送目前位置」，完成{command}定位打卡：",
+            "quickReply": {"items": [
+                {"type": "action", "action": {"type": "location", "label": "傳送目前位置"}},
+                {"type": "action", "action": {"type": "message", "label": "取消", "text": "取消定位打卡"}},
+            ]},
+        }],
     )
 
 
@@ -539,6 +557,37 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     message_type = message.get("type")
     employee = _employee_by_line_user(session, line_user_id) if line_user_id else None
 
+    if message_type == "location" and line_user_id:
+        pending_command = _pending_location_attendance.pop(line_user_id, None)
+        if not employee:
+            if reply_token:
+                await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先完成綁定。")
+            return
+        if not pending_command:
+            if reply_token:
+                await line_service.reply_text(reply_token, "請先按「上班打卡」或「下班打卡」，再傳送目前位置。")
+            return
+        location = message.get("latitude"), message.get("longitude")
+        try:
+            latitude = float(location[0])
+            longitude = float(location[1])
+        except (TypeError, ValueError):
+            if reply_token:
+                await line_service.reply_text(reply_token, "位置資料無效，請重新按打卡後傳送位置。")
+            return
+        result = record_attendance_event(
+            session, employee, pending_command,
+            note=message.get("address") or "LINE 位置打卡",
+            latitude=latitude,
+            longitude=longitude,
+        )
+        if reply_token:
+            reply_lines = [f"已完成定位打卡：{pending_command}", f"位置：{latitude:.6f}, {longitude:.6f}"]
+            if result.anomalies:
+                reply_lines.append(f"提醒：{'；'.join(result.anomalies)}")
+            await line_service.reply_text(reply_token, "\n".join(reply_lines))
+        return
+
     if message_type == "image" and line_user_id:
         await _handle_image_message(
             session,
@@ -905,14 +954,23 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         return
 
     if text in ATTENDANCE_COMMAND_MAP:
-        result = record_attendance_event(session, employee, text)
-        reply_lines = [f"已記錄：{text}"]
-        if result.assignment:
-            worksite = session.get(Worksite, result.assignment.site_id)
-            reply_lines.append(f"工地：{worksite.name if worksite else '-'}")
-        if result.anomalies:
-            reply_lines.append(f"提醒：{'；'.join(result.anomalies)}")
-        await line_service.reply_text(reply_token, "\n".join(reply_lines))
+        if text in {"上班打卡", "下班打卡"}:
+            _pending_location_attendance[line_user_id] = text
+            await _reply_location_prompt(reply_token, text)
+        else:
+            result = record_attendance_event(session, employee, text)
+            reply_lines = [f"已記錄：{text}"]
+            if result.assignment:
+                worksite = session.get(Worksite, result.assignment.site_id)
+                reply_lines.append(f"工地：{worksite.name if worksite else '-'}")
+            if result.anomalies:
+                reply_lines.append(f"提醒：{'；'.join(result.anomalies)}")
+            await line_service.reply_text(reply_token, "\n".join(reply_lines))
+        return
+
+    if text == "取消定位打卡":
+        _pending_location_attendance.pop(line_user_id, None)
+        await line_service.reply_text(reply_token, "已取消定位打卡。")
         return
 
     assignment = find_assignment_for_employee(session, employee.id)
