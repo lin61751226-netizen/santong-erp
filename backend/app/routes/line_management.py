@@ -161,6 +161,57 @@ async def debug_rich_menu():
     }
 
 
+@api_router.get("/richmenu/relink-users")
+async def relink_users_rich_menu(
+    session: Session = Depends(get_session),
+):
+    """公開端點：把所有已綁定 LINE 的員工重新綁定到最新的預設 Rich Menu（臨時排查用）"""
+    # 取得所有已綁定員工
+    employees = [
+        e for e in session.exec(select(Employee)).all()
+        if e.line_user_id
+    ]
+
+    # 列出所有 Rich Menu，找到最新的 santong-main
+    menus = await line_platform_service.list_rich_menus()
+    main_menus = [m for m in menus if m.get("name") == "santong-main"]
+    if not main_menus:
+        return {"ok": False, "error": "找不到名稱為 santong-main 的 Rich Menu"}
+
+    # 取最新的一個（list 通常由新到舊，取第一個）
+    latest_main = main_menus[0]
+    main_id = latest_main.get("richMenuId")
+
+    results = []
+    success_count = 0
+    for emp in employees:
+        try:
+            await line_platform_service.link_rich_menu_to_user(emp.line_user_id, main_id)
+            results.append({
+                "employee_code": emp.employee_code,
+                "name": emp.name,
+                "line_user_id": emp.line_user_id[:20] + "...",
+                "ok": True,
+            })
+            success_count += 1
+        except Exception as e:
+            results.append({
+                "employee_code": emp.employee_code,
+                "name": emp.name,
+                "line_user_id": emp.line_user_id[:20] + "...",
+                "ok": False,
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    return {
+        "ok": True,
+        "latest_main_rich_menu_id": main_id,
+        "total_bound_employees": len(employees),
+        "success_count": success_count,
+        "results": results,
+    }
+
+
 @api_router.get("/status")
 async def line_status(
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
