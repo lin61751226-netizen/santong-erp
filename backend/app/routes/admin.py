@@ -1065,6 +1065,7 @@ def list_forklifts(
             "forklift_code": f.forklift_code,
             "model": f.model,
             "status": f.status,
+            "site_id": f.current_site_id,
             "site_name": site.name if site else None,
             "operator_name": operator.name if operator else None,
             "fuel_level": f.fuel_level,
@@ -1278,14 +1279,23 @@ async def update_forklift_care(
     forklift = session.get(Forklift, forklift_id)
     if not forklift:
         raise HTTPException(status_code=404, detail="找不到堆高機")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    if "site_id" in data and data["site_id"] is not None:
+        site = session.get(Worksite, data["site_id"])
+        if not site or not site.is_active:
+            raise HTTPException(status_code=400, detail="目前工地不存在或已停用")
+        ensure_site_scope(actor, data["site_id"])
+    for key, value in data.items():
+        if key == "site_id":
+            forklift.current_site_id = value
+            continue
         setattr(forklift, key, value)
     forklift.updated_at = datetime.utcnow()
     session.add(forklift)
     session.commit()
     queue_vehicle_warning(session, forklift)
     await deliver_forklift_notifications(session)
-    return {"message": "油量與保養日期已儲存", "warnings": check_forklift_warnings(session, forklift.id)}
+    return {"message": "工地、油量與保養日期已儲存", "warnings": check_forklift_warnings(session, forklift.id)}
 
 
 @router.get("/forklift-notifications")

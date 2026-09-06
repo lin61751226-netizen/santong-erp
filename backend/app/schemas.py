@@ -126,6 +126,7 @@ class LineRichMenuDeployRequest(BaseModel):
 # ---- 堆高機出租管理 ----
 
 class ForkliftCareUpdate(BaseModel):
+    site_id: Optional[int] = None
     fuel_level: Optional[int] = Field(default=None, ge=0, le=100)
     next_maintenance_date: Optional[date] = None
 

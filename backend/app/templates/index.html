@@ -163,7 +163,7 @@
           <div class="full"><button type="submit">新增堆高機</button></div>
         </form>
       </div>
-      <p id="fleetFeedback" class="notice" role="status" aria-live="polite">填寫油量與保養日期後，按該車輛的「儲存」。</p>
+      <p id="fleetFeedback" class="notice" role="status" aria-live="polite">可在車隊列表修改目前工地、油量與保養日期，再按該車輛的「儲存」。</p>
     </section>
 
     <section class="panel span-12" data-workspace="fleet">
@@ -1567,8 +1567,9 @@
           rows.innerHTML = '<tr><td colspan="8">無堆高機資料</td></tr>';
           return;
         }
-        const canManage = ["owner", "admin", "site_manager"].includes(state.actor?.role);
-        rows.innerHTML = data.map((f) => {
+          const canManage = ["owner", "admin", "site_manager"].includes(state.actor?.role);
+          const canEditFleet = ["owner", "admin"].includes(state.actor?.role);
+          rows.innerHTML = data.map((f) => {
           const statusMap = {
             operating: '<span class="badge" style="background:#cce5ff;color:#004085;">作業中</span>',
             available: '<span class="badge" style="background:#d4edda;color:#155724;">可調度</span>',
@@ -1582,15 +1583,18 @@
               <option value="maintenance" ${f.status === 'maintenance' ? 'selected' : ''}>待檢修</option>
               <option value="inactive" ${f.status === 'inactive' ? 'selected' : ''}>停用</option>
             </select>` : (statusMap[f.status] || f.status);
+          const siteOptions = '<option value="">尚未指定</option>' + state.worksites.map((site) =>
+            `<option value="${site.id}" ${Number(f.site_id) === Number(site.id) ? 'selected' : ''}>${escapeHtml(site.name)}</option>`
+          ).join("");
           return `<tr>
             <td><strong>${escapeHtml(f.forklift_code)}</strong></td>
             <td>${escapeHtml(f.model || '-')}</td>
             <td>${statusSelect}</td>
-            <td>${escapeHtml(f.site_name || '-')}</td>
+            <td><select id="site-${f.id}" aria-label="${escapeAttr(f.forklift_code)} 目前工地" ${canEditFleet ? '' : 'disabled'}>${siteOptions}</select></td>
             <td>${escapeHtml(f.operator_name || '尚無點檢關聯')}</td>
-            <td><input id="fuel-${f.id}" aria-label="${escapeAttr(f.forklift_code)} 油量" class="table-input" type="number" min="0" max="100" step="1" value="${f.fuel_level ?? ''}" ${canManage ? '' : 'disabled'}></td>
-            <td><input id="maintenance-${f.id}" aria-label="${escapeAttr(f.forklift_code)} 保養日期" class="table-input" type="date" value="${escapeAttr(f.next_maintenance_date || '')}" ${canManage ? '' : 'disabled'}></td>
-            <td><button type="button" ${canManage ? '' : 'disabled'} onclick="saveForkliftCare(${f.id}, this)">儲存</button>
+            <td><input id="fuel-${f.id}" aria-label="${escapeAttr(f.forklift_code)} 油量" class="table-input" type="number" min="0" max="100" step="1" value="${f.fuel_level ?? ''}" ${canEditFleet ? '' : 'disabled'}></td>
+            <td><input id="maintenance-${f.id}" aria-label="${escapeAttr(f.forklift_code)} 保養日期" class="table-input" type="date" value="${escapeAttr(f.next_maintenance_date || '')}" ${canEditFleet ? '' : 'disabled'}></td>
+            <td><button type="button" ${canEditFleet ? '' : 'disabled'} onclick="saveForkliftCare(${f.id}, this)">儲存</button>
               <div class="muted">${(f.warnings || []).map(escapeHtml).join('<br>')}</div></td>
           </tr>`;
         }).join("");
@@ -1605,6 +1609,7 @@
       button.disabled = true;
       try {
         const result = await api(`/api/forklifts/${id}/care`, {method: "PUT", body: JSON.stringify({
+          site_id: document.getElementById(`site-${id}`).value ? Number(document.getElementById(`site-${id}`).value) : null,
           fuel_level: fuel.value === '' ? null : Number(fuel.value),
           next_maintenance_date: document.getElementById(`maintenance-${id}`).value || null,
         })});
