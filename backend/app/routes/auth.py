@@ -194,7 +194,6 @@ def me(
     employee = _resolve_session_employee(session, cookie_session)
     if employee is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="尚未登入")
-    _log_login(session, request, employee.employee_code, employee.name, LoginStatus.success)
     return {
         "employee_code": employee.employee_code,
         "name": employee.name,
@@ -260,7 +259,6 @@ def _resolve_session_employee(
         select(Employee).where(Employee.session_key == raw_token)
     ).first()
     if employee is None:
-        _log_login(session, request, payload.employee_code.strip(), None, LoginStatus.failed, "帳號不存在")
         return None
     if employee.session_expires_at is None or employee.session_expires_at < _now():
         return None

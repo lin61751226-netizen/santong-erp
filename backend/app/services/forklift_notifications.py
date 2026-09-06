@@ -18,6 +18,7 @@ from app.services.forklift_service import (
 
 INSPECTION_SCOPE = "forklift_inspection_alert"
 WARNING_SCOPE = "forklift_vehicle_warning"
+FIELD_EXCEPTION_SCOPE = "field_exception_alert"
 _delivery_lock = asyncio.Lock()
 
 
@@ -77,6 +78,22 @@ def queue_vehicle_warning(session: Session, forklift: Forklift) -> None:
     _queue(session, WARNING_SCOPE, key, content, recipients)
 
 
+def queue_field_exception(session, employee, site, forklift, detail: str) -> None:
+    """員工從 LINE 回報現場（堆高機）異常時，持久化一則通知給所有管理層。"""
+    lines = ["🚨 現場異常回報", ""]
+    lines.append(f"回報人：{employee.name}（{employee.employee_code}）")
+    if site is not None:
+        lines.append(f"工地：{site.name}")
+    if forklift is not None:
+        model = f"（{forklift.model}）" if forklift.model else ""
+        lines.append(f"堆高機：{forklift.forklift_code}{model}")
+    lines.append(f"問題：{detail}")
+    lines.append(f"日期：{local_today().isoformat()}")
+    content = "\n".join(lines)
+    key = f"{local_today().isoformat()}:{employee.id}:{detail}"
+    _queue(session, FIELD_EXCEPTION_SCOPE, key, content, _managers(session))
+
+
 async def deliver_forklift_notifications(session: Session) -> None:
     # LINE webhook handlers and the scheduler share one process; serialize their send loops.
     async with _delivery_lock:
@@ -89,7 +106,7 @@ async def _deliver_pending(session: Session) -> None:
     rows = session.exec(select(NotificationDelivery, NotificationBatch).join(
         NotificationBatch, NotificationDelivery.batch_id == NotificationBatch.id,
     ).where(
-        NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE]),
+        NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE, FIELD_EXCEPTION_SCOPE]),
         NotificationDelivery.delivery_status != DeliveryStatus.sent,
     ).order_by(NotificationDelivery.id)).all()
     for delivery, batch in rows:
@@ -106,11 +123,15 @@ async def _deliver_pending(session: Session) -> None:
                 session.commit()
                 continue
         eligible = employee is not None and employee.status == "active"
-        if batch.target_scope == INSPECTION_SCOPE:
-            eligible = eligible and employee.role in {Role.owner, Role.admin}
+        if batch.target_scope == WARNING_SCOPE:
+            current_operator_id = forklift.current_operator_id if forklift is not None else None
+            eligible = eligible and (
+                employee.role in {Role.owner, Role.admin}
+                or employee.id == current_operator_id
+            )
         else:
-            eligible = eligible and (employee.role in {Role.owner, Role.admin}
-                                     or employee.id == forklift.current_operator_id)
+            # 點檢異常、現場異常回報只送 owner/admin 管理層
+            eligible = eligible and employee.role in {Role.owner, Role.admin}
         delivery.line_user_id = employee.line_user_id if employee else None
         if not eligible or not delivery.line_user_id:
             delivery.delivery_status = DeliveryStatus.skipped

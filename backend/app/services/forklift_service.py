@@ -34,6 +34,20 @@ INSPECTION_ITEMS = [
 LOW_FUEL_THRESHOLD = 30  # 油量低於 30% 提醒
 MAINTENANCE_WARNING_DAYS = 7  # 保養日期 7 天內提醒
 
+# 現場「異常回報」常見堆高機問題（LINE quick replies 點選，點擊後送出「異常回報 {問題}」）
+FORKLIFT_EXCEPTION_OPTIONS = [
+    "無法啟動/發不動",
+    "煞車異常",
+    "輪胎破損",
+    "漏油或漏水",
+    "貨叉無法升降",
+    "燈光或喇叭故障",
+    "電瓶沒電",
+    "異常聲音或震動",
+    "燃料不足",
+    "其他問題",
+]
+
 
 def local_today() -> date:
     return datetime.now(ZoneInfo(settings.timezone)).date()

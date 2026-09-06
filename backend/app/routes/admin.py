@@ -23,6 +23,7 @@ from app.models import (
     LeaveStatus,
     LoginLog,
     LoginStatus,
+    MasterOption,
     MeetingRecord,
     NotificationCategory,
     NotificationBatch,
@@ -35,6 +36,7 @@ from app.models import (
 from app.schemas import (
     AssignmentCreate,
     EmployeeUpdate,
+    MasterOptionCreate,
     ForkliftCareUpdate,
     LeaveDecision,
     LeaveRequestCreate,
@@ -254,6 +256,17 @@ def _attendance_rows_for_actor(
     return build_attendance_rows(session, employees, target_date)
 
 
+def _active_option_labels(session: Session, option_type: str) -> list[str]:
+    """取得某類別（work_item/equipment）目前啟用中的選項名稱，供派工表單點選。"""
+    rows = session.exec(
+        select(MasterOption).where(
+            MasterOption.option_type == option_type,
+            MasterOption.is_active.is_(True),
+        ).order_by(MasterOption.sort_order, MasterOption.id)
+    ).all()
+    return [row.label for row in rows]
+
+
 @router.get("/meta/options")
 def get_options(
     session: Session = Depends(get_session),
@@ -282,10 +295,102 @@ def get_options(
             for item in employees
         ],
         "worksites": [{"id": item.id, "name": item.name} for item in worksites],
+        "work_item_options": _active_option_labels(session, "work_item"),
+        "equipment_options": _active_option_labels(session, "equipment"),
+        "forklift_options": [
+            {
+                "id": item.id,
+                "code": item.forklift_code,
+                "model": item.model,
+                "label": f"{item.forklift_code}（{item.model}）" if item.model else item.forklift_code,
+            }
+            for item in session.exec(
+                select(Forklift)
+                .where(Forklift.status != ForkliftStatus.inactive)
+                .order_by(Forklift.forklift_code)
+            ).all()
+        ],
         "roles": [role.value for role in Role],
         "leave_statuses": [status_item.value for status_item in LeaveStatus],
         "leave_types": ["事假", "病假", "特休", "公假", "排休", "其他"],
     }
+
+
+@router.get("/master-options")
+def list_master_options(
+    option_type: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(MasterOption)
+    if option_type:
+        statement = statement.where(MasterOption.option_type == option_type)
+    rows = session.exec(
+        statement.order_by(MasterOption.option_type, MasterOption.sort_order, MasterOption.id)
+    ).all()
+    return [
+        {
+            "id": row.id,
+            "option_type": row.option_type,
+            "label": row.label,
+            "sort_order": row.sort_order,
+            "is_active": row.is_active,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/master-options", status_code=status.HTTP_201_CREATED)
+def create_master_option(
+    payload: MasterOptionCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    option_type = payload.option_type.strip()
+    label = payload.label.strip()
+    if option_type not in {"work_item", "equipment"}:
+        raise HTTPException(status_code=400, detail="選項類型僅支援 work_item（工作內容）或 equipment（機具）")
+    if not label:
+        raise HTTPException(status_code=400, detail="選項名稱不可為空")
+    existing = session.exec(
+        select(MasterOption).where(
+            MasterOption.option_type == option_type,
+            MasterOption.label == label,
+        )
+    ).first()
+    if existing:
+        existing.is_active = True
+        session.add(existing)
+        session.commit()
+        return {"message": "選項已存在，已重新啟用", "id": existing.id}
+    same_type_rows = session.exec(
+        select(MasterOption).where(MasterOption.option_type == option_type)
+    ).all()
+    option = MasterOption(
+        option_type=option_type,
+        label=label,
+        sort_order=len(same_type_rows),
+        is_active=True,
+    )
+    session.add(option)
+    session.commit()
+    session.refresh(option)
+    return {"message": "選項已新增", "id": option.id}
+
+
+@router.delete("/master-options/{option_id}")
+def deactivate_master_option(
+    option_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    option = session.get(MasterOption, option_id)
+    if not option:
+        raise HTTPException(status_code=404, detail="找不到選項")
+    option.is_active = False
+    session.add(option)
+    session.commit()
+    return {"message": "選項已停用"}
 
 
 @router.get("/dashboard")

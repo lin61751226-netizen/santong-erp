@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.security import hash_password
-from app.models import Employee, EmployeeStatus, Forklift, ForkliftStatus, Role, Worksite
+from app.models import Employee, EmployeeStatus, Forklift, ForkliftStatus, MasterOption, Role, Worksite
 
 
 WORKSITE_DEFINITIONS = [
@@ -154,6 +154,35 @@ FORKLIFT_DEFINITIONS = [
 ]
 
 
+# 派工表單可點選的工作內容（可於後台「工作內容與機具管理」再新增）
+DEFAULT_WORK_ITEMS = [
+    "推磁磚",
+    "推水泥",
+    "協助水電",
+    "物料搬運",
+    "堆高機移料",
+    "現場清理",
+    "吊掛作業",
+    "貨車裝卸",
+    "機具進場協助",
+    "其他臨時交辦",
+]
+
+# 派工表單可點選的機具設備（預設含堆高機，可於後台再新增其他設備）
+DEFAULT_EQUIPMENTS = [
+    "堆高機",
+    "小山貓（鏟裝機）",
+    "壓實機",
+    "發電機",
+    "空壓機",
+    "切割機",
+    "吊車",
+    "電焊機",
+    "抽水機",
+    "手推車",
+]
+
+
 
 def _normalized_sites(site_names: list[str]) -> list[str]:
     normalized: list[str] = []
@@ -217,13 +246,16 @@ def _rename_legacy_employee_codes(session: Session) -> None:
 
 
 def _upsert_employee(session: Session, payload: dict, worksites: dict[str, Worksite]) -> None:
-    employee = session.exec(select(Employee).where(Employee.employee_code == payload["employee_code"])).first()
-    if employee is None:
+    existing = session.exec(select(Employee).where(Employee.employee_code == payload["employee_code"])).first()
+    is_new = existing is None
+    if existing is None:
         employee = Employee(
             employee_code=payload["employee_code"],
             bind_token=payload["bind_token"],
             name=payload["name"],
         )
+    else:
+        employee = existing
 
     normalized_sites = _normalized_sites(payload.get("assigned_sites", []))
     primary_site_name = normalized_sites[0] if normalized_sites else None
@@ -250,9 +282,10 @@ def _upsert_employee(session: Session, payload: dict, worksites: dict[str, Works
     employee.machine_skills = list(payload.get("machine_skills", employee.machine_skills or []))
     employee.assigned_sites = normalized_sites
 
-    # 後台登入帳號（owner/admin）若尚未設定密碼，以統一預設密碼初始化並強制改密碼；
-    # 已設定過密碼（已改過密碼）的帳號一律不覆蓋，確保使用者改過的密碼不會被 seed 重置。
-    if employee.role in {Role.owner, Role.admin} and not employee.password_hash:
+    # 僅「全新建立」的後台帳號（owner/admin）給統一預設密碼並要求首次改密碼；
+    # 已存在帳號一律不碰 password_hash / must_change_password，確保每次重新部署
+    # 都不會把使用者改過的密碼重置、也不會反覆要求改密碼。
+    if is_new and employee.role in {Role.owner, Role.admin}:
         employee.password_hash = hash_password(settings.default_password)
         employee.must_change_password = True
         employee.failed_login_count = 0
@@ -305,6 +338,34 @@ def _ensure_forklifts(session: Session, worksites: dict[str, Worksite]) -> None:
         session.commit()
 
 
+def _ensure_master_options(session: Session) -> None:
+    """初始化派工用的工作內容與機具設備選項；同名選項不重複建立、不覆蓋使用者新增。"""
+    defaults = [
+        ("work_item", DEFAULT_WORK_ITEMS),
+        ("equipment", DEFAULT_EQUIPMENTS),
+    ]
+    changed = False
+    for option_type, labels in defaults:
+        existing_labels = {
+            option.label
+            for option in session.exec(
+                select(MasterOption).where(MasterOption.option_type == option_type)
+            ).all()
+        }
+        for index, label in enumerate(labels):
+            if label in existing_labels:
+                continue
+            session.add(MasterOption(
+                option_type=option_type,
+                label=label,
+                sort_order=index,
+                is_active=True,
+            ))
+            changed = True
+    if changed:
+        session.commit()
+
+
 def seed_demo_data(session: Session) -> None:
     worksites = _ensure_worksites(session)
     _rename_legacy_employee_codes(session)
@@ -315,6 +376,7 @@ def seed_demo_data(session: Session) -> None:
 
     _deactivate_unlisted_employees(session)
     _ensure_forklifts(session, worksites)
+    _ensure_master_options(session)
 
     # 自動解鎖管理員帳號（owner/admin），防止被永久鎖定導致無法登入後台
     unlocked_count = 0

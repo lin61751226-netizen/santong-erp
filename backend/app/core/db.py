@@ -71,3 +71,18 @@ def _apply_lightweight_migrations() -> None:
             with engine.begin() as connection:
                 for statement in statements:
                     connection.execute(text(statement))
+
+    # photo_upload_log.employee_id 改為可空：未綁定員工的 LINE 帳號上傳也要留下記錄。
+    # PostgreSQL 需 DROP NOT NULL；SQLite 不強制既有 NOT NULL 且重建表成本高，故略過。
+    if "photouploadlog" in table_names:
+        photo_columns = {column["name"]: column for column in inspector.get_columns("photouploadlog")}
+        employee_column = photo_columns.get("employee_id")
+        if (
+            employee_column is not None
+            and employee_column.get("nullable") is False
+            and not settings.database_url.startswith("sqlite")
+        ):
+            with engine.begin() as connection:
+                connection.execute(
+                    text("ALTER TABLE photouploadlog ALTER COLUMN employee_id DROP NOT NULL")
+                )

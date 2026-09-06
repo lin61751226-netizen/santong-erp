@@ -14,6 +14,8 @@ from app.core.config import settings
 from app.models import (
     AckStatus,
     AssignmentMember,
+    AttendanceEvent,
+    AttendanceEventType,
     DeliveryStatus,
     Employee,
     Forklift,
@@ -171,7 +173,7 @@ def _is_group_command(text: str) -> bool:
         "工作開始",
         "工作完成",
     }
-    return text in exact_commands or text.startswith(("綁定 ", "請假 ", "異常回報 "))
+    return text in exact_commands or text.startswith(("綁定 ", "請假 ", "異常回報 ", "到達工地:"))
 
 
 def _build_schedule_summary(
@@ -400,10 +402,28 @@ async def _handle_image_message(
             )
             return
 
+        # 即使尚未綁定員工也留下上傳記錄，讓後台「工作相片上傳記錄」看得到
+        try:
+            session.add(
+                PhotoUploadLog(
+                    employee_id=None,
+                    assignment_id=None,
+                    site_id=None,
+                    line_user_id=line_user_id,
+                    source_message_id=message_id,
+                    file_name=upload.file_name,
+                    drive_file_id=upload.file_id,
+                    drive_folder_id=upload.folder_id,
+                    drive_url=upload.file_url,
+                    note=f"未綁定員工上傳（LINE 顯示名稱：{uploader_name}）",
+                )
+            )
+            session.commit()
+        except Exception as log_exc:
+            session.rollback()
+            print(f"[_handle_image_message] 未綁定照片記錄寫入失敗：{log_exc}")
+
         # 靜默上傳，不回覆 LINE 訊息
-        return
-    if not employee:
-        await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先從 Rich Menu 開始綁定。")
         return
 
     message_id = str(message.get("id", "")).strip()
@@ -839,6 +859,50 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         await line_service.reply_text(reply_token, "\n".join(response_lines))
         return
 
+    # 「到達工地」：有今日派工就沿用統一流程記派工工地；無派工則讓員工點選實際工地，
+    # 確保後續「堆高機點檢」能正確自動帶入工地（堆高機不固定在同一工地）。
+    if text == "到達工地":
+        arrival_assignment = find_assignment_for_employee(session, employee.id)
+        if arrival_assignment is None:
+            sites = session.exec(
+                select(Worksite).where(Worksite.is_active.is_(True)).order_by(Worksite.name)
+            ).all()
+            if sites:
+                await line_service.reply_messages(
+                    reply_token,
+                    [{
+                        "type": "text",
+                        "text": "請選擇你到達的工地：",
+                        "quickReply": _quick_reply([(ws.name, f"到達工地:{ws.id}") for ws in sites]),
+                    }],
+                )
+                return
+
+    if text.startswith("到達工地:"):
+        raw_site_id = text.split(":", 1)[1].strip()
+        arrival_site = session.get(Worksite, int(raw_site_id)) if raw_site_id.isdigit() else None
+        if not arrival_site or not arrival_site.is_active:
+            await line_service.reply_text(reply_token, "工地選擇無效，請重新輸入「到達工地」。")
+            return
+        session.add(AttendanceEvent(
+            employee_id=employee.id,
+            site_id=arrival_site.id,
+            event_type=AttendanceEventType.arrive_site.value,
+            source="line",
+        ))
+        arr_assignment = find_assignment_for_employee(session, employee.id)
+        arr_member = find_assignment_member(session, employee.id, arr_assignment.id if arr_assignment else None)
+        if arr_member:
+            arr_member.ack_status = AckStatus.arrived
+            arr_member.last_line_action = "到達工地"
+            session.add(arr_member)
+        session.commit()
+        await line_service.reply_text(
+            reply_token,
+            f"已記錄：到達工地\n工地：{arrival_site.name}\n接著可點「堆高機點檢」開始今日點檢。",
+        )
+        return
+
     if text in ATTENDANCE_COMMAND_MAP:
         result = record_attendance_event(session, employee, text)
         reply_lines = [f"已記錄：{text}"]
@@ -884,15 +948,50 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             )
         return
 
+    # 只點「異常回報」還沒填問題：帶出常見堆高機問題清單供點選
+    if text == "異常回報":
+        options = [
+            (option, f"異常回報 {option}")
+            for option in forklift_service.FORKLIFT_EXCEPTION_OPTIONS
+        ]
+        await line_service.reply_messages(
+            reply_token,
+            [{
+                "type": "text",
+                "text": "請選擇異常問題（或直接輸入「異常回報 問題描述」）：",
+                "quickReply": _quick_reply(options),
+            }],
+        )
+        return
+
     if text.startswith("異常回報 "):
         detail = text.split(" ", 1)[1].strip()
+        if not detail:
+            await line_service.reply_text(reply_token, "請輸入異常內容，例如：異常回報 煞車異常")
+            return
         if member:
             member.ack_status = AckStatus.exception
             member.last_line_action = "異常回報"
             member.note = detail
             session.add(member)
             session.commit()
-        await line_service.reply_text(reply_token, f"異常回報已送出：{detail}")
+        # 自動關聯今日點檢的堆高機與打卡工地，同步通知老闆與管理員
+        try:
+            today_inspections = forklift_service.list_today_inspections_by_operator(session, employee.id)
+            exc_forklift = (
+                session.get(Forklift, today_inspections[-1].forklift_id)
+                if today_inspections else None
+            )
+            exc_site = get_today_arrival_site(session, employee.id)
+            from app.services.forklift_notifications import (
+                deliver_forklift_notifications,
+                queue_field_exception,
+            )
+            queue_field_exception(session, employee, exc_site, exc_forklift, detail)
+            await deliver_forklift_notifications(session)
+        except Exception as exc:
+            print(f"[異常回報] 通知管理層失敗：{type(exc).__name__}: {exc}")
+        await line_service.reply_text(reply_token, f"異常回報已送出：{detail}\n已同步通知老闆與管理員。")
         return
 
     # 完整可用指令清單：只在員工主動要求（輸入「指令/說明/選單」等）時出現一次，

@@ -212,7 +212,8 @@ class AttendanceEvent(SQLModel, table=True):
 
 class PhotoUploadLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    employee_id: int = Field(foreign_key="employee.id", index=True)
+    # 未綁定員工的 LINE 帳號上傳時也會留下記錄，因此允許為空
+    employee_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
     assignment_id: Optional[int] = Field(default=None, foreign_key="workassignment.id", index=True)
     site_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
     line_user_id: Optional[str] = Field(default=None, index=True)
@@ -373,4 +374,19 @@ class ForkliftInspection(SQLModel, table=True):
     inspection_items: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     all_passed: bool = Field(default=True)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MasterOptionType(str, Enum):
+    work_item = "work_item"   # 派工工作內容
+    equipment = "equipment"   # 機具設備
+
+
+class MasterOption(SQLModel, table=True):
+    """後台可維護的點選選項（工作內容、機具設備），讓派工表單可點選且能自行新增。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    option_type: str = Field(index=True)   # 對應 MasterOptionType
+    label: str
+    sort_order: int = Field(default=0)
+    is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)

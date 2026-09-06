@@ -404,7 +404,7 @@ def build_default_rich_menu_payloads(base_url: str) -> dict[str, dict[str, Any]]
                 },
                 {
                     "bounds": {"x": 2000, "y": 250, "width": 500, "height": 1436},
-                    "action": {"type": "message", "label": "異常回報", "text": "異常回報 現場缺料"},
+                    "action": {"type": "message", "label": "異常回報", "text": "異常回報"},
                 },
             ],
         },

@@ -244,15 +244,16 @@
             <select id="siteId" name="siteId" required></select>
           </div>
           <div class="full">
-            <label for="workItem">工作內容</label>
-            <input id="workItem" name="workItem" placeholder="例如：堆高機移料、現場物料整理" required>
+            <label for="workItem">工作內容（可點選或自行輸入）</label>
+            <input id="workItem" name="workItem" list="workItemList" placeholder="請選擇或輸入工作內容" required>
+            <datalist id="workItemList"></datalist>
           </div>
           <div>
             <label for="supervisorCode">負責主管</label>
             <select id="supervisorCode" name="supervisorCode"></select>
           </div>
           <div>
-            <label for="employeeCodes">執行人員</label>
+            <label for="employeeCodes">執行人員（按住 Ctrl 可複選多人）</label>
             <select id="employeeCodes" name="employeeCodes" multiple size="5"></select>
           </div>
           <div>
@@ -264,12 +265,14 @@
             <input id="endTime" name="endTime" type="time">
           </div>
           <div>
-            <label for="vehicle">車輛</label>
-            <input id="vehicle" name="vehicle" placeholder="例如：3.5T 貨車">
+            <label for="vehicle">車輛（堆高機點選）</label>
+            <input id="vehicle" name="vehicle" list="vehicleList" placeholder="請選擇堆高機或輸入其他車輛">
+            <datalist id="vehicleList"></datalist>
           </div>
           <div>
-            <label for="equipment">機具</label>
-            <input id="equipment" name="equipment" placeholder="例如：堆高機">
+            <label for="equipment">機具（可點選或輸入）</label>
+            <input id="equipment" name="equipment" list="equipmentList" placeholder="預設堆高機，可選其他設備">
+            <datalist id="equipmentList"></datalist>
           </div>
           <div class="full">
             <label for="assignmentNotes">注意事項</label>
@@ -658,6 +661,40 @@
           </table>
         </div>
       </section>
+
+      <section class="panel span-12" data-workspace="settings">
+        <div class="panel-header">
+          <div>
+            <h2>工作內容與機具管理</h2>
+            <p class="muted">新增後即可在「派工與審核 → 建立工作安排」的工作內容、車輛、機具清單中點選。</p>
+          </div>
+        </div>
+        <form class="form-grid" onsubmit="event.preventDefault(); addMasterOption();">
+          <div>
+            <label for="newOptionType">類別</label>
+            <select id="newOptionType">
+              <option value="work_item">工作內容</option>
+              <option value="equipment">機具設備</option>
+            </select>
+          </div>
+          <div>
+            <label for="newOptionLabel">新增選項名稱</label>
+            <input id="newOptionLabel" placeholder="例如：推磁磚 / 壓實機">
+          </div>
+          <div class="button-row" style="align-items:flex-end;">
+            <button type="submit">新增選項</button>
+            <button type="button" class="button-secondary" onclick="loadMasterOptions()">重新整理</button>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>類別</th><th>名稱</th><th>狀態</th><th>操作</th></tr>
+            </thead>
+            <tbody id="masterOptionRows"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -666,6 +703,9 @@
       actor: null,
       employees: [],
       worksites: [],
+      workItemOptions: [],
+      equipmentOptions: [],
+      forkliftOptions: [],
     };
 
     function setWorkspace(workspace, shouldScroll = true) {
@@ -761,6 +801,11 @@
       `).join("");
       document.getElementById("supervisorCode").innerHTML = supervisorOptions;
       document.getElementById("meetingOwner").innerHTML = supervisorOptions;
+
+      const dataList = (list) => list.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
+      document.getElementById("workItemList").innerHTML = dataList(state.workItemOptions);
+      document.getElementById("equipmentList").innerHTML = dataList(state.equipmentOptions);
+      document.getElementById("vehicleList").innerHTML = dataList(state.forkliftOptions.map((item) => item.label));
     }
 
     function renderEmployees(rows) {
@@ -902,6 +947,7 @@
         loadUserManagement(),
         loadPhotoUploads(),
         loadLoginLogs(),
+        loadMasterOptions(),
       ]);
       setWorkspace("overview", false);
     }
@@ -911,6 +957,9 @@
       state.actor = data.actor;
       state.employees = data.employees;
       state.worksites = data.worksites;
+      state.workItemOptions = data.work_item_options || [];
+      state.equipmentOptions = data.equipment_options || [];
+      state.forkliftOptions = data.forklift_options || [];
       renderSelectOptions();
       renderUserChip();
     }
@@ -1317,6 +1366,52 @@
         });
         alert('密碼已重設！新密碼：' + data.new_password + '\n請將此密碼告知員工，員工首次登入時會要求修改密碼。');
         setConsole(JSON.stringify(data, null, 2));
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    // ---- 工作內容與機具選項管理 ----
+    async function loadMasterOptions() {
+      try {
+        const data = await api('/api/master-options');
+        const typeLabel = { work_item: '工作內容', equipment: '機具設備' };
+        document.getElementById('masterOptionRows').innerHTML = data.map((item) => `
+          <tr>
+            <td>${typeLabel[item.option_type] || item.option_type}</td>
+            <td>${escapeHtml(item.label)}</td>
+            <td>${item.is_active ? '啟用中' : '已停用'}</td>
+            <td class="table-actions">
+              ${item.is_active ? `<button type="button" class="button-secondary button-compact" onclick="deactivateMasterOption(${item.id})">停用</button>` : '-'}
+            </td>
+          </tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;">尚無選項</td></tr>';
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function addMasterOption() {
+      const optionType = document.getElementById('newOptionType').value;
+      const label = document.getElementById('newOptionLabel').value.trim();
+      if (!label) { setConsole('請輸入選項名稱'); return; }
+      try {
+        const data = await api('/api/master-options', {
+          method: 'POST',
+          body: JSON.stringify({ option_type: optionType, label }),
+        });
+        document.getElementById('newOptionLabel').value = '';
+        setConsole(JSON.stringify(data));
+        await Promise.all([loadMeta(), loadMasterOptions()]);
+      } catch (error) {
+        setConsole(error.message);
+      }
+    }
+
+    async function deactivateMasterOption(id) {
+      try {
+        const data = await api(`/api/master-options/${id}`, { method: 'DELETE' });
+        setConsole(JSON.stringify(data));
+        await Promise.all([loadMeta(), loadMasterOptions()]);
       } catch (error) {
         setConsole(error.message);
       }

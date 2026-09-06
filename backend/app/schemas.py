@@ -26,6 +26,12 @@ class EmployeeUpdate(BaseModel):
     assigned_sites: list[str] = Field(default_factory=list)
 
 
+class MasterOptionCreate(BaseModel):
+    # option_type: work_item（工作內容）/ equipment（機具設備）
+    option_type: str
+    label: str
+
+
 class LoginRequest(BaseModel):
     employee_code: str
     password: str
