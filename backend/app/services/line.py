@@ -802,13 +802,14 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     if text.startswith("請假 "):
         parts = text.split(" ", 4)
         if len(parts) == 2 and parts[1] in {leave_type.value for leave_type in LeaveType}:
+            today_iso = date.today().isoformat()
             await line_service.reply_text(
                 reply_token,
-                f"已選擇：{parts[1]}\n請輸入日期與原因：\n請假 {parts[1]} 2026-07-28 2026-07-28 家中有事",
+                f"已選擇：{parts[1]}\n請輸入：請假 {parts[1]} 開始日 結束日 原因\n範例：請假 {parts[1]} {today_iso} {today_iso} 家中有事",
             )
             return
         if len(parts) < 5:
-            await line_service.reply_text(reply_token, "格式錯誤，請使用：請假 事假 2026-07-28 2026-07-28 家中有事")
+            await line_service.reply_text(reply_token, "格式錯誤，請使用：請假 假別 開始日 結束日 原因（日期格式 YYYY-MM-DD）")
             return
         _, leave_type, start_date_text, end_date_text, reason = parts
         try:

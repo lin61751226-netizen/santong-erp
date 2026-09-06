@@ -265,11 +265,6 @@
             <input id="endTime" name="endTime" type="time">
           </div>
           <div>
-            <label for="vehicle">車輛（堆高機點選）</label>
-            <input id="vehicle" name="vehicle" list="vehicleList" placeholder="請選擇堆高機或輸入其他車輛">
-            <datalist id="vehicleList"></datalist>
-          </div>
-          <div>
             <label for="equipment">機具（可點選或輸入）</label>
             <input id="equipment" name="equipment" list="equipmentList" placeholder="預設堆高機，可選其他設備">
             <datalist id="equipmentList"></datalist>
@@ -666,7 +661,7 @@
         <div class="panel-header">
           <div>
             <h2>工作內容與機具管理</h2>
-            <p class="muted">新增後即可在「派工與審核 → 建立工作安排」的工作內容、車輛、機具清單中點選。</p>
+            <p class="muted">新增後即可在「派工與審核 → 建立工作安排」的工作內容、機具清單中點選。</p>
           </div>
         </div>
         <form class="form-grid" onsubmit="event.preventDefault(); addMasterOption();">
@@ -741,6 +736,13 @@
       });
     }
 
+    // 後端回傳的時間為 naive UTC（字串無 Z），統一視為 UTC 再轉台灣時間顯示
+    function formatTW(value) {
+      if (!value) return "-";
+      const iso = typeof value === "string" && value.endsWith("Z") ? value : value + "Z";
+      return new Date(iso).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" });
+    }
+
     function todayString() {
       const parts = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit",
@@ -805,7 +807,6 @@
       const dataList = (list) => list.map((value) => `<option value="${escapeHtml(value)}"></option>`).join("");
       document.getElementById("workItemList").innerHTML = dataList(state.workItemOptions);
       document.getElementById("equipmentList").innerHTML = dataList(state.equipmentOptions);
-      document.getElementById("vehicleList").innerHTML = dataList(state.forkliftOptions.map((item) => item.label));
     }
 
     function renderEmployees(rows) {
@@ -874,7 +875,7 @@
           <td>${row.site_name}</td>
           <td><span class="pill">${row.ack_status}</span></td>
           <td>${row.last_action || "-"}</td>
-          <td>${row.last_event_at ? row.last_event_at.replace("T", " ").slice(0, 16) : "-"}</td>
+          <td>${formatTW(row.last_event_at)}</td>
           <td>${row.anomalies.length ? row.anomalies.join("、") : "-"}</td>
           <td>${row.note || "-"}</td>
         </tr>
@@ -905,7 +906,7 @@
           <td>
             ${row.work_date}｜${row.site_name}<br>
             ${row.work_item}<br>
-            <span class="muted">機具：${row.equipment || "-"}｜車輛：${row.vehicle || "-"}</span>
+            <span class="muted">機具：${row.equipment || "-"}</span>
           </td>
           <td>
             ${row.candidates.length ? row.candidates.map((candidate) => `
@@ -1189,7 +1190,7 @@
         employee_codes: selectedEmployees,
         start_time: document.getElementById("startTime").value || null,
         end_time: document.getElementById("endTime").value || null,
-        vehicle: document.getElementById("vehicle").value || null,
+        vehicle: null,
         equipment: document.getElementById("equipment").value || null,
         notes: document.getElementById("assignmentNotes").value || null,
       };
@@ -1439,7 +1440,7 @@
             ? '<a href="' + item.drive_url + '" target="_blank">檢視</a>'
             : '-';
           return `<tr>
-            <td>${item.uploaded_at ? new Date(item.uploaded_at).toLocaleString('zh-TW') : '-'}</td>
+            <td>${formatTW(item.uploaded_at)}</td>
             <td>${item.employee_name || item.employee_code || '-'}</td>
             <td>${item.site_name || '-'}</td>
             <td>${item.file_name || '-'}</td>
@@ -1473,7 +1474,7 @@
             ? '<span class="badge" style="background:#fff3cd;color:#856404;">鎖定</span>'
             : '<span class="badge" style="background:#f8d7da;color:#721c24;">失敗</span>';
           return `<tr>
-            <td>${item.created_at ? new Date(item.created_at).toLocaleString('zh-TW') : '-'}</td>
+            <td>${formatTW(item.created_at)}</td>
             <td>${item.employee_code || '-'}</td>
             <td>${item.employee_name || '-'}</td>
             <td>${item.ip_address || '-'}</td>
@@ -1643,7 +1644,7 @@
         const data = await api("/api/forklift-notifications");
         const statuses = {sent: "已送出", failed: "發送失敗，待重試", skipped: "未送出", pending: "等待發送", simulated: "模擬，未實際發送"};
         rows.innerHTML = data.map(item => `<tr>
-          <td>${escapeHtml(new Date(item.sent_at + 'Z').toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}))}</td>
+          <td>${escapeHtml(formatTW(item.sent_at))}</td>
           <td>${escapeHtml(item.recipient)}</td><td>${statuses[item.status] || escapeHtml(item.status)}</td>
           <td class="notification-content">${escapeHtml(item.content)}</td><td>${escapeHtml(item.detail)}</td>
         </tr>`).join('') || '<tr><td colspan="5">尚無通知記錄；完成異常點檢或達到油量／保養提醒條件後，會顯示結果。</td></tr>';
