@@ -107,6 +107,13 @@ class LinePlatformService:
         )
         return list(response.get("richmenus", []))
 
+    async def delete_rich_menu(self, rich_menu_id: str) -> None:
+        await self._request(
+            "DELETE",
+            f"{self.api_base}/richmenu/{rich_menu_id}",
+            headers=self._headers(None),
+        )
+
     async def upload_rich_menu_image(self, rich_menu_id: str, image_path: Path) -> None:
         content_type = mimetypes.guess_type(str(image_path))[0] or "image/png"
         await self._request(
@@ -230,8 +237,8 @@ def _draw_centered_text(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int
     bbox = draw.multiline_textbbox((0, 0), text, font=font, spacing=8, align="center")
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
-    x = left + ((right - left) - text_width) / 2
-    y = top + ((bottom - top) - text_height) / 2
+    x = left + ((right - left) - text_width) / 2 - bbox[0]
+    y = top + ((bottom - top) - text_height) / 2 - bbox[1]
     draw.multiline_text((x, y), text, font=font, fill=fill, spacing=8, align="center")
 
 
@@ -244,24 +251,17 @@ def generate_default_rich_menu_images(
     output_dir.mkdir(parents=True, exist_ok=True)
     bundled_outputs = {
         "main": STATIC_RICH_MENU_DIR / "santong-main.png",
-        "tools": STATIC_RICH_MENU_DIR / "santong-tools.png",
+        "tools": STATIC_RICH_MENU_DIR / "santong-tools-inspection-v1.png",
     }
-    # 每次部署都重新生成圖片，確保按鈕佈局最新
+    # Use the versioned, CJK-rendered asset; deployment mtimes do not identify a layout.
     if not force_regenerate and all(path.exists() for path in bundled_outputs.values()):
-        # 檢查圖片是否過期（以檔案修改時間判斷）
-        import time
-        current_time = time.time()
-        all_fresh = True
-        for path in bundled_outputs.values():
-            if path.exists() and (current_time - path.stat().st_mtime) > 86400:
-                all_fresh = False
-                break
-        if all_fresh:
-            for name, bundled_path in bundled_outputs.items():
-                target_path = RICH_MENU_DIR / bundled_path.name
-                if not target_path.exists():
-                    shutil.copyfile(bundled_path, target_path)
-            return bundled_outputs
+        outputs = {}
+        for name, bundled_path in bundled_outputs.items():
+            target_path = output_dir / bundled_path.name
+            if target_path.resolve() != bundled_path.resolve():
+                shutil.copyfile(bundled_path, target_path)
+            outputs[name] = target_path
+        return outputs
 
     width, height = 2500, 1686
     tab_height = 250
@@ -293,7 +293,7 @@ def generate_default_rich_menu_images(
                 ((0, 0, width // 2, tab_height), "主選單"),
                 ((width // 2, 0, width, tab_height), "工作工具"),
                 ((0, tab_height, width // 5, height), "到達\n工地"),
-                ((width // 5, tab_height, width // 5 * 2, height), "堆高機\n點檢"),
+                ((width // 5, tab_height, width // 5 * 2, height), "每日\n點檢"),
                 ((width // 5 * 2, tab_height, width // 5 * 3, height), "工作\n開始"),
                 ((width // 5 * 3, tab_height, width // 5 * 4, height), "工作\n完成"),
                 ((width // 5 * 4, tab_height, width, height), "異常\n回報"),
@@ -315,7 +315,7 @@ def generate_default_rich_menu_images(
             fill = "#23403b" if fill_color != "#ead6b7" else "#5a391f"
             _draw_centered_text(draw, box, label, font, fill)
 
-        image_path = output_dir / f"santong-{name}.png"
+        image_path = output_dir / bundled_outputs[name].name
         image.save(image_path, format="PNG")
         outputs[name] = image_path
     return outputs
@@ -409,11 +409,17 @@ async def deploy_default_rich_menus(base_url: str) -> dict[str, Any]:
     await line_platform_service.create_or_update_alias("santong-main", main_id)
     await line_platform_service.create_or_update_alias("santong-tools", tools_id)
 
-    migration = await migrate_santong_rich_menu_links(
-        existing_menus=existing_menus,
-        main_rich_menu_id=main_id,
-        tools_rich_menu_id=tools_id,
-    )
+    # 遷移舊 Rich Menu 連結（失敗不中斷佈署，用戶會透過 relink 重新綁定）
+    migration = {"status": "skipped"}
+    try:
+        migration = await migrate_santong_rich_menu_links(
+            existing_menus=existing_menus,
+            main_rich_menu_id=main_id,
+            tools_rich_menu_id=tools_id,
+        )
+    except Exception as exc:
+        print(f"[deploy] 遷移舊連結失敗（不中斷）：{type(exc).__name__}: {exc}")
+        migration = {"status": "failed", "error": str(exc)}
     return {
         "main_rich_menu_id": main_id,
         "tools_rich_menu_id": tools_id,

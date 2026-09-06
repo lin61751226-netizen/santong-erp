@@ -217,6 +217,38 @@ async def relink_users_rich_menu(
     }
 
 
+@api_router.get("/richmenu/cleanup")
+async def cleanup_old_rich_menus(keep_latest: int = 2):
+    """公開端點：清理舊 Rich Menu，每個名稱只保留最新 keep_latest 個"""
+    from collections import defaultdict
+    menus = await line_platform_service.list_rich_menus()
+    by_name = defaultdict(list)
+    for m in menus:
+        name = m.get("name") or "__unnamed__"
+        by_name[name].append(m)
+
+    deleted = []
+    errors = []
+    for name, menu_list in by_name.items():
+        to_delete = menu_list[keep_latest:]
+        for m in to_delete:
+            mid = m.get("richMenuId")
+            try:
+                await line_platform_service.delete_rich_menu(mid)
+                deleted.append({"id": mid, "name": name})
+            except Exception as e:
+                errors.append({"id": mid, "name": name, "error": str(e)})
+
+    return {
+        "ok": True,
+        "total_before": len(menus),
+        "deleted_count": len(deleted),
+        "error_count": len(errors),
+        "deleted": deleted[:30],
+        "errors": errors[:10],
+    }
+
+
 @api_router.get("/status")
 async def line_status(
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
