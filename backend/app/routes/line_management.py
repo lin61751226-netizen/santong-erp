@@ -27,6 +27,140 @@ api_router = APIRouter(prefix="/api/line-management", tags=["line-management"])
 page_router = APIRouter(tags=["line-pages"])
 
 
+@api_router.get("/richmenu/debug")
+async def debug_rich_menu():
+    """公開診斷端點：逐步測試 Rich Menu 佈署過程，不需登入（臨時排查用）"""
+    from app.services.line_platform import (
+        generate_default_rich_menu_images,
+        build_default_rich_menu_payloads,
+    )
+    steps = []
+
+    # Step 1: 檢查環境變數
+    has_secret = bool(settings.line_channel_secret)
+    has_token = bool(settings.line_channel_access_token)
+    steps.append({
+        "step": 1,
+        "name": "環境變數檢查",
+        "ok": has_token,
+        "detail": {
+            "channel_secret_set": has_secret,
+            "channel_access_token_set": has_token,
+            "token_prefix": settings.line_channel_access_token[:20] + "..." if has_token else None,
+            "environment": settings.environment,
+            "public_base_url": settings.public_base_url,
+        },
+    })
+    if not has_token:
+        return {"ok": False, "steps": steps, "error": "LINE_CHANNEL_ACCESS_TOKEN 未設定"}
+
+    # Step 2: 列出現有 Rich Menu
+    try:
+        existing = await line_platform_service.list_rich_menus()
+        steps.append({
+            "step": 2,
+            "name": "列出現有 Rich Menu",
+            "ok": True,
+            "detail": {"count": len(existing), "menus": [
+                {"id": m.get("richMenuId"), "name": m.get("name")} for m in existing[:10]
+            ]},
+        })
+    except Exception as e:
+        steps.append({"step": 2, "name": "列出現有 Rich Menu", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 3: 生成圖片
+    try:
+        images = generate_default_rich_menu_images()
+        steps.append({
+            "step": 3,
+            "name": "生成 Rich Menu 圖片",
+            "ok": True,
+            "detail": {name: str(path) for name, path in images.items()},
+        })
+    except Exception as e:
+        steps.append({"step": 3, "name": "生成 Rich Menu 圖片", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 4: 建立 payload
+    try:
+        base_url = settings.public_base_url.rstrip("/")
+        payloads = build_default_rich_menu_payloads(base_url)
+        steps.append({
+            "step": 4,
+            "name": "建立 Rich Menu payload",
+            "ok": True,
+            "detail": {
+                "main_size": payloads["main"]["size"],
+                "main_areas_count": len(payloads["main"]["areas"]),
+                "tools_size": payloads["tools"]["size"],
+                "tools_areas_count": len(payloads["tools"]["areas"]),
+                "tools_area_labels": [a.get("action", {}).get("label") for a in payloads["tools"]["areas"]],
+            },
+        })
+    except Exception as e:
+        steps.append({"step": 4, "name": "建立 Rich Menu payload", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 5: 建立 main Rich Menu
+    main_id = None
+    try:
+        main_id = await line_platform_service.create_rich_menu(payloads["main"])
+        steps.append({"step": 5, "name": "建立 main Rich Menu", "ok": True, "detail": {"richMenuId": main_id}})
+    except Exception as e:
+        steps.append({"step": 5, "name": "建立 main Rich Menu", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 6: 上傳 main 圖片
+    try:
+        await line_platform_service.upload_rich_menu_image(main_id, images["main"])
+        steps.append({"step": 6, "name": "上傳 main 圖片", "ok": True})
+    except Exception as e:
+        steps.append({"step": 6, "name": "上傳 main 圖片", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 7: 建立 tools Rich Menu
+    tools_id = None
+    try:
+        tools_id = await line_platform_service.create_rich_menu(payloads["tools"])
+        steps.append({"step": 7, "name": "建立 tools Rich Menu", "ok": True, "detail": {"richMenuId": tools_id}})
+    except Exception as e:
+        steps.append({"step": 7, "name": "建立 tools Rich Menu", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 8: 上傳 tools 圖片
+    try:
+        await line_platform_service.upload_rich_menu_image(tools_id, images["tools"])
+        steps.append({"step": 8, "name": "上傳 tools 圖片", "ok": True})
+    except Exception as e:
+        steps.append({"step": 8, "name": "上傳 tools 圖片", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 9: 設定預設 Rich Menu
+    try:
+        await line_platform_service.set_default_rich_menu(main_id)
+        steps.append({"step": 9, "name": "設定預設 Rich Menu", "ok": True})
+    except Exception as e:
+        steps.append({"step": 9, "name": "設定預設 Rich Menu", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    # Step 10: 建立別名
+    try:
+        await line_platform_service.create_or_update_alias("santong-main", main_id)
+        await line_platform_service.create_or_update_alias("santong-tools", tools_id)
+        steps.append({"step": 10, "name": "建立 Rich Menu 別名", "ok": True})
+    except Exception as e:
+        steps.append({"step": 10, "name": "建立 Rich Menu 別名", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        return {"ok": False, "steps": steps}
+
+    return {
+        "ok": True,
+        "main_rich_menu_id": main_id,
+        "tools_rich_menu_id": tools_id,
+        "steps": steps,
+    }
+
+
 @api_router.get("/status")
 async def line_status(
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
