@@ -165,22 +165,18 @@ async def debug_rich_menu():
 async def relink_users_rich_menu(
     session: Session = Depends(get_session),
 ):
-    """公開端點：把所有已綁定 LINE 的員工重新綁定到最新的預設 Rich Menu（臨時排查用）"""
+    """公開端點：重新佈署 Rich Menu 並把所有員工綁定到最新選單（臨時排查用）"""
+    # 直接重新佈署，取得剛建立的最新 Rich Menu ID
+    base_url = settings.public_base_url.rstrip("/")
+    deploy_result = await deploy_default_rich_menus(base_url)
+    main_id = deploy_result["main_rich_menu_id"]
+    tools_id = deploy_result["tools_rich_menu_id"]
+
     # 取得所有已綁定員工
     employees = [
         e for e in session.exec(select(Employee)).all()
         if e.line_user_id
     ]
-
-    # 列出所有 Rich Menu，找到最新的 santong-main
-    menus = await line_platform_service.list_rich_menus()
-    main_menus = [m for m in menus if m.get("name") == "santong-main"]
-    if not main_menus:
-        return {"ok": False, "error": "找不到名稱為 santong-main 的 Rich Menu"}
-
-    # 取最新的一個（list 通常由新到舊，取第一個）
-    latest_main = main_menus[0]
-    main_id = latest_main.get("richMenuId")
 
     results = []
     success_count = 0
@@ -190,7 +186,6 @@ async def relink_users_rich_menu(
             results.append({
                 "employee_code": emp.employee_code,
                 "name": emp.name,
-                "line_user_id": emp.line_user_id[:20] + "...",
                 "ok": True,
             })
             success_count += 1
@@ -198,14 +193,14 @@ async def relink_users_rich_menu(
             results.append({
                 "employee_code": emp.employee_code,
                 "name": emp.name,
-                "line_user_id": emp.line_user_id[:20] + "...",
                 "ok": False,
                 "error": f"{type(e).__name__}: {e}",
             })
 
     return {
         "ok": True,
-        "latest_main_rich_menu_id": main_id,
+        "deployed_main_id": main_id,
+        "deployed_tools_id": tools_id,
         "total_bound_employees": len(employees),
         "success_count": success_count,
         "results": results,
