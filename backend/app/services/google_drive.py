@@ -6,6 +6,9 @@ import time
 import io
 import json
 import mimetypes
+import os
+import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +17,7 @@ from zoneinfo import ZoneInfo
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -26,6 +29,7 @@ DRIVE_SCOPE = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
 LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
+DATABASE_BACKUP_FILE_NAME = "三通資料庫最新快照.sqlite3"
 OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 logger = logging.getLogger(__name__)
@@ -310,6 +314,83 @@ class GoogleDriveWorklogService:
             "skipped_employee_codes": skipped_codes,
         }
 
+    @staticmethod
+    def _sqlite_path() -> Path | None:
+        prefix = "sqlite:///"
+        if not settings.database_url.startswith(prefix):
+            return None
+        return Path(settings.database_url[len(prefix):])
+
+    def _download_database_snapshot(self, target: Path) -> bool:
+        client = self._build_client()
+        folder_id = self._system_data_folder_id(client, create=False)
+        if not folder_id:
+            return False
+        file_item = self._find_child(client, parent_id=folder_id, name=DATABASE_BACKUP_FILE_NAME)
+        if not file_item:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("wb") as output:
+            request = client.files().get_media(fileId=file_item["id"], supportsAllDrives=True)
+            downloader = MediaIoBaseDownload(output, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+        return target.stat().st_size > 0
+
+    def _upload_database_snapshot(self, source: Path) -> dict:
+        client = self._build_client()
+        folder_id = self._system_data_folder_id(client, create=True)
+        existing = self._find_child(client, parent_id=folder_id, name=DATABASE_BACKUP_FILE_NAME)
+        media = MediaIoBaseUpload(io.BytesIO(source.read_bytes()), mimetype="application/x-sqlite3", resumable=False)
+        if existing:
+            saved = client.files().update(
+                fileId=existing["id"], media_body=media, fields="id,modifiedTime", supportsAllDrives=True,
+            ).execute()
+        else:
+            saved = client.files().create(
+                body={"name": DATABASE_BACKUP_FILE_NAME, "parents": [folder_id]},
+                media_body=media, fields="id,modifiedTime", supportsAllDrives=True,
+            ).execute()
+        return {"status": "saved", "file_id": saved["id"], "bytes": source.stat().st_size}
+
+    async def restore_database_snapshot(self) -> dict:
+        target = self._sqlite_path()
+        if target is None or not self.is_configured():
+            return {"status": "skipped", "reason": "非 SQLite 或 Google Drive 未設定"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot = Path(temp_dir) / DATABASE_BACKUP_FILE_NAME
+            try:
+                found = await asyncio.to_thread(self._download_database_snapshot, snapshot)
+                if not found:
+                    return {"status": "not_found"}
+                if target.exists() and target.stat().st_size > 0:
+                    return {"status": "local_exists", "bytes": target.stat().st_size}
+                os.replace(snapshot, target)
+                return {"status": "restored", "bytes": target.stat().st_size}
+            except Exception as exc:
+                logger.warning("Google Drive 資料庫快照復原失敗：%s", type(exc).__name__)
+                return {"status": "failed", "error": type(exc).__name__}
+
+    async def backup_database(self) -> dict:
+        source = self._sqlite_path()
+        if source is None or not source.exists() or not self.is_configured():
+            return {"status": "skipped", "reason": "非 SQLite、資料庫不存在或 Google Drive 未設定"}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            snapshot = Path(temp_dir) / DATABASE_BACKUP_FILE_NAME
+            try:
+                # SQLite backup API produces a consistent snapshot while requests continue.
+                source_db = sqlite3.connect(str(source))
+                target_db = sqlite3.connect(str(snapshot))
+                with target_db:
+                    source_db.backup(target_db)
+                target_db.close()
+                source_db.close()
+                return await asyncio.to_thread(self._upload_database_snapshot, snapshot)
+            except Exception as exc:
+                logger.warning("Google Drive 資料庫快照備份失敗：%s", type(exc).__name__)
+                return {"status": "failed", "error": type(exc).__name__}
+
     def _find_or_create_date_folder(self, folder_name: str) -> str:
         root_folder_id = settings.google_drive_worklog_folder_id.strip()
         if not root_folder_id:
@@ -413,6 +494,7 @@ class GoogleDriveWorklogService:
         message_id: str,
         employee_name: str,
         happened_at: datetime,
+        site_name: str | None = None,
     ) -> DriveUploadResult:
         logger.info(f"開始處理 LINE 相片上傳: message_id={message_id}, 員工={employee_name}")
         if not self.is_configured():
@@ -423,6 +505,9 @@ class GoogleDriveWorklogService:
         logger.info(f"已從 LINE 取得相片內容: {len(content)} bytes, 類型: {content_type}")
         local_dt = happened_at.astimezone(ZoneInfo(settings.timezone))
         folder_name = local_dt.strftime("%Y-%m-%d")
+        if site_name:
+            safe_site = site_name.strip().replace("/", "-").replace("\\", "-")
+            folder_name = f"{folder_name}_{safe_site}"
         extension = mimetypes.guess_extension(content_type or "") or ".jpg"
         safe_name = employee_name.strip().replace("/", "-").replace("\\", "-")
         file_name = f"{safe_name}_{local_dt.strftime('%Y%m%d_%H%M%S')}{extension}"

@@ -19,6 +19,7 @@ from app.services.forklift_service import (
 INSPECTION_SCOPE = "forklift_inspection_alert"
 WARNING_SCOPE = "forklift_vehicle_warning"
 FIELD_EXCEPTION_SCOPE = "field_exception_alert"
+INSPECTION_REMINDER_SCOPE = "forklift_inspection_reminder"
 _delivery_lock = asyncio.Lock()
 
 
@@ -56,6 +57,30 @@ def queue_inspection_alert(session: Session, inspection: ForkliftInspection) -> 
     if not inspection.all_passed:
         _queue(session, INSPECTION_SCOPE, str(inspection.id),
                build_boss_notification(session, inspection), _managers(session))
+
+
+def queue_inspection_reminders(session: Session) -> None:
+    """Queue one daily reminder for bound forklift operators without inspection."""
+    today = local_today()
+    operators = session.exec(select(Employee).where(
+        Employee.status == "active", Employee.line_user_id.isnot(None),
+    )).all()
+    for employee in operators:
+        title = employee.title or ""
+        if "堆高機" not in title and "叉車" not in title and "forklift" not in title.lower():
+            continue
+        if session.exec(select(ForkliftInspection).where(
+            ForkliftInspection.operator_id == employee.id,
+            ForkliftInspection.inspection_date == today,
+        )).first():
+            continue
+        content = (
+            "🚜 堆高機每日點檢提醒\n\n"
+            f"{employee.name} 早安！\n"
+            "今日尚未完成堆高機點檢，請點 Rich Menu 的「堆高機點檢」完成點檢。\n"
+            "點檢完成後再開始工作，確保行車安全。"
+        )
+        _queue(session, INSPECTION_REMINDER_SCOPE, f"{today.isoformat()}:{employee.id}", content, [employee])
 
 
 def _warning_key(session: Session, forklift: Forklift) -> tuple[str, list[str]]:
@@ -106,7 +131,7 @@ async def _deliver_pending(session: Session) -> None:
     rows = session.exec(select(NotificationDelivery, NotificationBatch).join(
         NotificationBatch, NotificationDelivery.batch_id == NotificationBatch.id,
     ).where(
-        NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE, FIELD_EXCEPTION_SCOPE]),
+        NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE, FIELD_EXCEPTION_SCOPE, INSPECTION_REMINDER_SCOPE]),
         NotificationDelivery.delivery_status != DeliveryStatus.sent,
     ).order_by(NotificationDelivery.id)).all()
     for delivery, batch in rows:
@@ -129,7 +154,7 @@ async def _deliver_pending(session: Session) -> None:
                 employee.role in {Role.owner, Role.admin}
                 or employee.id == current_operator_id
             )
-        else:
+        elif batch.target_scope in {INSPECTION_SCOPE, FIELD_EXCEPTION_SCOPE}:
             # 點檢異常、現場異常回報只送 owner/admin 管理層
             eligible = eligible and employee.role in {Role.owner, Role.admin}
         delivery.line_user_id = employee.line_user_id if employee else None
@@ -153,6 +178,7 @@ async def _deliver_pending(session: Session) -> None:
 
 
 async def process_forklift_alerts(session: Session) -> None:
+    queue_inspection_reminders(session)
     for forklift in session.exec(select(Forklift).where(Forklift.status != "inactive")).all():
         queue_vehicle_warning(session, forklift)
     await deliver_forklift_notifications(session)

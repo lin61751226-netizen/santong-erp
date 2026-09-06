@@ -4,19 +4,22 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.pool import StaticPool
+from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models import AttendanceEvent, Employee
+from app.models import AttendanceEvent, AttendanceEventType, Employee, PhotoUploadLog, Worksite
 from app.services.google_drive import GoogleDriveWorklogService
 from app.services.line import (
     _reply_attendance_options,
     _reply_leave_options,
+    _handle_image_message,
     line_service,
     process_webhook_event,
     _pending_location_attendance,
 )
 from app.services.line_platform import LinePlatformError, bind_employee_line_user
 from app.services.line_platform import line_platform_service, migrate_santong_rich_menu_links
+from app.services.google_drive import DriveUploadResult
 
 
 class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
@@ -71,6 +74,28 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(saved.latitude, 25.033964)
             self.assertAlmostEqual(saved.longitude, 121.564468)
             self.assertNotIn("U-loc", _pending_location_attendance)
+
+    async def test_photo_uses_latest_arrival_site_for_drive_folder_and_log(self) -> None:
+        with Session(self.engine) as session:
+            employee = Employee(employee_code="EMP-PHOTO", name="拍照員工", bind_token="TOKEN-PHOTO", line_user_id="U-photo")
+            site = Worksite(code="SITE-PHOTO", name="照片工地")
+            session.add_all([employee, site])
+            session.commit()
+            session.add(AttendanceEvent(employee_id=employee.id, site_id=site.id,
+                                        event_type=AttendanceEventType.arrive_site.value))
+            session.commit()
+            upload = DriveUploadResult("file-1", "photo.jpg", "https://drive/photo", "folder-1", "2026-09-06_照片工地", "image/jpeg")
+            with patch.object(line_platform_service, "get_message_content", AsyncMock(return_value=(b"img", "image/jpeg"))), \
+                 patch.object(line_service, "reply_text", AsyncMock()), \
+                 patch.object(line_service, "reply_messages", AsyncMock()), \
+                 patch("app.services.line.google_drive_worklog_service.upload_line_photo", AsyncMock(return_value=upload)) as upload_photo:
+                await _handle_image_message(
+                    session, event={"timestamp": 0},
+                    message={"id": "message-1"}, reply_token="reply", line_user_id="U-photo", employee=employee,
+                )
+            self.assertEqual(upload_photo.await_args.kwargs["site_name"], "照片工地")
+            saved = session.exec(select(PhotoUploadLog)).one()
+            self.assertEqual(saved.site_id, site.id)
 
     async def test_leave_menu_contains_all_leave_types(self) -> None:
         reply = AsyncMock(return_value=(True, "sent"))

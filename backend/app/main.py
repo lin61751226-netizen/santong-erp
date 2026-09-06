@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    restore_db_result = await google_drive_worklog_service.restore_database_snapshot()
+    logger.info("Google Drive 資料庫快照復原結果：%s", restore_db_result.get("status"))
     init_db()
     with session_scope() as session:
         seed_demo_data(session)
@@ -35,6 +37,7 @@ async def lifespan(app: FastAPI):
             restore_result = await google_drive_worklog_service.restore_line_bindings(session)
             if restore_result.get("status") in {"restored", "not_found"}:
                 await google_drive_worklog_service.backup_line_bindings(session)
+            await google_drive_worklog_service.backup_database()
         except Exception as exc:
             logger.warning("LINE binding Drive sync failed during startup: %s", exc)
     start_scheduler()

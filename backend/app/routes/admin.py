@@ -66,7 +66,8 @@ from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.forklift_notifications import (
-    INSPECTION_SCOPE, WARNING_SCOPE, deliver_forklift_notifications, queue_vehicle_warning,
+    INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
+    deliver_forklift_notifications, queue_vehicle_warning,
 )
 
 
@@ -1294,7 +1295,7 @@ def list_forklift_notifications(
 ):
     rows = session.exec(select(NotificationDelivery, NotificationBatch).join(
         NotificationBatch, NotificationDelivery.batch_id == NotificationBatch.id,
-    ).where(NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE]))
+    ).where(NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE, INSPECTION_REMINDER_SCOPE]))
         .order_by(NotificationDelivery.id.desc()).limit(50)).all()
     return [{"recipient": (session.get(Employee, delivery.employee_id).name
                            if delivery.employee_id and session.get(Employee, delivery.employee_id) else "-"),

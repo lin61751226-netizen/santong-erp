@@ -449,19 +449,27 @@ async def _handle_image_message(
         await line_service.reply_text(reply_token, "找不到圖片內容，請重新傳送一次。")
         return
 
+    assignment = find_assignment_for_employee(session, employee.id)
+    member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+    site = None
+    if assignment:
+        site = session.get(Worksite, assignment.site_id)
+    else:
+        site = get_today_arrival_site(session, employee.id)
+        if not site and employee.home_site_id:
+            site = session.get(Worksite, employee.home_site_id)
+
     try:
         upload = await google_drive_worklog_service.upload_line_photo(
             message_id=message_id,
             employee_name=employee.name,
             happened_at=_event_datetime(event),
+            site_name=site.name if site else None,
         )
     except (GoogleDriveWorklogError, LinePlatformError) as exc:
         await line_service.reply_text(reply_token, f"已收到照片，但上傳 Google 雲端硬碟失敗：{exc}")
         return
 
-    assignment = find_assignment_for_employee(session, employee.id)
-    member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
-    site = None
     if assignment:
         site = session.get(Worksite, assignment.site_id)
         report_photos = list(assignment.report_photos or [])

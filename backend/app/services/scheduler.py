@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.db import session_scope
 from app.models import AssignmentMember, Employee, ForkliftInspection, NotificationCategory, WorkAssignment, Worksite
 from app.services.line import _build_schedule_summary, line_service, notify_employees
-from app.services.forklift_notifications import process_forklift_alerts
+from app.services.forklift_notifications import deliver_forklift_notifications, process_forklift_alerts, queue_inspection_reminders
 from app.services.forklift_service import local_today
 
 
@@ -56,31 +56,15 @@ async def push_daily_assignments() -> None:
 
 
 async def push_forklift_inspection_reminder() -> None:
-    """每日上班時間提醒員工完成堆高機點檢。"""
+    """每日上班時間提醒尚未完成點檢的堆高機操作員。"""
     with session_scope() as session:
-        employees = session.exec(
-            select(Employee).where(Employee.status == "active", Employee.line_user_id.isnot(None))
-        ).all()
+        queue_inspection_reminders(session)
+        await deliver_forklift_notifications(session)
 
-        today = local_today()
-        for employee in employees:
-            existing = session.exec(
-                select(ForkliftInspection).where(
-                    ForkliftInspection.operator_id == employee.id,
-                    ForkliftInspection.inspection_date == today,
-                )
-            ).first()
-            if existing:
-                continue
 
-            reminder = (
-                "🚜 堆高機每日點檢提醒\n\n"
-                f"{employee.name} 早安！\n\n"
-                "今日尚未完成堆高機點檢，\n"
-                "請點 Rich Menu 的「堆高機點檢」完成點檢。\n\n"
-                "點檢完成後再開始工作，確保行車安全。"
-            )
-            await line_service.push_text(employee.line_user_id, reminder)
+async def backup_database_snapshot() -> None:
+    from app.services.google_drive import google_drive_worklog_service
+    await google_drive_worklog_service.backup_database()
 
 
 async def push_forklift_alerts() -> None:
@@ -125,6 +109,15 @@ def start_scheduler() -> None:
         minutes=10,
         id="service-wake-up",
         replace_existing=True,
+    )
+    scheduler.add_job(
+        backup_database_snapshot,
+        "interval",
+        minutes=10,
+        id="database-drive-backup",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
     )
     scheduler.start()
 

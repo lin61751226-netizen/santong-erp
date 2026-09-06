@@ -18,12 +18,12 @@ from app.deps import get_current_actor
 from app.main import app
 from app.models import (
     DeliveryStatus, Employee, Forklift, ForkliftInspection, ForkliftStatus,
-    NotificationDelivery, Role, Worksite,
+    NotificationBatch, NotificationDelivery, Role, Worksite,
 )
 from app.services import forklift_service as fs
 from app.services.bootstrap import _ensure_forklifts
 from app.services.forklift_notifications import (
-    deliver_forklift_notifications, queue_inspection_alert, queue_vehicle_warning,
+    deliver_forklift_notifications, queue_inspection_alert, queue_inspection_reminders, queue_vehicle_warning,
 )
 from app.services.line import line_service, process_webhook_event
 from app.services.line_platform import build_default_rich_menu_payloads, generate_default_rich_menu_images
@@ -196,6 +196,22 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.vehicle.current_operator_id, self.driver.id)
         self.assertEqual(self.vehicle.status, ForkliftStatus.inactive)
         self.assertEqual(self.vehicle.next_maintenance_date, date(2026, 10, 1))
+
+    def test_uninspected_operator_reminder_is_queued_once_and_delivered(self):
+        self.driver.title = "堆高機司機"
+        self.session.add(self.driver)
+        self.session.commit()
+        queue_inspection_reminders(self.session)
+        queue_inspection_reminders(self.session)
+        batches = self.session.exec(select(NotificationBatch).where(
+            NotificationBatch.target_scope == "forklift_inspection_reminder",
+        )).all()
+        self.assertEqual(len(batches), 1)
+        deliveries = self.session.exec(select(NotificationDelivery).where(
+            NotificationDelivery.batch_id == batches[0].id,
+        )).all()
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].employee_id, self.driver.id)
 
     def api_client(self):
         app.dependency_overrides[get_session] = lambda: self.session
