@@ -72,6 +72,22 @@ def _apply_lightweight_migrations() -> None:
                 for statement in statements:
                     connection.execute(text(statement))
 
+    if "worksite" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("worksite")}
+        statements = []
+        if "address" not in columns:
+            statements.append("ALTER TABLE worksite ADD COLUMN address VARCHAR")
+        if "latitude" not in columns:
+            statements.append("ALTER TABLE worksite ADD COLUMN latitude FLOAT")
+        if "longitude" not in columns:
+            statements.append("ALTER TABLE worksite ADD COLUMN longitude FLOAT")
+        if "geofence_radius_m" not in columns:
+            statements.append("ALTER TABLE worksite ADD COLUMN geofence_radius_m INTEGER")
+        if statements:
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.execute(text(statement))
+
     # photo_upload_log.employee_id 改為可空：未綁定員工的 LINE 帳號上傳也要留下記錄。
     # PostgreSQL 需 DROP NOT NULL；SQLite 不強制既有 NOT NULL 且重建表成本高，故略過。
     if "photouploadlog" in table_names:

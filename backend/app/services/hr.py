@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 import re
+from math import atan2, cos, radians, sin, sqrt
 
 from sqlmodel import Session, select
 
@@ -302,6 +303,32 @@ def _append_note(existing: Optional[str], new_note: str) -> str:
     return f"{existing}；{new_note}"
 
 
+def _distance_meters(latitude: float, longitude: float, site: Worksite) -> float:
+    """以 Haversine 公式估算打卡位置與工地中心的距離。"""
+    earth_radius_m = 6_371_000
+    lat1, lat2 = radians(latitude), radians(site.latitude)
+    delta_lat = radians(site.latitude - latitude)
+    delta_lon = radians(site.longitude - longitude)
+    value = sin(delta_lat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(delta_lon / 2) ** 2
+    return earth_radius_m * 2 * atan2(sqrt(value), sqrt(max(0, 1 - value)))
+
+
+def _location_anomaly(site: Worksite | None, latitude: Optional[float], longitude: Optional[float]) -> str | None:
+    if (
+        site is None
+        or site.latitude is None
+        or site.longitude is None
+        or site.geofence_radius_m is None
+        or latitude is None
+        or longitude is None
+    ):
+        return None
+    distance = _distance_meters(latitude, longitude, site)
+    if distance <= site.geofence_radius_m:
+        return None
+    return f"定位超出工地範圍（約 {round(distance)} 公尺，允許 {site.geofence_radius_m} 公尺）"
+
+
 def record_attendance_event(
     session: Session,
     employee: Employee,
@@ -312,6 +339,12 @@ def record_attendance_event(
 ) -> AttendanceRecordResult:
     assignment = find_assignment_for_employee(session, employee.id, date.today())
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+    site = session.get(Worksite, assignment.site_id) if assignment else (
+        session.get(Worksite, employee.home_site_id) if employee.home_site_id else None
+    )
+    location_anomaly = _location_anomaly(site, latitude, longitude)
+    if location_anomaly:
+        note = _append_note(note, location_anomaly)
     event = AttendanceEvent(
         employee_id=employee.id,
         site_id=assignment.site_id if assignment else employee.home_site_id,
@@ -336,6 +369,8 @@ def record_attendance_event(
     session.refresh(event)
 
     anomalies: list[str] = []
+    if location_anomaly:
+        anomalies.append(location_anomaly)
     if assignment and assignment.work_date.weekday() == 6:
         anomalies.append("週日出勤，需另計加班或換休。")
     if not assignment:
@@ -391,6 +426,8 @@ def build_attendance_rows(
             anomalies.append("請假衝突")
         if latest_event:
             summary_status = latest_event.event_type
+            if latest_event.note and "定位超出工地範圍" in latest_event.note:
+                anomalies.append("定位超出工地範圍")
         if assignment and assignment.work_date < now.date() and not latest_event and not leave:
             anomalies.append("未打卡")
         if assignment and assignment.work_date == now.date() and assignment.start_time:
@@ -416,7 +453,11 @@ def build_attendance_rows(
                 "last_event_at": latest_event.happened_at.isoformat() if latest_event else None,
                 "latitude": latest_event.latitude if latest_event else None,
                 "longitude": latest_event.longitude if latest_event else None,
-                "note": member.note if member and member.note else (leave.policy_note if leave else None),
+                "note": (
+                    member.note if member and member.note
+                    else latest_event.note if latest_event and latest_event.note and "定位超出工地範圍" in latest_event.note
+                    else leave.policy_note if leave else None
+                ),
                 "anomalies": sorted(set(anomalies)),
                 "leave_status": leave.status.value if leave else None,
                 "leave_type": leave.leave_type if leave else None,

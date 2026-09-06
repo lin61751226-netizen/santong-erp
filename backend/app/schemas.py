@@ -47,6 +47,17 @@ class ForkliftCreate(BaseModel):
 class WorksiteCreate(BaseModel):
     code: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=100)
+    address: Optional[str] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    geofence_radius_m: Optional[int] = Field(default=None, ge=10, le=10000)
+
+
+class WorksiteLocationUpdate(BaseModel):
+    address: Optional[str] = None
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    geofence_radius_m: Optional[int] = Field(default=None, ge=10, le=10000)
 
 
 class MasterOptionCreate(BaseModel):

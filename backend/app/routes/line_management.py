@@ -28,8 +28,10 @@ page_router = APIRouter(tags=["line-pages"])
 
 
 @api_router.get("/richmenu/debug")
-async def debug_rich_menu():
-    """公開診斷端點：逐步測試 Rich Menu 佈署過程，不需登入（臨時排查用）"""
+async def debug_rich_menu(
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """管理者專用的 Rich Menu 診斷工具。"""
     from app.services.line_platform import (
         generate_default_rich_menu_images,
         build_default_rich_menu_payloads,
@@ -164,8 +166,9 @@ async def debug_rich_menu():
 @api_router.get("/richmenu/relink-users")
 async def relink_users_rich_menu(
     session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
-    """公開端點：重新佈署 Rich Menu 並把所有員工綁定到最新選單（臨時排查用）"""
+    """重新佈署 Rich Menu 並把所有員工連結到最新選單。"""
     import traceback
     # 直接重新佈署，取得剛建立的最新 Rich Menu ID
     base_url = settings.public_base_url.rstrip("/")
@@ -218,8 +221,11 @@ async def relink_users_rich_menu(
 
 
 @api_router.get("/richmenu/cleanup")
-async def cleanup_old_rich_menus(keep_latest: int = 2):
-    """公開端點：清理舊 Rich Menu，每個名稱只保留最新 keep_latest 個"""
+async def cleanup_old_rich_menus(
+    keep_latest: int = 2,
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """管理者專用的舊 Rich Menu 清理工具。"""
     from collections import defaultdict
     menus = await line_platform_service.list_rich_menus()
     by_name = defaultdict(list)

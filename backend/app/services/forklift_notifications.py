@@ -178,7 +178,6 @@ async def _deliver_pending(session: Session) -> None:
 
 
 async def process_forklift_alerts(session: Session) -> None:
-    queue_inspection_reminders(session)
     for forklift in session.exec(select(Forklift).where(Forklift.status != "inactive")).all():
         queue_vehicle_warning(session, forklift)
     await deliver_forklift_notifications(session)

@@ -177,16 +177,36 @@
         <form id="createWorksiteForm" class="form-grid">
           <div><label for="newWorksiteCode">工地代碼</label><input id="newWorksiteCode" required placeholder="例如：57"></div>
           <div><label for="newWorksiteName">工地名稱</label><input id="newWorksiteName" required placeholder="例如：新竹寶山4"></div>
+          <div><label for="newWorksiteAddress">地址（選填）</label><input id="newWorksiteAddress" placeholder="可貼上工地地址"></div>
+          <div><label for="newWorksiteLatitude">緯度（選填）</label><input id="newWorksiteLatitude" type="number" step="any" min="-90" max="90" placeholder="例如：24.8012"></div>
+          <div><label for="newWorksiteLongitude">經度（選填）</label><input id="newWorksiteLongitude" type="number" step="any" min="-180" max="180" placeholder="例如：120.9956"></div>
+          <div><label for="newWorksiteRadius">GPS 允許半徑（公尺）</label><input id="newWorksiteRadius" type="number" min="10" max="10000" step="1" placeholder="例如：150"></div>
           <div class="full"><button type="submit">新增工地</button></div>
         </form>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>代碼</th><th>工地名稱</th><th>操作</th></tr></thead>
+          <thead><tr><th>代碼</th><th>工地名稱</th><th>地址</th><th>緯度</th><th>經度</th><th>半徑（公尺）</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="worksiteRows"></tbody>
         </table>
       </div>
       <p id="worksiteFeedback" class="notice" role="status" aria-live="polite">新增或刪除工地後，相關下拉選單會自動更新。</p>
+    </section>
+
+    <section class="panel span-12" data-workspace="fleet">
+      <div class="panel-header">
+        <div>
+          <h2>管理操作紀錄</h2>
+          <p class="muted">保存新增、修改、停用、恢復與密碼重設等後台操作，方便追查異動。</p>
+        </div>
+        <button type="button" class="button-secondary" onclick="loadAuditLogs()">重新整理</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>時間</th><th>操作人</th><th>項目</th><th>內容</th></tr></thead>
+          <tbody id="auditLogRows"></tbody>
+        </table>
+      </div>
     </section>
 
     <section class="panel span-12" data-workspace="fleet">
@@ -995,6 +1015,7 @@
         loadAttendanceExceptions(),
         loadLineStatus(),
         loadWorksites(),
+        loadAuditLogs(),
         loadForklifts(),
         loadForkliftInspections(),
         loadForkliftNotifications(),
@@ -1326,23 +1347,76 @@
     async function loadWorksites() {
       const rows = document.getElementById("worksiteRows");
       const canManage = ["owner", "admin"].includes(state.actor?.role);
-      rows.innerHTML = state.worksites.length ? state.worksites.map((site) => `
+      const sites = await api("/api/worksites?include_inactive=true");
+      rows.innerHTML = sites.length ? sites.map((site) => `
         <tr>
           <td>${escapeHtml(site.code || "-")}</td>
           <td>${escapeHtml(site.name)}</td>
-          <td><button type="button" class="button-danger button-compact" onclick="deleteWorksite(${site.id}, '${escapeAttr(site.name)}')" ${canManage ? "" : "disabled"}>刪除</button></td>
+          <td><input id="worksite-address-${site.id}" class="table-input" value="${escapeAttr(site.address || "")}" ${canManage && site.is_active ? "" : "disabled"}></td>
+          <td><input id="worksite-latitude-${site.id}" class="table-input" type="number" step="any" min="-90" max="90" value="${site.latitude ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
+          <td><input id="worksite-longitude-${site.id}" class="table-input" type="number" step="any" min="-180" max="180" value="${site.longitude ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
+          <td><input id="worksite-radius-${site.id}" class="table-input" type="number" min="10" max="10000" step="1" value="${site.geofence_radius_m ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
+          <td>${site.is_active ? '<span class="pill">啟用</span>' : '<span class="pill">已停用</span>'}</td>
+          <td class="button-row">
+            ${site.is_active
+              ? `<button type="button" class="button-secondary button-compact" onclick="saveWorksiteLocation(${site.id}, this)" ${canManage ? "" : "disabled"}>儲存</button><button type="button" class="button-danger button-compact" onclick="deleteWorksite(${site.id})" ${canManage ? "" : "disabled"}>刪除</button>`
+              : `<button type="button" class="button-secondary button-compact" onclick="restoreWorksite(${site.id})" ${canManage ? "" : "disabled"}>恢復</button>`}
+          </td>
         </tr>
-      `).join("") : '<tr><td colspan="3">目前沒有啟用中的工地</td></tr>';
+      `).join("") : '<tr><td colspan="8">目前沒有工地資料</td></tr>';
     }
 
-    async function deleteWorksite(id, name) {
+    async function deleteWorksite(id) {
+      const site = state.worksites.find((item) => Number(item.id) === Number(id));
+      const name = site?.name || "此工地";
       if (!window.confirm(`確定要刪除工地「${name}」嗎？系統會停用工地並保留歷史資料。`)) return;
       try {
         const data = await api(`/api/worksites/${id}`, { method: "DELETE" });
         document.getElementById("worksiteFeedback").textContent = data.message;
         await loadMeta();
-        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard()]);
+        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard(), loadAuditLogs()]);
       } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
+    }
+
+    async function restoreWorksite(id) {
+      try {
+        const data = await api(`/api/worksites/${id}/restore`, { method: "POST" });
+        document.getElementById("worksiteFeedback").textContent = data.message;
+        await loadMeta();
+        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard(), loadAuditLogs()]);
+      } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
+    }
+
+    async function saveWorksiteLocation(id, button) {
+      button.disabled = true;
+      try {
+        const valueOrNull = (elementId) => {
+          const value = document.getElementById(elementId).value.trim();
+          return value === "" ? null : Number(value);
+        };
+        const address = document.getElementById(`worksite-address-${id}`).value.trim();
+        const data = await api(`/api/worksites/${id}/location`, { method: "PUT", body: JSON.stringify({
+          address: address || null,
+          latitude: valueOrNull(`worksite-latitude-${id}`),
+          longitude: valueOrNull(`worksite-longitude-${id}`),
+          geofence_radius_m: valueOrNull(`worksite-radius-${id}`),
+        })});
+        document.getElementById("worksiteFeedback").textContent = data.message;
+        await loadMeta();
+        await Promise.all([loadWorksites(), loadAuditLogs()]);
+      } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
+      finally { button.disabled = false; }
+    }
+
+    async function loadAuditLogs() {
+      const rows = document.getElementById("auditLogRows");
+      if (!rows) return;
+      try {
+        const data = await api("/api/audit-logs?limit=100");
+        rows.innerHTML = data.length ? data.map((row) => `
+          <tr><td>${formatTW(row.created_at)}</td><td>${escapeHtml(row.actor_name || row.actor_code)}</td><td>${escapeHtml(row.entity_type)} / ${escapeHtml(row.action)}</td><td>${escapeHtml(row.summary)}</td></tr>
+        `).join("") : '<tr><td colspan="4">目前沒有管理操作紀錄</td></tr>';
+      } catch (error) { rows.innerHTML = `<tr><td colspan="4">${escapeHtml(error.message)}</td></tr>`; }
     }
 
     document.getElementById("createWorksiteForm").addEventListener("submit", async (event) => {
@@ -1351,11 +1425,15 @@
         const data = await api("/api/worksites", { method: "POST", body: JSON.stringify({
           code: document.getElementById("newWorksiteCode").value,
           name: document.getElementById("newWorksiteName").value,
+          address: document.getElementById("newWorksiteAddress").value || null,
+          latitude: document.getElementById("newWorksiteLatitude").value ? Number(document.getElementById("newWorksiteLatitude").value) : null,
+          longitude: document.getElementById("newWorksiteLongitude").value ? Number(document.getElementById("newWorksiteLongitude").value) : null,
+          geofence_radius_m: document.getElementById("newWorksiteRadius").value ? Number(document.getElementById("newWorksiteRadius").value) : null,
         })});
         document.getElementById("worksiteFeedback").textContent = `${data.message}：${data.worksite.name}`;
         event.target.reset();
         await loadMeta();
-        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard()]);
+        await Promise.all([loadWorksites(), loadForklifts(), loadDashboard(), loadAuditLogs()]);
       } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
     });
 

@@ -95,6 +95,10 @@ class Worksite(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     code: str = Field(index=True, unique=True)
     name: str = Field(index=True, unique=True)
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    geofence_radius_m: Optional[int] = None
     is_active: bool = Field(default=True)
 
 
@@ -126,6 +130,18 @@ class Employee(SQLModel, table=True):
     session_expires_at: Optional[datetime] = None
     assigned_sites: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     status: EmployeeStatus = Field(default=EmployeeStatus.active)
+
+
+class AdminAuditLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    actor_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    actor_code: str = Field(index=True)
+    actor_name: Optional[str] = None
+    action: str = Field(index=True)
+    entity_type: str = Field(index=True)
+    entity_id: Optional[int] = None
+    summary: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class WorkAssignment(SQLModel, table=True):

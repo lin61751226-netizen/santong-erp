@@ -17,7 +17,7 @@ from app.routes.line_management import page_router as line_management_page_route
 from app.routes.line_webhook import router as line_router
 from app.services.bootstrap import seed_demo_data
 from app.services.google_drive import google_drive_worklog_service
-from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.scheduler import push_forklift_inspection_reminder, start_scheduler, stop_scheduler
 from app.services.line_platform import deploy_default_rich_menus
 
 
@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("LINE binding Drive sync failed during startup: %s", exc)
     start_scheduler()
+    # 服務若在 08:30 後才被 Render 喚醒，立即補跑一次；通知批次本身負責同日去重。
+    await push_forklift_inspection_reminder()
 
     # 服務啟動時自動佈署 Rich Menu（確保按鈕配置為最新版本）
     if settings.environment == "production" and settings.line_channel_access_token:

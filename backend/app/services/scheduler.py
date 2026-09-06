@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -56,7 +57,10 @@ async def push_daily_assignments() -> None:
 
 
 async def push_forklift_inspection_reminder() -> None:
-    """每日上班時間提醒尚未完成點檢的堆高機操作員。"""
+    """08:30 後補發當日未點檢提醒；同日已有批次時不重複發送。"""
+    now = datetime.now(ZoneInfo(settings.timezone))
+    if (now.hour, now.minute) < (8, 30):
+        return
     with session_scope() as session:
         queue_inspection_reminders(session)
         await deliver_forklift_notifications(session)
@@ -97,10 +101,13 @@ def start_scheduler() -> None:
     scheduler.add_job(
         push_forklift_inspection_reminder,
         "cron",
-        hour=8,
-        minute=30,
+        hour="8-23",
+        minute="*/10",
         id="forklift-inspection-reminder",
         replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
     )
     # 每 10 分鐘喚醒服務，避免 Render free plan 休眠
     scheduler.add_job(

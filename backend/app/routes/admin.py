@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.deps import ensure_employee_scope, ensure_site_scope, get_current_actor, require_roles
 from app.models import (
     AssignmentMember,
+    AdminAuditLog,
     Employee,
     EmployeeStatus,
     Forklift,
@@ -51,6 +52,7 @@ from app.schemas import (
     NotificationCreate,
     ReassignmentApplyRequest,
     SimulateLineMessage,
+    WorksiteLocationUpdate,
 )
 from app.services.hr import (
     apply_reassignment_to_assignment,
@@ -120,6 +122,38 @@ def _normalize_assigned_sites(site_names: list[str]) -> list[str]:
         if canonical not in normalized:
             normalized.append(canonical)
     return normalized
+
+
+def _validate_worksite_location(
+    latitude: Optional[float],
+    longitude: Optional[float],
+    radius_m: Optional[int],
+) -> None:
+    if (latitude is None) != (longitude is None):
+        raise HTTPException(status_code=400, detail="工地座標必須同時填寫緯度與經度")
+    if radius_m is not None and latitude is None:
+        raise HTTPException(status_code=400, detail="設定 GPS 半徑前請先填寫工地緯度與經度")
+
+
+def _write_admin_audit(
+    session: Session,
+    actor: Employee,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: Optional[int],
+    summary: str,
+) -> None:
+    session.add(AdminAuditLog(
+        actor_id=actor.id,
+        actor_code=actor.employee_code,
+        actor_name=actor.name,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        summary=summary,
+    ))
+    session.commit()
 
 
 def _serialize_employee(worksites: dict[int, Worksite], item: Employee) -> dict:
@@ -300,7 +334,18 @@ def get_options(
             }
             for item in employees
         ],
-        "worksites": [{"id": item.id, "name": item.name} for item in worksites],
+        "worksites": [
+            {
+                "id": item.id,
+                "code": item.code,
+                "name": item.name,
+                "address": item.address,
+                "latitude": item.latitude,
+                "longitude": item.longitude,
+                "geofence_radius_m": item.geofence_radius_m,
+            }
+            for item in worksites
+        ],
         "work_item_options": _active_option_labels(session, "work_item"),
         "equipment_options": _active_option_labels(session, "equipment"),
         "forklift_options": [
@@ -322,6 +367,34 @@ def get_options(
     }
 
 
+@router.get("/worksites")
+def list_worksites(
+    include_inactive: bool = Query(default=False),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    if include_inactive and actor.role not in {Role.owner, Role.admin}:
+        raise HTTPException(status_code=403, detail="只有 owner/admin 可查看停用工地")
+    statement = select(Worksite)
+    if not include_inactive:
+        statement = statement.where(Worksite.is_active.is_(True))
+    if actor.role == Role.site_manager and actor.home_site_id:
+        statement = statement.where(Worksite.id == actor.home_site_id)
+    return [
+        {
+            "id": site.id,
+            "code": site.code,
+            "name": site.name,
+            "address": site.address,
+            "latitude": site.latitude,
+            "longitude": site.longitude,
+            "geofence_radius_m": site.geofence_radius_m,
+            "is_active": site.is_active,
+        }
+        for site in session.exec(statement.order_by(Worksite.name)).all()
+    ]
+
+
 @router.post("/worksites", status_code=status.HTTP_201_CREATED)
 def create_worksite(
     payload: WorksiteCreate,
@@ -336,10 +409,23 @@ def create_worksite(
         raise HTTPException(status_code=409, detail="工地代碼已存在")
     if session.exec(select(Worksite).where(Worksite.name == name)).first():
         raise HTTPException(status_code=409, detail="工地名稱已存在")
-    worksite = Worksite(code=code, name=name, is_active=True)
+    _validate_worksite_location(payload.latitude, payload.longitude, payload.geofence_radius_m)
+    worksite = Worksite(
+        code=code,
+        name=name,
+        address=(payload.address or "").strip() or None,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        geofence_radius_m=payload.geofence_radius_m,
+        is_active=True,
+    )
     session.add(worksite)
     session.commit()
     session.refresh(worksite)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="worksite", entity_id=worksite.id,
+        summary=f"新增工地：{worksite.code}｜{worksite.name}",
+    )
     return {"message": "工地已新增", "worksite": {"id": worksite.id, "code": worksite.code, "name": worksite.name}}
 
 
@@ -356,7 +442,61 @@ def delete_worksite(
     worksite.is_active = False
     session.add(worksite)
     session.commit()
+    _write_admin_audit(
+        session, actor, action="deactivate", entity_type="worksite", entity_id=worksite.id,
+        summary=f"停用工地：{worksite.code}｜{worksite.name}",
+    )
     return {"message": "工地已刪除（停用），歷史資料已保留", "id": site_id}
+
+
+@router.post("/worksites/{site_id}/restore")
+def restore_worksite(
+    site_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    worksite = session.get(Worksite, site_id)
+    if not worksite:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    if worksite.is_active:
+        raise HTTPException(status_code=400, detail="此工地目前已啟用")
+    worksite.is_active = True
+    session.add(worksite)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="restore", entity_type="worksite", entity_id=worksite.id,
+        summary=f"恢復工地：{worksite.code}｜{worksite.name}",
+    )
+    return {"message": "工地已恢復", "id": site_id}
+
+
+@router.put("/worksites/{site_id}/location")
+def update_worksite_location(
+    site_id: int,
+    payload: WorksiteLocationUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    worksite = session.get(Worksite, site_id)
+    if not worksite:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    data = payload.model_dump(exclude_unset=True)
+    latitude = data.get("latitude", worksite.latitude)
+    longitude = data.get("longitude", worksite.longitude)
+    radius_m = data.get("geofence_radius_m", worksite.geofence_radius_m)
+    _validate_worksite_location(latitude, longitude, radius_m)
+    for key, value in data.items():
+        setattr(worksite, key, value.strip() or None if key == "address" and isinstance(value, str) else value)
+    session.add(worksite)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="update", entity_type="worksite", entity_id=worksite.id,
+        summary=(
+            f"更新工地定位：{worksite.code}｜{worksite.name}，"
+            f"座標 {worksite.latitude},{worksite.longitude}，半徑 {worksite.geofence_radius_m or '-'} 公尺"
+        ),
+    )
+    return {"message": "工地位置已儲存", "id": site_id}
 
 
 @router.get("/master-options")
@@ -519,6 +659,10 @@ def create_employee(
     session.add(employee)
     session.commit()
     session.refresh(employee)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="employee", entity_id=employee.id,
+        summary=f"新增員工：{employee.employee_code}｜{employee.name}",
+    )
     worksites_by_id = {item.id: item for item in session.exec(select(Worksite)).all()}
     return {"message": "員工已新增", "employee": _serialize_employee(worksites_by_id, employee)}
 
@@ -550,6 +694,10 @@ def update_employee(
     session.add(employee)
     session.commit()
     session.refresh(employee)
+    _write_admin_audit(
+        session, actor, action="update", entity_type="employee", entity_id=employee.id,
+        summary=f"更新員工資料：{employee.employee_code}｜{employee.name}",
+    )
 
     worksites_by_id = {item.id: item for item in session.exec(select(Worksite)).all()}
     return {
@@ -994,6 +1142,32 @@ def list_login_logs(
     ]
 
 
+@router.get("/audit-logs")
+def list_admin_audit_logs(
+    entity_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    statement = select(AdminAuditLog)
+    if entity_type:
+        statement = statement.where(AdminAuditLog.entity_type == entity_type)
+    rows = session.exec(statement.order_by(AdminAuditLog.created_at.desc()).limit(limit)).all()
+    return [
+        {
+            "id": row.id,
+            "actor_code": row.actor_code,
+            "actor_name": row.actor_name,
+            "action": row.action,
+            "entity_type": row.entity_type,
+            "entity_id": row.entity_id,
+            "summary": row.summary,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
 @router.put("/employees/{employee_code}/status")
 def update_employee_status(
     employee_code: str,
@@ -1012,6 +1186,10 @@ def update_employee_status(
     session.add(employee)
     session.commit()
     session.refresh(employee)
+    _write_admin_audit(
+        session, actor, action="status", entity_type="employee", entity_id=employee.id,
+        summary=f"更新員工狀態：{employee.employee_code}｜{new_status}",
+    )
     return {
         "message": f"員工狀態已更新為 {new_status}",
         "employee_code": employee.employee_code,
@@ -1039,6 +1217,10 @@ def reset_employee_password(
     employee.locked_until = None
     session.add(employee)
     session.commit()
+    _write_admin_audit(
+        session, actor, action="reset_password", entity_type="employee", entity_id=employee.id,
+        summary=f"重設員工密碼：{employee.employee_code}",
+    )
     return {
         "message": "密碼已重設，請將新密碼告知員工",
         "employee_code": employee.employee_code,
@@ -1139,6 +1321,10 @@ def create_forklift(
     session.add(forklift)
     session.commit()
     session.refresh(forklift)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="forklift", entity_id=forklift.id,
+        summary=f"新增堆高機：{forklift.forklift_code}",
+    )
     return {"message": "堆高機已新增", "id": forklift.id, "forklift_code": forklift.forklift_code}
 
 
@@ -1299,6 +1485,10 @@ def update_forklift_status(
     session.add(forklift)
     session.commit()
     session.refresh(forklift)
+    _write_admin_audit(
+        session, actor, action="update_status", entity_type="forklift", entity_id=forklift.id,
+        summary=f"更新堆高機狀態：{forklift.forklift_code}｜{forklift.status}",
+    )
     return {
         "id": forklift.id,
         "forklift_code": forklift.forklift_code,
@@ -1333,6 +1523,13 @@ async def update_forklift_care(
     session.commit()
     queue_vehicle_warning(session, forklift)
     await deliver_forklift_notifications(session)
+    _write_admin_audit(
+        session, actor, action="update", entity_type="forklift", entity_id=forklift.id,
+        summary=(
+            f"更新堆高機：{forklift.forklift_code}，工地 {forklift.current_site_id or '-'}，"
+            f"油量 {forklift.fuel_level if forklift.fuel_level is not None else '-'}%"
+        ),
+    )
     return {"message": "工地、油量與保養日期已儲存", "warnings": check_forklift_warnings(session, forklift.id)}
 
 

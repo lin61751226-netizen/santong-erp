@@ -17,11 +17,12 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
 from app.models import (
-    DeliveryStatus, Employee, Forklift, ForkliftInspection, ForkliftStatus,
+    AdminAuditLog, DeliveryStatus, Employee, Forklift, ForkliftInspection, ForkliftStatus,
     NotificationBatch, NotificationDelivery, Role, Worksite,
 )
 from app.services import forklift_service as fs
 from app.services.bootstrap import _ensure_forklifts
+from app.services.hr import record_attendance_event
 from app.services.forklift_notifications import (
     deliver_forklift_notifications, queue_inspection_alert, queue_inspection_reminders, queue_vehicle_warning,
 )
@@ -269,6 +270,41 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.get("/api/forklift-inspections/export?month=2026-09").status_code, 401)
         self.assertEqual(client.put(path, json={"fuel_level": 20}).status_code, 401)
         self.assertEqual(client.get("/api/forklift-notifications").status_code, 401)
+
+    def test_worksite_location_and_lifecycle_are_audited(self):
+        client = self.api_client()
+        created = client.post("/api/worksites", json={
+            "code": "GPS-1", "name": "GPS 測試工地", "address": "測試路 1 號",
+            "latitude": 24.8000, "longitude": 120.9900, "geofence_radius_m": 120,
+        })
+        self.assertEqual(created.status_code, 201)
+        site_id = created.json()["worksite"]["id"]
+        location = client.put(f"/api/worksites/{site_id}/location", json={
+            "latitude": 24.8010, "longitude": 120.9910, "geofence_radius_m": 180,
+        })
+        self.assertEqual(location.status_code, 200)
+        self.assertEqual(self.session.get(Worksite, site_id).geofence_radius_m, 180)
+        self.assertEqual(client.delete(f"/api/worksites/{site_id}").status_code, 200)
+        self.assertFalse(self.session.get(Worksite, site_id).is_active)
+        self.assertEqual(client.post(f"/api/worksites/{site_id}/restore").status_code, 200)
+        self.assertTrue(self.session.get(Worksite, site_id).is_active)
+        audit_rows = self.session.exec(select(AdminAuditLog).where(
+            AdminAuditLog.entity_id == site_id,
+        )).all()
+        self.assertEqual({row.action for row in audit_rows}, {"create", "update", "deactivate", "restore"})
+
+    def test_attendance_outside_configured_site_radius_is_marked(self):
+        self.site.latitude = 24.8000
+        self.site.longitude = 120.9900
+        self.site.geofence_radius_m = 100
+        self.driver.home_site_id = self.site.id
+        self.session.add_all([self.site, self.driver])
+        self.session.commit()
+        result = record_attendance_event(
+            self.session, self.driver, "上班打卡", latitude=24.8100, longitude=120.9900,
+        )
+        self.assertTrue(any("定位超出工地範圍" in item for item in result.anomalies))
+        self.assertIn("定位超出工地範圍", result.event.note)
 
     def test_rich_menu_button_and_bundled_image_agree(self):
         payload = build_default_rich_menu_payloads("https://example.test")["tools"]

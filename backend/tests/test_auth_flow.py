@@ -85,6 +85,15 @@ class AuthFlowTests(unittest.TestCase):
         response = self.client.get("/api/dashboard")
         self.assertEqual(response.status_code, 401)
 
+    def test_rich_menu_maintenance_endpoints_require_login(self) -> None:
+        for path in (
+            "/api/line-management/richmenu/debug",
+            "/api/line-management/richmenu/relink-users",
+            "/api/line-management/richmenu/cleanup",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 401)
+
     def test_must_change_password_blocks_admin_api(self) -> None:
         login_response = self._login()
         cookies = login_response.cookies
