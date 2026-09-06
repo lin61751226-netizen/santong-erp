@@ -93,11 +93,11 @@ def start_scheduler() -> None:
         id="daily-assignment-push",
         replace_existing=True,
     )
-    # 每日早上 7:30 提醒員工完成堆高機點檢
+    # 每日早上 8:30 提醒員工完成堆高機點檢
     scheduler.add_job(
         push_forklift_inspection_reminder,
         "cron",
-        hour=7,
+        hour=8,
         minute=30,
         id="forklift-inspection-reminder",
         replace_existing=True,
