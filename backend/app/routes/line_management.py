@@ -166,9 +166,19 @@ async def relink_users_rich_menu(
     session: Session = Depends(get_session),
 ):
     """公開端點：重新佈署 Rich Menu 並把所有員工綁定到最新選單（臨時排查用）"""
+    import traceback
     # 直接重新佈署，取得剛建立的最新 Rich Menu ID
     base_url = settings.public_base_url.rstrip("/")
-    deploy_result = await deploy_default_rich_menus(base_url)
+    try:
+        deploy_result = await deploy_default_rich_menus(base_url)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "stage": "deploy_default_rich_menus",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc()[-1500:],
+        }
     main_id = deploy_result["main_rich_menu_id"]
     tools_id = deploy_result["tools_rich_menu_id"]
 
