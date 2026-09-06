@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.db import session_scope
 from app.models import AssignmentMember, Employee, ForkliftInspection, NotificationCategory, WorkAssignment, Worksite
 from app.services.line import _build_schedule_summary, line_service, notify_employees
+from app.services.forklift_notifications import process_forklift_alerts
+from app.services.forklift_service import local_today
 
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -60,7 +62,7 @@ async def push_forklift_inspection_reminder() -> None:
             select(Employee).where(Employee.status == "active", Employee.line_user_id.isnot(None))
         ).all()
 
-        today = date.today()
+        today = local_today()
         for employee in employees:
             existing = session.exec(
                 select(ForkliftInspection).where(
@@ -81,9 +83,24 @@ async def push_forklift_inspection_reminder() -> None:
             await line_service.push_text(employee.line_user_id, reminder)
 
 
+async def push_forklift_alerts() -> None:
+    with session_scope() as session:
+        await process_forklift_alerts(session)
+
+
 def start_scheduler() -> None:
     if scheduler.running:
         return
+    scheduler.add_job(
+        push_forklift_alerts,
+        "cron",
+        minute=0,
+        id="forklift-alert-delivery",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
     scheduler.add_job(
         push_daily_assignments,
         "cron",

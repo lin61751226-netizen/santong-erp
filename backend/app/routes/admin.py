@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import csv
+import calendar
 from datetime import date, datetime, timedelta
 from io import StringIO
 from typing import Optional
@@ -24,6 +25,8 @@ from app.models import (
     LoginStatus,
     MeetingRecord,
     NotificationCategory,
+    NotificationBatch,
+    NotificationDelivery,
     PhotoUploadLog,
     Role,
     WorkAssignment,
@@ -32,6 +35,7 @@ from app.models import (
 from app.schemas import (
     AssignmentCreate,
     EmployeeUpdate,
+    ForkliftCareUpdate,
     LeaveDecision,
     LeaveRequestCreate,
     LineRichMenuDeployRequest,
@@ -54,6 +58,10 @@ from app.services.hr import (
 )
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
+from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
+from app.services.forklift_notifications import (
+    INSPECTION_SCOPE, WARNING_SCOPE, deliver_forklift_notifications, queue_vehicle_warning,
+)
 
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -913,13 +921,34 @@ def list_forklifts(
             "operator_name": operator.name if operator else None,
             "fuel_level": f.fuel_level,
             "next_maintenance_date": f.next_maintenance_date.isoformat() if f.next_maintenance_date else None,
+            "warnings": check_forklift_warnings(session, f.id),
         })
     return result
+
+
+def _inspection_range(date_filter, start_date, end_date, month):
+    if month:
+        if date_filter or start_date or end_date:
+            raise HTTPException(status_code=422, detail="月份與日期區間請擇一查詢。")
+        try:
+            year, number = map(int, month.split("-"))
+            start_date = date(year, number, 1)
+            end_date = date(year, number, calendar.monthrange(year, number)[1])
+        except ValueError:
+            raise HTTPException(status_code=422, detail="月份格式必須為 YYYY-MM。")
+    if date_filter:
+        start_date = end_date = date_filter
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(status_code=422, detail="開始日期不可晚於結束日期。")
+    return start_date, end_date
 
 
 @router.get("/forklift-inspections")
 def list_forklift_inspections(
     date_filter: Optional[date] = Query(default=None),
+    month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
     site_id: Optional[int] = Query(default=None),
     forklift_id: Optional[int] = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
@@ -927,8 +956,11 @@ def list_forklift_inspections(
     actor: Employee = Depends(get_current_actor),
 ):
     statement = select(ForkliftInspection)
-    if date_filter:
-        statement = statement.where(ForkliftInspection.inspection_date == date_filter)
+    start_date, end_date = _inspection_range(date_filter, start_date, end_date, month)
+    if start_date:
+        statement = statement.where(ForkliftInspection.inspection_date >= start_date)
+    if end_date:
+        statement = statement.where(ForkliftInspection.inspection_date <= end_date)
     if site_id:
         statement = statement.where(ForkliftInspection.site_id == site_id)
     if forklift_id:
@@ -951,6 +983,9 @@ def list_forklift_inspections(
             "site_name": site.name if site else None,
             "inspection_date": insp.inspection_date.isoformat(),
             "all_passed": insp.all_passed,
+            "inspection_items": insp.inspection_items or {},
+            "abnormal_items": [item["label"] for item in INSPECTION_ITEMS
+                               if (insp.inspection_items or {}).get(item["key"]) is False],
             "notes": insp.notes,
             "created_at": insp.created_at.isoformat() if insp.created_at else None,
         })
@@ -962,11 +997,13 @@ def list_forklift_inspections(
 def export_forklift_inspections_csv(
     start_date: Optional[date] = Query(default=None),
     end_date: Optional[date] = Query(default=None),
+    month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     site_id: Optional[int] = Query(default=None),
     forklift_id: Optional[int] = Query(default=None),
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
+    start_date, end_date = _inspection_range(None, start_date, end_date, month)
     statement = select(ForkliftInspection)
     if start_date:
         statement = statement.where(ForkliftInspection.inspection_date >= start_date)
@@ -984,6 +1021,7 @@ def export_forklift_inspections_csv(
     ).all()
 
     output = StringIO()
+    output.write("\ufeff")
     writer = csv.writer(output)
     writer.writerow([
         "點檢日期", "堆高機編號", "堆高機型號", "操作員", "工地",
@@ -1010,13 +1048,17 @@ def export_forklift_inspections_csv(
             "是" if insp.all_passed else "否",
         ]
         for key in item_keys:
-            result = insp.inspection_items.get(key, True) if insp.inspection_items else True
-            row.append("正常" if result else "異常")
+            result = (insp.inspection_items or {}).get(key)
+            row.append("正常" if result is True else "異常" if result is False else "未記錄")
         row.append(insp.notes or "")
-        writer.writerow(row)
+        # Spreadsheet programs must treat free-text notes as text, not formulas.
+        writer.writerow(["'" + value if isinstance(value, str) and value.lstrip().startswith(
+            ("=", "+", "-", "@", "\t", "\r", "\n")
+        ) else value for value in row])
 
     output.seek(0)
-    filename = f"forklift_inspections_{date.today().isoformat()}.csv"
+    period = month or f"{start_date or 'all'}_{end_date or local_today()}"
+    filename = f"forklift_inspections_{period}.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
@@ -1047,3 +1089,39 @@ def update_forklift_status(
         "status": forklift.status,
         "message": "狀態已更新",
     }
+
+
+@router.put("/forklifts/{forklift_id}/care")
+async def update_forklift_care(
+    forklift_id: int,
+    payload: ForkliftCareUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    forklift = session.get(Forklift, forklift_id)
+    if not forklift:
+        raise HTTPException(status_code=404, detail="找不到堆高機")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(forklift, key, value)
+    forklift.updated_at = datetime.utcnow()
+    session.add(forklift)
+    session.commit()
+    queue_vehicle_warning(session, forklift)
+    await deliver_forklift_notifications(session)
+    return {"message": "油量與保養日期已儲存", "warnings": check_forklift_warnings(session, forklift.id)}
+
+
+@router.get("/forklift-notifications")
+def list_forklift_notifications(
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    rows = session.exec(select(NotificationDelivery, NotificationBatch).join(
+        NotificationBatch, NotificationDelivery.batch_id == NotificationBatch.id,
+    ).where(NotificationBatch.target_scope.in_([INSPECTION_SCOPE, WARNING_SCOPE]))
+        .order_by(NotificationDelivery.id.desc()).limit(50)).all()
+    return [{"recipient": (session.get(Employee, delivery.employee_id).name
+                           if delivery.employee_id and session.get(Employee, delivery.employee_id) else "-"),
+             "status": delivery.delivery_status, "detail": delivery.delivery_message,
+             "content": batch.content, "sent_at": delivery.sent_at.isoformat()}
+            for delivery, batch in rows]

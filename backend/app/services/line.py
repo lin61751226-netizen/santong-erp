@@ -536,7 +536,14 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     text = str(message.get("text", "")).strip()
 
     if source_type in {"group", "room"} and not _is_group_command(text):
-        return
+        active_inspection = forklift_service.get_session(line_user_id)
+        inspection_command = text in {"點檢", "堆高機點檢", "開始點檢", "取消點檢"} or (
+            active_inspection and (
+                text in {"正常", "異常"} or text.startswith(("點檢工地:", "點檢堆高機:"))
+            )
+        )
+        if not inspection_command:
+            return
 
     if text == "開始綁定":
         await _reply_account_link_prompt(session, reply_token, line_user_id, settings.public_base_url)
@@ -570,7 +577,16 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         return
 
     # ---- 堆高機點檢流程 ----
+    if forklift_service.get_session(line_user_id) and (
+        employee.status != "active" or forklift_service.get_session(line_user_id).employee_id != employee.id
+    ):
+        forklift_service.clear_session(line_user_id)
+        await line_service.reply_text(reply_token, "員工身分已異動，請聯絡管理員確認後重新開始點檢。")
+        return
     if text == "點檢" or text == "堆高機點檢" or text == "開始點檢":
+        if employee.status != "active":
+            await line_service.reply_text(reply_token, "此員工帳號已停用，請聯絡管理員。")
+            return
         # 自動查詢今日「到達工地」打卡的工地
         arrival_site = get_today_arrival_site(session, employee.id)
         forklift_service.start_session(line_user_id, employee.id)
@@ -628,7 +644,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             forklift_service.clear_session(line_user_id)
             return
         site = session.get(Worksite, site_id)
-        if not site:
+        if not site or not site.is_active:
             await line_service.reply_text(reply_token, "找不到該工地，請重新輸入「點檢」。")
             forklift_service.clear_session(line_user_id)
             return
@@ -665,7 +681,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             forklift_service.clear_session(line_user_id)
             return
         forklift = session.get(Forklift, forklift_id)
-        if not forklift:
+        if not forklift or forklift.status == "inactive":
             await line_service.reply_text(reply_token, "找不到該堆高機，請重新輸入「點檢」。")
             forklift_service.clear_session(line_user_id)
             return
@@ -695,6 +711,9 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     # 點檢過程中回覆「正常」或「異常」
     session_state = forklift_service.get_session(line_user_id)
     if session_state and session_state.step == "inspecting":
+        if text not in {"正常", "異常"}:
+            await line_service.reply_text(reply_token, "請點選「正常」或「異常」，或輸入「取消點檢」。這則訊息不會列入點檢結果。")
+            return
         is_normal = text == "正常"
         has_next = forklift_service.record_item_result(session_state, is_normal)
         if has_next:
@@ -713,19 +732,21 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
                 }],
             )
         else:
-            inspection = forklift_service.save_inspection(session, session_state)
+            try:
+                inspection = forklift_service.save_inspection(session, session_state)
+            except ValueError as exc:
+                forklift_service.clear_session(line_user_id)
+                await line_service.reply_text(reply_token, str(exc))
+                return
             summary = forklift_service.build_inspection_summary(session, inspection)
             forklift_service.clear_session(line_user_id)
+            from app.services.forklift_notifications import queue_inspection_alert, queue_vehicle_warning
+            # Persist notifications before replying; an expired reply token cannot lose the alert.
+            queue_inspection_alert(session, inspection)
+            queue_vehicle_warning(session, session.get(Forklift, inspection.forklift_id))
+            from app.services.forklift_notifications import deliver_forklift_notifications
+            await deliver_forklift_notifications(session)
             await line_service.reply_text(reply_token, summary)
-
-            # 有異常時自動通知老闆（BOSS001 / owner）
-            if not inspection.all_passed:
-                boss = session.exec(
-                    select(Employee).where(Employee.role == "owner", Employee.status == "active")
-                ).first()
-                if boss and boss.line_user_id:
-                    boss_message = forklift_service.build_boss_notification(session, inspection)
-                    await line_service.push_text(boss.line_user_id, boss_message)
         return
 
     if text == "我的行程":
@@ -848,12 +869,19 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         "工作開始": AckStatus.started,
         "工作完成": AckStatus.completed,
     }
-    if text in action_map and member:
-        member.ack_status = action_map[text]
-        member.last_line_action = text
-        session.add(member)
-        session.commit()
-        await line_service.reply_text(reply_token, f"已記錄：{text}")
+    if text in action_map:
+        if member:
+            member.ack_status = action_map[text]
+            member.last_line_action = text
+            session.add(member)
+            session.commit()
+            await line_service.reply_text(reply_token, f"已記錄：{text}")
+        else:
+            # 今日尚未排定工作時仍回覆確認，不要落到可用指令清單
+            await line_service.reply_text(
+                reply_token,
+                f"已記錄：{text}\n提醒：今日尚未排定工作，已先記錄你的動作回報。",
+            )
         return
 
     if text.startswith("異常回報 "):
@@ -867,25 +895,31 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         await line_service.reply_text(reply_token, f"異常回報已送出：{detail}")
         return
 
-    available_commands = [
-        "開始綁定",
-        "點檢（堆高機每日點檢）",
-        "我的行程",
-        "我的打卡",
-        "我的請假",
-        "請假 事假 2026-07-28 2026-07-28 家中有事",
-        "上班打卡",
-        "下班打卡",
-        "到達工地",
-        "離開工地",
-        "外出",
-        "返回",
-        "加班開始",
-        "加班結束",
-        "已收到",
-        "已到場",
-        "工作開始",
-        "工作完成",
-        "異常回報 現場缺料",
-    ]
-    await line_service.reply_text(reply_token, f"可用指令：{'、'.join(available_commands)}")
+    # 完整可用指令清單：只在員工主動要求（輸入「指令/說明/選單」等）時出現一次，
+    # 其他無法識別的輸入只給一行簡短提示，避免每則訊息都跳一長串清單。
+    help_keywords = {
+        "指令", "可用指令", "說明", "幫助", "help", "功能",
+        "選單", "主選單", "工作工具", "?", "？",
+    }
+    if text.strip() in help_keywords:
+        available_commands = [
+            "開始綁定",
+            "點檢（堆高機每日點檢）",
+            "我的行程 / 我的打卡 / 我的請假",
+            "請假（格式：請假 假別 開始日 結束日 原因）",
+            "上班打卡 / 下班打卡",
+            "到達工地 / 離開工地 / 外出 / 返回",
+            "加班開始 / 加班結束",
+            "已收到 / 已到場 / 工作開始 / 工作完成",
+            "異常回報 現場缺料",
+        ]
+        await line_service.reply_text(
+            reply_token,
+            "可用指令：\n" + "\n".join(f"・{cmd}" for cmd in available_commands),
+        )
+        return
+
+    await line_service.reply_text(
+        reply_token,
+        "沒看懂這個指令，可直接點下方 Rich Menu 按鈕，或輸入「指令」查看可用功能。",
+    )

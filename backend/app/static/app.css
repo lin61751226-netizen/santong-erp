@@ -81,6 +81,14 @@ body {
   display: none;
 }
 
+input[hidden] { display: none; }
+[data-workspace="fleet"] { margin-bottom: 18px; }
+[data-workspace="fleet"] .button-row > input,
+[data-workspace="fleet"] .button-row > select { width: auto; max-width: 100%; }
+[data-workspace="fleet"] table { min-width: 740px; }
+[data-workspace="fleet"] #fleetFeedback { margin: 16px 0 0; }
+.notification-content { white-space: pre-line; min-width: 220px; }
+
 .hero-card,
 .panel {
   background: var(--panel);

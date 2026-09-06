@@ -297,14 +297,8 @@ def _ensure_forklifts(session: Session, worksites: dict[str, Worksite]) -> None:
             if forklift.model != definition["model"]:
                 forklift.model = definition["model"]
                 changed = True
-            if site and forklift.current_site_id != site.id:
-                forklift.current_site_id = site.id
-                changed = True
             if forklift.fuel_level is None:
                 forklift.fuel_level = definition["fuel_level"]
-                changed = True
-            if forklift.status == ForkliftStatus.inactive:
-                forklift.status = ForkliftStatus.available
                 changed = True
             session.add(forklift)
     if changed:

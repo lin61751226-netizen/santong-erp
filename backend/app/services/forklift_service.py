@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.models import Employee, Forklift, ForkliftInspection, Worksite
+from app.core.config import settings
+from app.models import Employee, Forklift, ForkliftInspection, ForkliftStatus, Worksite
 
 
 # 點檢項目定義
@@ -31,6 +33,10 @@ INSPECTION_ITEMS = [
 # 提醒門檻
 LOW_FUEL_THRESHOLD = 30  # 油量低於 30% 提醒
 MAINTENANCE_WARNING_DAYS = 7  # 保養日期 7 天內提醒
+
+
+def local_today() -> date:
+    return datetime.now(ZoneInfo(settings.timezone)).date()
 
 
 @dataclass
@@ -109,12 +115,24 @@ def record_item_result(session_state: InspectionSession, is_normal: bool, notes:
 
 def save_inspection(session: Session, session_state: InspectionSession) -> ForkliftInspection:
     """儲存點檢記錄到資料庫，並自動更新堆高機的目前操作員。"""
+    keys = {item["key"] for item in INSPECTION_ITEMS}
+    if set(session_state.inspection_results) != keys or any(
+        type(value) is not bool for value in session_state.inspection_results.values()
+    ):
+        raise ValueError("請完成全部 10 項點檢後再儲存。")
+    employee = session.get(Employee, session_state.employee_id)
+    forklift = session.get(Forklift, session_state.forklift_id)
+    site = session.get(Worksite, session_state.site_id)
+    if not employee or employee.status != "active" or employee.line_user_id != session_state.line_user_id:
+        raise ValueError("員工身分已異動，請重新開始點檢。")
+    if not forklift or forklift.status == ForkliftStatus.inactive or not site or not site.is_active:
+        raise ValueError("工地或堆高機已停用，請重新選擇。")
     all_passed = all(session_state.inspection_results.values())
     inspection = ForkliftInspection(
         forklift_id=session_state.forklift_id,
         operator_id=session_state.employee_id,
         site_id=session_state.site_id,
-        inspection_date=date.today(),
+        inspection_date=local_today(),
         inspection_items=session_state.inspection_results,
         all_passed=all_passed,
         notes=session_state.notes.strip() or None,
@@ -127,6 +145,7 @@ def save_inspection(session: Session, session_state: InspectionSession) -> Forkl
         forklift.current_operator_id = session_state.employee_id
         if session_state.site_id:
             forklift.current_site_id = session_state.site_id
+        forklift.updated_at = datetime.utcnow()
         session.add(forklift)
 
     session.commit()
@@ -147,7 +166,7 @@ def check_forklift_warnings(session: Session, forklift_id: int) -> list[str]:
 
     # 保養提醒
     if forklift.next_maintenance_date:
-        days_until = (forklift.next_maintenance_date - date.today()).days
+        days_until = (forklift.next_maintenance_date - local_today()).days
         if days_until < 0:
             warnings.append(f"🔧 保養日期已過期 {abs(days_until)} 天，請盡快安排保養")
         elif days_until <= MAINTENANCE_WARNING_DAYS:
@@ -178,7 +197,7 @@ def build_inspection_summary(session: Session, inspection: ForkliftInspection) -
         failed_items = [
             item["label"]
             for item in INSPECTION_ITEMS
-            if not inspection.inspection_results.get(item["key"], True)
+            if (inspection.inspection_items or {}).get(item["key"]) is False
         ]
         lines.append(f"⚠️ 有 {len(failed_items)} 項異常：")
         for item in failed_items:
@@ -208,7 +227,7 @@ def build_boss_notification(session: Session, inspection: ForkliftInspection) ->
     failed_items = [
         item["label"]
         for item in INSPECTION_ITEMS
-        if not inspection.inspection_results.get(item["key"], True)
+        if (inspection.inspection_items or {}).get(item["key"]) is False
     ]
 
     lines = [
@@ -239,7 +258,7 @@ def list_today_inspections(session: Session, forklift_id: int) -> list[ForkliftI
     return session.exec(
         select(ForkliftInspection).where(
             ForkliftInspection.forklift_id == forklift_id,
-            ForkliftInspection.inspection_date == date.today(),
+            ForkliftInspection.inspection_date == local_today(),
         )
     ).all()
 
@@ -249,6 +268,6 @@ def list_today_inspections_by_operator(session: Session, operator_id: int) -> li
     return session.exec(
         select(ForkliftInspection).where(
             ForkliftInspection.operator_id == operator_id,
-            ForkliftInspection.inspection_date == date.today(),
+            ForkliftInspection.inspection_date == local_today(),
         )
     ).all()
