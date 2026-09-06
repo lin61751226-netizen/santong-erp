@@ -144,9 +144,6 @@ LEGACY_EMPLOYEE_CODE_MAP = {
     "SUP047": "ADMIN002",
 }
 
-# One-deploy account recovery hash for ADMIN001. Remove after production verification.
-ADMIN001_RECOVERY_PASSWORD_HASH = "pbkdf2_sha256$200000$c719e82cd8714cba567d8784f2789ca1$6420c6828831f6103a61223544049d92bf6443c5feed42abcfa77c7fef84fdb8"
-
 FORKLIFT_DEFINITIONS = [
     {"code": "1號", "model": "自排 2.5噸柴油車", "site_name": "永森45", "fuel_level": 68},
     {"code": "2號", "model": "手排 2.5噸柴油車", "site_name": "齊裕53", "fuel_level": 92},
@@ -279,27 +276,6 @@ def _deactivate_unlisted_employees(session: Session) -> None:
         session.commit()
 
 
-def _recover_admin001_password(session: Session) -> None:
-    """Apply the requested one-time admin recovery without changing LINE binding data."""
-    employee = session.exec(
-        select(Employee).where(Employee.employee_code == "ADMIN001")
-    ).first()
-    if employee is None:
-        return
-
-    employee.password_hash = ADMIN001_RECOVERY_PASSWORD_HASH
-    employee.failed_login_count = 0
-    employee.locked_until = None
-    employee.must_change_password = True
-    employee.session_key = None
-    employee.session_expires_at = None
-    session.add(employee)
-    session.commit()
-    print("[bootstrap] ADMIN001 password recovery applied")
-
-
-
-
 def _ensure_forklifts(session: Session, worksites: dict[str, Worksite]) -> None:
     existing = {f.forklift_code: f for f in session.exec(select(Forklift)).all()}
     changed = False
@@ -344,7 +320,6 @@ def seed_demo_data(session: Session) -> None:
     session.commit()
 
     _deactivate_unlisted_employees(session)
-    _recover_admin001_password(session)
     _ensure_forklifts(session, worksites)
 
     # 自動解鎖管理員帳號（owner/admin），防止被永久鎖定導致無法登入後台
