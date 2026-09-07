@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -10,7 +11,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.core.db import get_session
 from app.core.security import hash_password
 from app.main import app
-from app.models import Employee, Role
+from app.models import Employee, LoginLog, LoginStatus, Role
 
 
 class AuthFlowTests(unittest.TestCase):
@@ -62,9 +63,15 @@ class AuthFlowTests(unittest.TestCase):
                 yield session
 
         app.dependency_overrides[get_session] = _override_get_session
+        self.backup_patcher = patch(
+            "app.routes.auth.google_drive_worklog_service.backup_database",
+            new=AsyncMock(return_value={"status": "saved"}),
+        )
+        self.backup_database = self.backup_patcher.start()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        self.backup_patcher.stop()
         app.dependency_overrides.clear()
 
     def _login(self, code="ADMIN001", password="Santong@2026"):
@@ -80,6 +87,27 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(data["employee_code"], "ADMIN001")
         self.assertTrue(data["must_change_password"])
         self.assertIn("santong_session", response.cookies)
+        with Session(self.engine) as session:
+            log = session.exec(select(LoginLog)).one()
+            self.assertEqual(log.status, LoginStatus.success)
+        self.assertEqual(self.backup_database.await_count, 1)
+
+    def test_all_login_attempts_are_preserved(self) -> None:
+        self.assertEqual(self._login(code="UNKNOWN", password="wrong-password").status_code, 401)
+        self.assertEqual(self._login(code="EMP001").status_code, 403)
+        self.assertEqual(self._login(password="wrong-password").status_code, 401)
+        self.assertEqual(self._login().status_code, 200)
+
+        with Session(self.engine) as session:
+            logs = session.exec(select(LoginLog).order_by(LoginLog.id)).all()
+        self.assertEqual(len(logs), 4)
+        self.assertEqual(
+            [log.status for log in logs],
+            [LoginStatus.failed, LoginStatus.failed, LoginStatus.failed, LoginStatus.success],
+        )
+        self.assertEqual(logs[0].employee_code, "UNKNOWN")
+        self.assertEqual(logs[1].failure_reason, "無後台登入權限")
+        self.assertEqual(self.backup_database.await_count, 4)
 
     def test_unauthenticated_dashboard_returns_401(self) -> None:
         response = self.client.get("/api/dashboard")

@@ -53,13 +53,19 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.reply = AsyncMock(return_value=(True, "sent"))
         self.push_patch = patch.object(line_service, "push_text", self.push)
         self.reply_patch = patch.object(line_service, "reply_messages", self.reply)
+        self.backup_patch = patch(
+            "app.services.line.google_drive_worklog_service.backup_database",
+            new=AsyncMock(return_value={"status": "saved"}),
+        )
         self.push_patch.start()
         self.reply_patch.start()
+        self.backup_database = self.backup_patch.start()
 
     def tearDown(self):
         fs.clear_session("U-driver")
         self.push_patch.stop()
         self.reply_patch.stop()
+        self.backup_patch.stop()
         self.token.stop()
         app.dependency_overrides.clear()
         self.session.close()
@@ -91,6 +97,7 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(fs.get_session("U-driver"))
         self.assertEqual({c.args[0] for c in self.push.await_args_list}, {"U-admin", "U-boss"})
         self.assertTrue(all("剎車系統" in c.args[1] for c in self.push.await_args_list))
+        self.assertGreaterEqual(self.backup_database.await_count, 1)
         delivery = self.session.exec(select(NotificationDelivery).where(NotificationDelivery.employee_id == self.unbound.id)).one()
         self.assertEqual(delivery.delivery_status, DeliveryStatus.skipped)
 
@@ -294,6 +301,9 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         response = client.get("/api/forklift-inspections/export?month=2026-09")
         rows = list(csv.reader(io.StringIO(response.content.decode("utf-8-sig"))))
         self.assertEqual(len(rows), 502)
+        listing = client.get("/api/forklift-inspections?month=2026-09")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(len(listing.json()), 501)
 
     def test_care_update_validation_and_preserves_other_fields(self):
         client = self.api_client()

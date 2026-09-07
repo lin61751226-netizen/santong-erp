@@ -691,7 +691,7 @@
         <div class="panel-header">
           <div>
             <h2>工作相片上傳記錄</h2>
-            <p class="muted">依員工或日期查詢 LINE 工作相片是否已儲存至 Google Drive。</p>
+            <p class="muted">完整保留 LINE 工作相片上傳記錄，可依員工或日期查詢 Google Drive 儲存結果。</p>
           </div>
           <div class="button-row">
             <input id="photoFilterEmployee" placeholder="員工代碼">
@@ -720,7 +720,7 @@
         <div class="panel-header">
           <div>
             <h2>登入稽核日誌</h2>
-            <p class="muted">查詢後台登入成功、失敗與帳號鎖定紀錄。僅 owner / admin 可檢視。</p>
+            <p class="muted">完整保留後台登入成功、失敗、無效帳號與帳號鎖定紀錄。僅 owner / admin 可檢視。</p>
           </div>
           <div class="button-row">
             <input id="loginLogFilterEmployee" placeholder="員工代碼">
@@ -1147,7 +1147,6 @@
         params.set("date_to", dateValue);
       }
       if (employeeCode) params.set("employee_code", employeeCode);
-      params.set("limit", "500");
       const data = await api(`/api/work-reports?${params.toString()}`);
       document.getElementById("workReportRows").innerHTML = data.length ? data.map((row) => `
         <tr>
@@ -1732,7 +1731,6 @@
         if (employeeCode) params.set('employee_code', employeeCode);
         if (dateFrom) params.set('date_from', dateFrom);
         if (dateTo) params.set('date_to', dateTo);
-        params.set('limit', '100');
         const data = await api('/api/photo-uploads?' + params.toString());
         const rows = document.getElementById('photoUploadRows');
         if (data.length === 0) {
@@ -1764,7 +1762,6 @@
         const statusFilter = document.getElementById('loginLogFilterStatus').value;
         if (employeeCode) params.set('employee_code', employeeCode);
         if (statusFilter) params.set('status_filter', statusFilter);
-        params.set('limit', '100');
         const data = await api('/api/login-logs?' + params.toString());
         const rows = document.getElementById('loginLogRows');
         if (data.length === 0) {
@@ -1901,12 +1898,11 @@
     async function loadForkliftInspections() {
       try {
         const params = inspectionParams();
-        params.set("limit", "500");
         const data = await api("/api/forklift-inspections?" + params.toString());
         const rows = document.getElementById("forkliftInspectionRows");
         const period = document.getElementById("inspectionPeriod").value;
         const periodLabel = period === "all" ? "全部歷史記錄" : period === "month" ? "所選月份" : "所選日期";
-        document.getElementById("inspectionFeedback").textContent = `本次顯示 ${data.length} 筆（${periodLabel}）；畫面最多 500 筆，CSV 匯出所選範圍全部記錄。`;
+        document.getElementById("inspectionFeedback").textContent = `本次顯示 ${data.length} 筆（${periodLabel}），資料完整保留；CSV 可匯出所選範圍全部記錄。`;
         if (data.length === 0) {
           rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無點檢記錄</td></tr>';
           return;

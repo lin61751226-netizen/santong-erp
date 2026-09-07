@@ -24,6 +24,7 @@ from app.core.security import (
 from app.deps import require_roles
 from app.models import Employee, LoginLog, LoginStatus, Role
 from app.schemas import ChangePasswordRequest, LoginRequest, PasswordResetRequest
+from app.services.google_drive import google_drive_worklog_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -34,7 +35,7 @@ def _now() -> datetime:
     return datetime.utcnow()
 
 
-def _log_login(
+async def _log_login(
     session: Session,
     request: Request,
     employee_code: str,
@@ -56,6 +57,7 @@ def _log_login(
         )
         session.add(log)
         session.commit()
+        await google_drive_worklog_service.backup_database()
     except Exception:
         session.rollback()
 
@@ -92,7 +94,7 @@ def _clear_session_cookie(response: Response) -> None:
 
 
 @router.post("/login")
-def login(
+async def login(
     payload: LoginRequest,
     response: Response,
     request: Request,
@@ -108,23 +110,31 @@ def login(
     )
 
     if employee is None:
+        await _log_login(
+            session, request, payload.employee_code.strip(), None,
+            LoginStatus.failed, "帳號不存在或密碼錯誤",
+        )
         raise invalid_credentials
 
     # 僅 owner/admin 可登入後台
     if not _is_backoffice_role(employee):
+        await _log_login(
+            session, request, employee.employee_code, employee.name,
+            LoginStatus.failed, "無後台登入權限",
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="此帳號無後台登入權限",
         )
 
     if employee.status != "active":
-        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "帳號未啟用")
+        await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "帳號未啟用")
         raise invalid_credentials
 
     # 鎖定檢查
     if employee.locked_until and employee.locked_until > now:
         remaining = int((employee.locked_until - now).total_seconds() // 60) + 1
-        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "帳號已鎖定")
+        await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "帳號已鎖定")
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail=f"登入失敗次數過多，帳號已鎖定，請於 {remaining} 分鐘後再試",
@@ -137,7 +147,7 @@ def login(
             employee.failed_login_count = 0
             session.add(employee)
             session.commit()
-            _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "登入失敗次數過多，帳號鎖定")
+            await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.locked, "登入失敗次數過多，帳號鎖定")
             raise HTTPException(
                 status_code=status.HTTP_423_LOCKED,
                 detail=f"登入失敗 {settings.login_fail_limit} 次，帳號已鎖定 {settings.login_lock_minutes} 分鐘",
@@ -145,7 +155,7 @@ def login(
         session.add(employee)
         session.commit()
         remaining_attempts = settings.login_fail_limit - employee.failed_login_count
-        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "密碼錯誤")
+        await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "密碼錯誤")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"帳號或密碼錯誤（還剩 {remaining_attempts} 次嘗試機會）",
@@ -160,6 +170,7 @@ def login(
     _set_session_cookie(response, employee)
     session.add(employee)
     session.commit()
+    await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.success)
 
     return {
         "employee_code": employee.employee_code,
@@ -235,7 +246,6 @@ def reset_password(
     if employee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="找不到員工代碼")
     if not _is_backoffice_role(employee):
-        _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "無後台登入權限")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="此帳號無後台登入權限")
     employee.password_hash = hash_password(settings.default_password)
     employee.must_change_password = True

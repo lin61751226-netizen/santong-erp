@@ -9,6 +9,7 @@ import mimetypes
 import os
 import sqlite3
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +53,10 @@ class DriveUploadResult:
 
 
 class GoogleDriveWorklogService:
+    def __init__(self) -> None:
+        # 所有即時／排程快照依序執行，避免較舊快照晚完成而覆蓋較新資料。
+        self._database_backup_lock = threading.Lock()
+
     def _has_oauth(self) -> bool:
         return bool(
             settings.google_oauth_client_id.strip()
@@ -372,24 +377,30 @@ class GoogleDriveWorklogService:
                 logger.warning("Google Drive 資料庫快照復原失敗：%s", type(exc).__name__)
                 return {"status": "failed", "error": type(exc).__name__}
 
+    def _backup_database_sync(self, source: Path) -> dict:
+        with self._database_backup_lock:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                snapshot = Path(temp_dir) / DATABASE_BACKUP_FILE_NAME
+                # SQLite backup API produces a consistent snapshot while requests continue.
+                source_db = sqlite3.connect(str(source))
+                target_db = sqlite3.connect(str(snapshot))
+                try:
+                    with target_db:
+                        source_db.backup(target_db)
+                finally:
+                    target_db.close()
+                    source_db.close()
+                return self._upload_database_snapshot(snapshot)
+
     async def backup_database(self) -> dict:
         source = self._sqlite_path()
         if source is None or not source.exists() or not self.is_configured():
             return {"status": "skipped", "reason": "非 SQLite、資料庫不存在或 Google Drive 未設定"}
-        with tempfile.TemporaryDirectory() as temp_dir:
-            snapshot = Path(temp_dir) / DATABASE_BACKUP_FILE_NAME
-            try:
-                # SQLite backup API produces a consistent snapshot while requests continue.
-                source_db = sqlite3.connect(str(source))
-                target_db = sqlite3.connect(str(snapshot))
-                with target_db:
-                    source_db.backup(target_db)
-                target_db.close()
-                source_db.close()
-                return await asyncio.to_thread(self._upload_database_snapshot, snapshot)
-            except Exception as exc:
-                logger.warning("Google Drive 資料庫快照備份失敗：%s", type(exc).__name__)
-                return {"status": "failed", "error": type(exc).__name__}
+        try:
+            return await asyncio.to_thread(self._backup_database_sync, source)
+        except Exception as exc:
+            logger.warning("Google Drive 資料庫快照備份失敗：%s", type(exc).__name__)
+            return {"status": "failed", "error": type(exc).__name__}
 
     def _find_or_create_date_folder(self, folder_name: str) -> str:
         root_folder_id = settings.google_drive_worklog_folder_id.strip()

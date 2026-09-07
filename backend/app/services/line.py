@@ -388,6 +388,14 @@ def _event_datetime(event: dict[str, Any]) -> datetime:
     return datetime.fromtimestamp(int(timestamp) / 1000, tz=timezone.utc)
 
 
+async def _backup_preserved_records() -> None:
+    """新增營運記錄後立即更新快照；失敗時保留本機資料並交由排程補做。"""
+    try:
+        await google_drive_worklog_service.backup_database()
+    except Exception as exc:
+        print(f"[record-backup] Google Drive 快照失敗，等待排程補做：{type(exc).__name__}")
+
+
 async def _handle_image_message(
     session: Session,
     *,
@@ -438,6 +446,7 @@ async def _handle_image_message(
                 )
             )
             session.commit()
+            await _backup_preserved_records()
         except Exception as log_exc:
             session.rollback()
             print(f"[_handle_image_message] 未綁定照片記錄寫入失敗：{log_exc}")
@@ -500,6 +509,7 @@ async def _handle_image_message(
         )
     )
     session.commit()
+    await _backup_preserved_records()
 
     # 靜默上傳，不回覆 LINE 訊息
 
@@ -590,6 +600,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             latitude=latitude,
             longitude=longitude,
         )
+        await _backup_preserved_records()
         if reply_token:
             reply_lines = [f"已完成定位打卡：{pending_command}", f"位置：{latitude:.6f}, {longitude:.6f}"]
             if result.anomalies:
@@ -816,6 +827,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
                 forklift_service.clear_session(line_user_id)
                 await line_service.reply_text(reply_token, str(exc))
                 return
+            await _backup_preserved_records()
             summary = forklift_service.build_inspection_summary(session, inspection)
             forklift_service.clear_session(line_user_id)
             from app.services.forklift_notifications import queue_inspection_alert, queue_vehicle_warning
@@ -956,6 +968,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             arr_member.last_line_action = "到達工地"
             session.add(arr_member)
         session.commit()
+        await _backup_preserved_records()
         await line_service.reply_text(
             reply_token,
             f"已記錄：到達工地\n工地：{arrival_site.name}\n接著可點「堆高機點檢」開始今日點檢。",
@@ -968,6 +981,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             await _reply_location_prompt(reply_token, text)
         else:
             result = record_attendance_event(session, employee, text)
+            await _backup_preserved_records()
             reply_lines = [f"已記錄：{text}"]
             if result.assignment:
                 worksite = session.get(Worksite, result.assignment.site_id)
@@ -1008,6 +1022,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             session.add(member)
             session.commit()
             record_work_report_event(session, employee, text, assignment=assignment)
+            await _backup_preserved_records()
             await line_service.reply_text(reply_token, f"已記錄：{text}")
         else:
             # 今日尚未排定工作時仍回覆確認，不要落到可用指令清單
@@ -1015,6 +1030,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
                 session, employee, text, assignment=assignment,
                 note="今日尚未排定工作，已先記錄動作回報。",
             )
+            await _backup_preserved_records()
             await line_service.reply_text(
                 reply_token,
                 f"已記錄：{text}\n提醒：今日尚未排定工作，已先記錄你的動作回報。",
@@ -1049,6 +1065,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             session.add(member)
             session.commit()
         record_work_report_event(session, employee, "異常回報", assignment=assignment, note=detail)
+        await _backup_preserved_records()
         # 自動關聯今日點檢的堆高機與打卡工地，同步通知老闆與管理員
         try:
             today_inspections = forklift_service.list_today_inspections_by_operator(session, employee.id)

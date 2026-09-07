@@ -1136,7 +1136,7 @@ def list_work_reports(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     employee_code: Optional[str] = Query(default=None),
-    limit: int = Query(default=500, ge=1, le=1000),
+    limit: Optional[int] = Query(default=None, ge=1, le=5000),
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
@@ -1161,9 +1161,10 @@ def list_work_reports(
     if actor.role == Role.site_manager and actor.home_site_id:
         statement = statement.where(WorkReportEvent.site_id == actor.home_site_id)
 
-    reports = session.exec(
-        statement.order_by(WorkReportEvent.reported_at.desc()).limit(limit)
-    ).all()
+    statement = statement.order_by(WorkReportEvent.reported_at.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    reports = session.exec(statement).all()
     result = []
     for report in reports:
         employee = session.get(Employee, report.employee_id)
@@ -1307,7 +1308,7 @@ async def simulate_line_message(
 def list_login_logs(
     employee_code: Optional[str] = Query(default=None),
     status_filter: Optional[str] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: Optional[int] = Query(default=None, ge=1, le=5000),
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
@@ -1316,7 +1317,10 @@ def list_login_logs(
         statement = statement.where(LoginLog.employee_code == employee_code)
     if status_filter:
         statement = statement.where(LoginLog.status == status_filter)
-    logs = session.exec(statement.order_by(LoginLog.created_at.desc()).limit(limit)).all()
+    statement = statement.order_by(LoginLog.created_at.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    logs = session.exec(statement).all()
     return [
         {
             "id": log.id,
@@ -1424,7 +1428,7 @@ def list_photo_uploads(
     employee_code: Optional[str] = Query(default=None),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: Optional[int] = Query(default=None, ge=1, le=5000),
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
@@ -1441,7 +1445,10 @@ def list_photo_uploads(
         statement = statement.where(PhotoUploadLog.site_id == actor.home_site_id)
     elif actor.role == Role.employee:
         statement = statement.where(PhotoUploadLog.employee_id == actor.id)
-    logs = session.exec(statement.order_by(PhotoUploadLog.uploaded_at.desc()).limit(limit)).all()
+    statement = statement.order_by(PhotoUploadLog.uploaded_at.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    logs = session.exec(statement).all()
     result = []
     for log in logs:
         employee = session.get(Employee, log.employee_id) if log.employee_id else None
@@ -1543,7 +1550,7 @@ def list_forklift_inspections(
     end_date: Optional[date] = Query(default=None),
     site_id: Optional[int] = Query(default=None),
     forklift_id: Optional[int] = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: Optional[int] = Query(default=None, ge=1, le=5000),
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
@@ -1559,9 +1566,10 @@ def list_forklift_inspections(
         statement = statement.where(ForkliftInspection.forklift_id == forklift_id)
     if actor.role == Role.site_manager and actor.home_site_id:
         statement = statement.where(ForkliftInspection.site_id == actor.home_site_id)
-    inspections = session.exec(
-        statement.order_by(ForkliftInspection.inspection_date.desc(), ForkliftInspection.id.desc()).limit(limit)
-    ).all()
+    statement = statement.order_by(ForkliftInspection.inspection_date.desc(), ForkliftInspection.id.desc())
+    if limit is not None:
+        statement = statement.limit(limit)
+    inspections = session.exec(statement).all()
     result = []
     for insp in inspections:
         forklift = session.get(Forklift, insp.forklift_id)

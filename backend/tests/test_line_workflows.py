@@ -30,6 +30,15 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             poolclass=StaticPool,
         )
         SQLModel.metadata.create_all(self.engine)
+        self.backup_patcher = patch(
+            "app.services.line.google_drive_worklog_service.backup_database",
+            new=AsyncMock(return_value={"status": "saved"}),
+        )
+        self.backup_database = self.backup_patcher.start()
+
+    def tearDown(self) -> None:
+        self.backup_patcher.stop()
+        self.engine.dispose()
 
     async def test_attendance_menu_contains_check_in_and_check_out(self) -> None:
         reply = AsyncMock(return_value=(True, "sent"))
@@ -74,6 +83,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertAlmostEqual(saved.latitude, 25.033964)
             self.assertAlmostEqual(saved.longitude, 121.564468)
             self.assertNotIn("U-loc", _pending_location_attendance)
+            self.assertEqual(self.backup_database.await_count, 1)
 
     async def test_photo_uses_latest_arrival_site_for_drive_folder_and_log(self) -> None:
         with Session(self.engine) as session:
@@ -96,6 +106,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(upload_photo.await_args.kwargs["site_name"], "照片工地")
             saved = session.exec(select(PhotoUploadLog)).one()
             self.assertEqual(saved.site_id, site.id)
+            self.assertEqual(self.backup_database.await_count, 1)
 
     async def test_work_report_is_saved_as_history_without_overwriting_previous_report(self) -> None:
         with Session(self.engine) as session:
@@ -123,6 +134,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             with Session(self.engine) as reopened:
                 saved = reopened.exec(select(WorkReportEvent)).all()
                 self.assertEqual(len(saved), 2)
+            self.assertEqual(self.backup_database.await_count, 2)
 
     async def test_leave_menu_contains_all_leave_types(self) -> None:
         reply = AsyncMock(return_value=(True, "sent"))
