@@ -239,6 +239,12 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         listing = client.get("/api/forklift-inspections", params=params).json()
         self.assertEqual(len(listing), 2)
         self.assertEqual(listing[0]["abnormal_items"], ["引擎機油"])
+        all_listing = client.get("/api/forklift-inspections", params={"limit": 500}).json()
+        self.assertEqual(len(all_listing), 4)
+        self.assertEqual(
+            {row["inspection_date"] for row in all_listing},
+            {"2024-01-31", "2024-02-01", "2024-02-29", "2024-03-01"},
+        )
         self.assertEqual(client.get("/api/forklift-inspections/export?month=2024-13").status_code, 422)
         self.assertEqual(client.get("/api/forklift-inspections/export?start_date=2026-09-30&end_date=2026-09-01").status_code, 422)
 

@@ -217,6 +217,7 @@
         </div>
         <div class="button-row">
           <select id="inspectionPeriod" aria-label="查詢期間" onchange="toggleInspectionPeriod()">
+            <option value="all">全部記錄</option>
             <option value="month">按月份</option>
             <option value="day">按單日</option>
           </select>
@@ -228,7 +229,7 @@
           <button type="button" class="button-secondary" onclick="exportForkliftInspections(this)">匯出所選期間 CSV</button>
         </div>
       </div>
-      <p id="inspectionFeedback" class="notice" role="status" aria-live="polite">請選擇期間，按「查詢」或「匯出所選期間 CSV」。</p>
+      <p id="inspectionFeedback" class="notice" role="status" aria-live="polite">預設顯示全部點檢記錄，可再依月份、日期、工地或堆高機篩選。</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -1001,7 +1002,8 @@
       document.getElementById("attendanceFilterDate").value = todayString();
       document.getElementById("exceptionFilterDate").value = todayString();
       document.getElementById("inspectionFilterDate").value = todayString();
-      document.getElementById("inspectionFilterMonth").value = todayString().slice(0, 7);
+      document.getElementById("inspectionPeriod").value = "all";
+      toggleInspectionPeriod();
       document.getElementById("meetingAt").value = `${todayString()}T09:00`;
       await loadMeta();
       document.getElementById("inspectionSite").innerHTML = '<option value="">全部工地</option>' +
@@ -1772,18 +1774,19 @@
 
     // ---- 堆高機點檢記錄 ----
     function toggleInspectionPeriod() {
-      const monthly = document.getElementById("inspectionPeriod").value === "month";
-      document.getElementById("inspectionFilterMonth").hidden = !monthly;
-      document.getElementById("inspectionFilterDate").hidden = monthly;
+      const period = document.getElementById("inspectionPeriod").value;
+      document.getElementById("inspectionFilterMonth").hidden = period !== "month";
+      document.getElementById("inspectionFilterDate").hidden = period !== "day";
     }
 
     function inspectionParams(exporting = false) {
       const params = new URLSearchParams();
-      if (document.getElementById("inspectionPeriod").value === "month") {
+      const period = document.getElementById("inspectionPeriod").value;
+      if (period === "month") {
         const month = document.getElementById("inspectionFilterMonth").value;
         if (!month) throw new Error("請先選擇月份。");
         params.set("month", month);
-      } else {
+      } else if (period === "day") {
         const day = document.getElementById("inspectionFilterDate").value;
         if (!day) throw new Error("請先選擇日期。");
         if (exporting) { params.set("start_date", day); params.set("end_date", day); }
@@ -1802,7 +1805,9 @@
         params.set("limit", "500");
         const data = await api("/api/forklift-inspections?" + params.toString());
         const rows = document.getElementById("forkliftInspectionRows");
-        document.getElementById("inspectionFeedback").textContent = `本次顯示 ${data.length} 筆；畫面最多 500 筆，CSV 匯出所選期間全部記錄。`;
+        const period = document.getElementById("inspectionPeriod").value;
+        const periodLabel = period === "all" ? "全部歷史記錄" : period === "month" ? "所選月份" : "所選日期";
+        document.getElementById("inspectionFeedback").textContent = `本次顯示 ${data.length} 筆（${periodLabel}）；畫面最多 500 筆，CSV 匯出所選範圍全部記錄。`;
         if (data.length === 0) {
           rows.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#888;">無點檢記錄</td></tr>';
           return;
