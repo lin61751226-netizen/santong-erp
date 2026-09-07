@@ -53,6 +53,7 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(result["status"], "restored")
             self.assertEqual(service._database_record_counts(local)["attendanceevent"], 3)
+            self.assertFalse(local.with_name(f".{local.name}.restore").exists())
 
     def test_backup_rejects_snapshot_with_fewer_preserved_records(self) -> None:
         service = GoogleDriveWorklogService()

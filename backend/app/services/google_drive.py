@@ -7,6 +7,7 @@ import io
 import json
 import mimetypes
 import os
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -394,6 +395,18 @@ class GoogleDriveWorklogService:
             if source_counts[table] < existing_counts[table]
         }
 
+    @staticmethod
+    def _replace_database_file(snapshot: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        local_temp = target.with_name(f".{target.name}.restore")
+        try:
+            # Render's system temp directory and application directory can be
+            # different filesystems, so os.replace(snapshot, target) raises EXDEV.
+            shutil.copyfile(snapshot, local_temp)
+            os.replace(local_temp, target)
+        finally:
+            local_temp.unlink(missing_ok=True)
+
     def _upload_database_snapshot(self, source: Path) -> dict:
         client = self._build_client()
         folder_id = self._system_data_folder_id(client, create=True)
@@ -426,8 +439,7 @@ class GoogleDriveWorklogService:
                     and target.stat().st_size > 0
                 ):
                     return {"status": "local_exists", "bytes": target.stat().st_size}
-                target.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(snapshot, target)
+                self._replace_database_file(snapshot, target)
                 return {"status": "restored", "bytes": target.stat().st_size}
             except Exception as exc:
                 logger.warning("Google Drive 資料庫快照復原失敗：%s", type(exc).__name__)
