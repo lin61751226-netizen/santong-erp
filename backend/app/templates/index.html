@@ -1416,7 +1416,7 @@
       const link = document.getElementById("newWorksiteMapsUrl").value;
       const coordinates = parseGoogleMapsCoordinates(link);
       if (!coordinates) {
-        document.getElementById("worksiteFeedback").textContent = "無法從連結解析座標，請使用 Google 地圖的「分享 → 複製連結」，或直接輸入緯度與經度。";
+        document.getElementById("worksiteFeedback").textContent = "這是 Google 地圖短網址，按「新增工地並保存定位」後會由系統解析；即使暫時無法解析，也會先保存工地與地圖網址。";
         return;
       }
       document.getElementById("newWorksiteLatitude").value = coordinates.latitude;
@@ -1520,6 +1520,9 @@
 
     document.getElementById("createWorksiteForm").addEventListener("submit", async (event) => {
       event.preventDefault();
+      const submitButton = event.submitter || event.target.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      document.getElementById("worksiteFeedback").textContent = "正在保存工地資料與雲端備份，請稍候...";
       try {
         const data = await api("/api/worksites", { method: "POST", body: JSON.stringify({
           code: document.getElementById("newWorksiteCode").value,
@@ -1535,6 +1538,7 @@
         await loadMeta();
         await Promise.all([loadWorksites(), loadForklifts(), loadDashboard(), loadAuditLogs()]);
       } catch (error) { document.getElementById("worksiteFeedback").textContent = error.message; }
+      finally { submitButton.disabled = false; }
     });
 
     document.getElementById("createEmployeeForm").addEventListener("submit", async (event) => {

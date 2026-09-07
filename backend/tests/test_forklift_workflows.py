@@ -354,6 +354,28 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
             AdminAuditLog.entity_id == site_id,
         )).all()
         self.assertEqual({row.action for row in audit_rows}, {"create", "update", "deactivate", "restore"})
+        self.assertEqual(self.backup_database.await_count, 4)
+
+    def test_worksite_short_map_url_can_be_saved_before_coordinates_are_resolved(self):
+        client = self.api_client()
+        with patch(
+            "app.routes.admin._resolve_google_maps_coordinates",
+            new=AsyncMock(return_value=(None, None)),
+        ):
+            response = client.post("/api/worksites", json={
+                "code": "SHORT-1",
+                "name": "短網址測試工地",
+                "google_maps_url": "https://maps.app.goo.gl/example",
+                "geofence_radius_m": 150,
+            })
+
+        self.assertEqual(response.status_code, 201)
+        saved = self.session.exec(select(Worksite).where(Worksite.code == "SHORT-1")).one()
+        self.assertEqual(saved.google_maps_url, "https://maps.app.goo.gl/example")
+        self.assertEqual(saved.geofence_radius_m, 150)
+        self.assertIsNone(saved.latitude)
+        self.assertEqual(response.json()["cloud_backup_status"], "saved")
+        self.backup_database.assert_awaited_once()
 
     def test_attendance_outside_configured_site_radius_is_marked(self):
         self.site.latitude = 24.8000

@@ -9,6 +9,7 @@ from io import StringIO
 from typing import Optional
 from urllib.parse import unquote, urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
@@ -71,6 +72,7 @@ from app.services.hr import (
 )
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
+from app.services.google_drive import google_drive_worklog_service
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
@@ -135,8 +137,6 @@ def _validate_worksite_location(
 ) -> None:
     if (latitude is None) != (longitude is None):
         raise HTTPException(status_code=400, detail="工地座標必須同時填寫緯度與經度")
-    if radius_m is not None and latitude is None:
-        raise HTTPException(status_code=400, detail="設定 GPS 半徑前請先填寫工地緯度與經度")
 
 
 def _parse_google_maps_coordinates(value: Optional[str]) -> tuple[Optional[float], Optional[float]]:
@@ -164,6 +164,30 @@ def _parse_google_maps_coordinates(value: Optional[str]) -> tuple[Optional[float
         if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
             raise HTTPException(status_code=400, detail="Google 地圖連結中的座標超出範圍")
         return latitude, longitude
+    return None, None
+
+
+async def _resolve_google_maps_coordinates(value: Optional[str]) -> tuple[Optional[float], Optional[float]]:
+    coordinates = _parse_google_maps_coordinates(value)
+    if coordinates != (None, None) or not value:
+        return coordinates
+
+    parsed = urlparse(value.strip())
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in {"maps.app.goo.gl", "goo.gl"}:
+        return None, None
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=6.0) as client:
+            response = await client.get(value.strip(), headers={"User-Agent": "SantongERP/1.0"})
+            response.raise_for_status()
+    except httpx.HTTPError:
+        return None, None
+
+    for redirect in [*response.history, response]:
+        coordinates = _parse_google_maps_coordinates(str(redirect.url))
+        if coordinates != (None, None):
+            return coordinates
     return None, None
 
 
@@ -490,7 +514,7 @@ def list_worksites(
 
 
 @router.post("/worksites", status_code=status.HTTP_201_CREATED)
-def create_worksite(
+async def create_worksite(
     payload: WorksiteCreate,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -504,11 +528,7 @@ def create_worksite(
     if session.exec(select(Worksite).where(Worksite.name == name)).first():
         raise HTTPException(status_code=409, detail="工地名稱已存在")
     google_maps_url = (payload.google_maps_url or "").strip() or None
-    map_latitude, map_longitude = _parse_google_maps_coordinates(google_maps_url)
-    if google_maps_url and (map_latitude is None or map_longitude is None) and (
-        payload.latitude is None or payload.longitude is None
-    ):
-        raise HTTPException(status_code=400, detail="無法從 Google 地圖連結解析座標，請改貼分享連結或直接填寫緯度與經度")
+    map_latitude, map_longitude = await _resolve_google_maps_coordinates(google_maps_url)
     latitude = map_latitude if map_latitude is not None else payload.latitude
     longitude = map_longitude if map_longitude is not None else payload.longitude
     _validate_worksite_location(latitude, longitude, payload.geofence_radius_m)
@@ -529,8 +549,11 @@ def create_worksite(
         session, actor, action="create", entity_type="worksite", entity_id=worksite.id,
         summary=f"新增工地：{worksite.code}｜{worksite.name}",
     )
+    backup_result = await google_drive_worklog_service.backup_database()
+    backup_saved = backup_result.get("status") == "saved"
     return {
-        "message": "工地已新增",
+        "message": "工地已新增並完成雲端存檔" if backup_saved else "工地已新增，本機已存檔，雲端備份將自動重試",
+        "cloud_backup_status": backup_result.get("status"),
         "worksite": {
             "id": worksite.id,
             "code": worksite.code,
@@ -543,7 +566,7 @@ def create_worksite(
 
 
 @router.delete("/worksites/{site_id}")
-def delete_worksite(
+async def delete_worksite(
     site_id: int,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -559,11 +582,12 @@ def delete_worksite(
         session, actor, action="deactivate", entity_type="worksite", entity_id=worksite.id,
         summary=f"停用工地：{worksite.code}｜{worksite.name}",
     )
+    await google_drive_worklog_service.backup_database()
     return {"message": "工地已刪除（停用），歷史資料已保留", "id": site_id}
 
 
 @router.post("/worksites/{site_id}/restore")
-def restore_worksite(
+async def restore_worksite(
     site_id: int,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -580,11 +604,12 @@ def restore_worksite(
         session, actor, action="restore", entity_type="worksite", entity_id=worksite.id,
         summary=f"恢復工地：{worksite.code}｜{worksite.name}",
     )
+    await google_drive_worklog_service.backup_database()
     return {"message": "工地已恢復", "id": site_id}
 
 
 @router.put("/worksites/{site_id}/location")
-def update_worksite_location(
+async def update_worksite_location(
     site_id: int,
     payload: WorksiteLocationUpdate,
     session: Session = Depends(get_session),
@@ -598,11 +623,7 @@ def update_worksite_location(
     if isinstance(google_maps_url, str):
         google_maps_url = google_maps_url.strip() or None
         data["google_maps_url"] = google_maps_url
-    map_latitude, map_longitude = _parse_google_maps_coordinates(google_maps_url)
-    if google_maps_url and (map_latitude is None or map_longitude is None) and (
-        data.get("latitude", worksite.latitude) is None or data.get("longitude", worksite.longitude) is None
-    ):
-        raise HTTPException(status_code=400, detail="無法從 Google 地圖連結解析座標，請改貼分享連結或直接填寫緯度與經度")
+    map_latitude, map_longitude = await _resolve_google_maps_coordinates(google_maps_url)
     if map_latitude is not None:
         data["latitude"] = map_latitude
         data["longitude"] = map_longitude
@@ -621,6 +642,7 @@ def update_worksite_location(
             f"座標 {worksite.latitude},{worksite.longitude}，半徑 {worksite.geofence_radius_m or '-'} 公尺"
         ),
     )
+    await google_drive_worklog_service.backup_database()
     return {"message": "工地位置已儲存", "id": site_id}
 
 
