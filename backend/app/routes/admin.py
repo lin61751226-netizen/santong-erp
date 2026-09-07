@@ -161,6 +161,7 @@ def _serialize_employee(worksites: dict[int, Worksite], item: Employee) -> dict:
         "employee_code": item.employee_code,
         "name": item.name,
         "role": item.role,
+        "status": item.status.value,
         "title": item.title,
         "department": item.department,
         "phone": item.phone,
@@ -620,7 +621,13 @@ def list_employees(
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
-    employees = _employees_for_actor(session, actor)
+    # 使用者管理需要同時保留停用帳號，才能讓管理者再次啟用。
+    statement = select(Employee)
+    if actor.role == Role.site_manager:
+        statement = statement.where(Employee.home_site_id == actor.home_site_id)
+    elif actor.role == Role.employee:
+        statement = statement.where(Employee.id == actor.id)
+    employees = session.exec(statement.order_by(Employee.employee_code)).all()
     worksites = {item.id: item for item in session.exec(select(Worksite)).all()}
     return [_serialize_employee(worksites, item) for item in employees]
 

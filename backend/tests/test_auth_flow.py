@@ -118,6 +118,44 @@ class AuthFlowTests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn("employee_count", dashboard.json())
 
+    def test_user_management_can_disable_and_reenable_account(self) -> None:
+        login_response = self._login()
+        cookies = login_response.cookies
+        self.client.post(
+            "/api/auth/change-password",
+            json={
+                "current_password": "Santong@2026",
+                "new_password": "NewPass@2026",
+            },
+            cookies=cookies,
+        )
+
+        before = self.client.get("/api/employees", cookies=cookies)
+        self.assertEqual(before.status_code, 200)
+        employee = next(row for row in before.json() if row["employee_code"] == "EMP001")
+        self.assertEqual(employee["status"], "active")
+
+        disabled = self.client.put(
+            "/api/employees/EMP001/status",
+            json={"status": "inactive"},
+            cookies=cookies,
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.assertEqual(disabled.json()["status"], "inactive")
+
+        after_disable = self.client.get("/api/employees", cookies=cookies)
+        self.assertEqual(after_disable.status_code, 200)
+        employee = next(row for row in after_disable.json() if row["employee_code"] == "EMP001")
+        self.assertEqual(employee["status"], "inactive")
+
+        enabled = self.client.put(
+            "/api/employees/EMP001/status",
+            json={"status": "active"},
+            cookies=cookies,
+        )
+        self.assertEqual(enabled.status_code, 200)
+        self.assertEqual(enabled.json()["status"], "active")
+
     def test_login_lockout_after_3_failures(self) -> None:
         for attempt in range(1, 4):
             response = self._login(password="wrong-password")
