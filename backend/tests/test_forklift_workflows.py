@@ -281,15 +281,25 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         client = self.api_client()
         created = client.post("/api/worksites", json={
             "code": "GPS-1", "name": "GPS 測試工地", "address": "測試路 1 號",
-            "latitude": 24.8000, "longitude": 120.9900, "geofence_radius_m": 120,
+            "google_maps_url": "https://www.google.com/maps/search/?api=1&query=24.8000%2C120.9900",
+            "geofence_radius_m": 120,
         })
         self.assertEqual(created.status_code, 201)
         site_id = created.json()["worksite"]["id"]
+        saved_site = self.session.get(Worksite, site_id)
+        self.assertAlmostEqual(saved_site.latitude, 24.8000)
+        self.assertAlmostEqual(saved_site.longitude, 120.9900)
+        self.assertEqual(saved_site.google_maps_url, "https://www.google.com/maps/search/?api=1&query=24.8000%2C120.9900")
         location = client.put(f"/api/worksites/{site_id}/location", json={
-            "latitude": 24.8010, "longitude": 120.9910, "geofence_radius_m": 180,
+            "google_maps_url": "https://www.google.com/maps/@24.8010,120.9910,17z",
+            "geofence_radius_m": 180,
         })
         self.assertEqual(location.status_code, 200)
-        self.assertEqual(self.session.get(Worksite, site_id).geofence_radius_m, 180)
+        saved_site = self.session.get(Worksite, site_id)
+        self.assertEqual(saved_site.geofence_radius_m, 180)
+        self.assertAlmostEqual(saved_site.latitude, 24.8010)
+        self.assertAlmostEqual(saved_site.longitude, 120.9910)
+        self.assertEqual(saved_site.google_maps_url, "https://www.google.com/maps/@24.8010,120.9910,17z")
         self.assertEqual(client.delete(f"/api/worksites/{site_id}").status_code, 200)
         self.assertFalse(self.session.get(Worksite, site_id).is_active)
         self.assertEqual(client.post(f"/api/worksites/{site_id}/restore").status_code, 200)

@@ -96,6 +96,7 @@ class Worksite(SQLModel, table=True):
     code: str = Field(index=True, unique=True)
     name: str = Field(index=True, unique=True)
     address: Optional[str] = None
+    google_maps_url: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     geofence_radius_m: Optional[int] = None

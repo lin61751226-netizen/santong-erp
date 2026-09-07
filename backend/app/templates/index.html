@@ -178,15 +178,16 @@
           <div><label for="newWorksiteCode">工地代碼</label><input id="newWorksiteCode" required placeholder="例如：57"></div>
           <div><label for="newWorksiteName">工地名稱</label><input id="newWorksiteName" required placeholder="例如：新竹寶山4"></div>
           <div><label for="newWorksiteAddress">地址（選填）</label><input id="newWorksiteAddress" placeholder="可貼上工地地址"></div>
+          <div class="full"><label for="newWorksiteMapsUrl">Google 地圖位置連結（選填）</label><input id="newWorksiteMapsUrl" type="url" placeholder="在 Google 地圖按分享 → 複製連結 → 貼到這裡"><button type="button" class="button-secondary button-compact" onclick="parseNewWorksiteMapLink()">解析 Google 地圖定位</button><span class="muted">解析後會自動填入緯度、經度，並一起保存。</span></div>
           <div><label for="newWorksiteLatitude">緯度（選填）</label><input id="newWorksiteLatitude" type="number" step="any" min="-90" max="90" placeholder="例如：24.8012"></div>
           <div><label for="newWorksiteLongitude">經度（選填）</label><input id="newWorksiteLongitude" type="number" step="any" min="-180" max="180" placeholder="例如：120.9956"></div>
           <div><label for="newWorksiteRadius">GPS 允許半徑（公尺）</label><input id="newWorksiteRadius" type="number" min="10" max="10000" step="1" placeholder="例如：150"></div>
-          <div class="full"><button type="submit">新增工地</button></div>
+          <div class="full"><button type="submit">新增工地並保存定位</button></div>
         </form>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>代碼</th><th>工地名稱</th><th>地址</th><th>緯度</th><th>經度</th><th>半徑（公尺）</th><th>狀態</th><th>操作</th></tr></thead>
+          <thead><tr><th>代碼</th><th>工地名稱</th><th>地址</th><th>Google 地圖定位</th><th>緯度</th><th>經度</th><th>半徑（公尺）</th><th>狀態</th><th>操作</th></tr></thead>
           <tbody id="worksiteRows"></tbody>
         </table>
       </div>
@@ -1346,6 +1347,51 @@
       } catch (error) { document.getElementById("fleetFeedback").textContent = error.message; }
     });
 
+    function parseGoogleMapsCoordinates(value) {
+      if (!value || !value.trim()) return null;
+      let raw;
+      try { raw = decodeURIComponent(value.trim()); } catch (error) { raw = value.trim(); }
+      const patterns = [
+        /@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+        /[?&](?:q|query|ll|center)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/,
+        /!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)/,
+      ];
+      for (const pattern of patterns) {
+        const match = raw.match(pattern);
+        if (!match) continue;
+        const latitude = Number(match[1]);
+        const longitude = Number(match[2]);
+        if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+          return { latitude, longitude };
+        }
+      }
+      return null;
+    }
+
+    function parseNewWorksiteMapLink() {
+      const link = document.getElementById("newWorksiteMapsUrl").value;
+      const coordinates = parseGoogleMapsCoordinates(link);
+      if (!coordinates) {
+        document.getElementById("worksiteFeedback").textContent = "無法從連結解析座標，請使用 Google 地圖的「分享 → 複製連結」，或直接輸入緯度與經度。";
+        return;
+      }
+      document.getElementById("newWorksiteLatitude").value = coordinates.latitude;
+      document.getElementById("newWorksiteLongitude").value = coordinates.longitude;
+      document.getElementById("worksiteFeedback").textContent = `已解析定位：${coordinates.latitude}, ${coordinates.longitude}；送出表單後會保存。`;
+    }
+
+    function parseWorksiteMapLink(id) {
+      const link = document.getElementById(`worksite-maps-url-${id}`).value;
+      const coordinates = parseGoogleMapsCoordinates(link);
+      if (!coordinates) {
+        document.getElementById("worksiteFeedback").textContent = "無法從連結解析座標，請使用 Google 地圖的「分享 → 複製連結」。";
+        return;
+      }
+      document.getElementById(`worksite-latitude-${id}`).value = coordinates.latitude;
+      document.getElementById(`worksite-longitude-${id}`).value = coordinates.longitude;
+      document.getElementById("worksiteFeedback").textContent = `已解析定位：${coordinates.latitude}, ${coordinates.longitude}；請按該工地的「儲存」。`;
+    }
+
     async function loadWorksites() {
       const rows = document.getElementById("worksiteRows");
       const canManage = ["owner", "admin"].includes(state.actor?.role);
@@ -1355,6 +1401,11 @@
           <td>${escapeHtml(site.code || "-")}</td>
           <td>${escapeHtml(site.name)}</td>
           <td><input id="worksite-address-${site.id}" class="table-input" value="${escapeAttr(site.address || "")}" ${canManage && site.is_active ? "" : "disabled"}></td>
+          <td>
+            <input id="worksite-maps-url-${site.id}" class="table-input" type="url" value="${escapeAttr(site.google_maps_url || "")}" ${canManage && site.is_active ? "" : "disabled"}>
+            ${site.google_maps_url ? `<a href="${escapeAttr(site.google_maps_url)}" target="_blank" rel="noopener">開啟地圖</a>` : ""}
+            ${canManage && site.is_active ? `<button type="button" class="button-secondary button-compact" onclick="parseWorksiteMapLink(${site.id})">解析定位</button>` : ""}
+          </td>
           <td><input id="worksite-latitude-${site.id}" class="table-input" type="number" step="any" min="-90" max="90" value="${site.latitude ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
           <td><input id="worksite-longitude-${site.id}" class="table-input" type="number" step="any" min="-180" max="180" value="${site.longitude ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
           <td><input id="worksite-radius-${site.id}" class="table-input" type="number" min="10" max="10000" step="1" value="${site.geofence_radius_m ?? ""}" ${canManage && site.is_active ? "" : "disabled"}></td>
@@ -1365,7 +1416,7 @@
               : `<button type="button" class="button-secondary button-compact" onclick="restoreWorksite(${site.id})" ${canManage ? "" : "disabled"}>恢復</button>`}
           </td>
         </tr>
-      `).join("") : '<tr><td colspan="8">目前沒有工地資料</td></tr>';
+      `).join("") : '<tr><td colspan="9">目前沒有工地資料</td></tr>';
     }
 
     async function deleteWorksite(id) {
@@ -1397,8 +1448,10 @@
           return value === "" ? null : Number(value);
         };
         const address = document.getElementById(`worksite-address-${id}`).value.trim();
+        const googleMapsUrl = document.getElementById(`worksite-maps-url-${id}`).value.trim();
         const data = await api(`/api/worksites/${id}/location`, { method: "PUT", body: JSON.stringify({
           address: address || null,
+          google_maps_url: googleMapsUrl || null,
           latitude: valueOrNull(`worksite-latitude-${id}`),
           longitude: valueOrNull(`worksite-longitude-${id}`),
           geofence_radius_m: valueOrNull(`worksite-radius-${id}`),
@@ -1428,6 +1481,7 @@
           code: document.getElementById("newWorksiteCode").value,
           name: document.getElementById("newWorksiteName").value,
           address: document.getElementById("newWorksiteAddress").value || null,
+          google_maps_url: document.getElementById("newWorksiteMapsUrl").value || null,
           latitude: document.getElementById("newWorksiteLatitude").value ? Number(document.getElementById("newWorksiteLatitude").value) : null,
           longitude: document.getElementById("newWorksiteLongitude").value ? Number(document.getElementById("newWorksiteLongitude").value) : null,
           geofence_radius_m: document.getElementById("newWorksiteRadius").value ? Number(document.getElementById("newWorksiteRadius").value) : null,

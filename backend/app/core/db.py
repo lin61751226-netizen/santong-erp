@@ -77,6 +77,8 @@ def _apply_lightweight_migrations() -> None:
         statements = []
         if "address" not in columns:
             statements.append("ALTER TABLE worksite ADD COLUMN address VARCHAR")
+        if "google_maps_url" not in columns:
+            statements.append("ALTER TABLE worksite ADD COLUMN google_maps_url VARCHAR")
         if "latitude" not in columns:
             statements.append("ALTER TABLE worksite ADD COLUMN latitude FLOAT")
         if "longitude" not in columns:

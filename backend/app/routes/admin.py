@@ -2,10 +2,12 @@
 
 import csv
 import calendar
+import re
 import secrets
 from datetime import date, datetime, timedelta
 from io import StringIO
 from typing import Optional
+from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -133,6 +135,34 @@ def _validate_worksite_location(
         raise HTTPException(status_code=400, detail="工地座標必須同時填寫緯度與經度")
     if radius_m is not None and latitude is None:
         raise HTTPException(status_code=400, detail="設定 GPS 半徑前請先填寫工地緯度與經度")
+
+
+def _parse_google_maps_coordinates(value: Optional[str]) -> tuple[Optional[float], Optional[float]]:
+    """從 Google 地圖分享連結解析座標，不呼叫 Google API。"""
+    if not value or not value.strip():
+        return None, None
+    raw = unquote(value.strip())
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Google 地圖連結格式無效")
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="請貼上 http 或 https 開頭的 Google 地圖連結")
+
+    coordinate_patterns = (
+        r"@(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)",
+        r"[?&](?:q|query|ll|center)=(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)",
+        r"!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)",
+    )
+    for pattern in coordinate_patterns:
+        match = re.search(pattern, raw)
+        if not match:
+            continue
+        latitude, longitude = float(match.group(1)), float(match.group(2))
+        if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+            raise HTTPException(status_code=400, detail="Google 地圖連結中的座標超出範圍")
+        return latitude, longitude
+    return None, None
 
 
 def _write_admin_audit(
@@ -341,6 +371,7 @@ def get_options(
                 "code": item.code,
                 "name": item.name,
                 "address": item.address,
+                "google_maps_url": item.google_maps_url,
                 "latitude": item.latitude,
                 "longitude": item.longitude,
                 "geofence_radius_m": item.geofence_radius_m,
@@ -387,6 +418,7 @@ def list_worksites(
             "code": site.code,
             "name": site.name,
             "address": site.address,
+            "google_maps_url": site.google_maps_url,
             "latitude": site.latitude,
             "longitude": site.longitude,
             "geofence_radius_m": site.geofence_radius_m,
@@ -410,13 +442,22 @@ def create_worksite(
         raise HTTPException(status_code=409, detail="工地代碼已存在")
     if session.exec(select(Worksite).where(Worksite.name == name)).first():
         raise HTTPException(status_code=409, detail="工地名稱已存在")
-    _validate_worksite_location(payload.latitude, payload.longitude, payload.geofence_radius_m)
+    google_maps_url = (payload.google_maps_url or "").strip() or None
+    map_latitude, map_longitude = _parse_google_maps_coordinates(google_maps_url)
+    if google_maps_url and (map_latitude is None or map_longitude is None) and (
+        payload.latitude is None or payload.longitude is None
+    ):
+        raise HTTPException(status_code=400, detail="無法從 Google 地圖連結解析座標，請改貼分享連結或直接填寫緯度與經度")
+    latitude = map_latitude if map_latitude is not None else payload.latitude
+    longitude = map_longitude if map_longitude is not None else payload.longitude
+    _validate_worksite_location(latitude, longitude, payload.geofence_radius_m)
     worksite = Worksite(
         code=code,
         name=name,
         address=(payload.address or "").strip() or None,
-        latitude=payload.latitude,
-        longitude=payload.longitude,
+        google_maps_url=google_maps_url,
+        latitude=latitude,
+        longitude=longitude,
         geofence_radius_m=payload.geofence_radius_m,
         is_active=True,
     )
@@ -427,7 +468,17 @@ def create_worksite(
         session, actor, action="create", entity_type="worksite", entity_id=worksite.id,
         summary=f"新增工地：{worksite.code}｜{worksite.name}",
     )
-    return {"message": "工地已新增", "worksite": {"id": worksite.id, "code": worksite.code, "name": worksite.name}}
+    return {
+        "message": "工地已新增",
+        "worksite": {
+            "id": worksite.id,
+            "code": worksite.code,
+            "name": worksite.name,
+            "google_maps_url": worksite.google_maps_url,
+            "latitude": worksite.latitude,
+            "longitude": worksite.longitude,
+        },
+    }
 
 
 @router.delete("/worksites/{site_id}")
@@ -482,6 +533,18 @@ def update_worksite_location(
     if not worksite:
         raise HTTPException(status_code=404, detail="找不到工地")
     data = payload.model_dump(exclude_unset=True)
+    google_maps_url = data.get("google_maps_url", worksite.google_maps_url)
+    if isinstance(google_maps_url, str):
+        google_maps_url = google_maps_url.strip() or None
+        data["google_maps_url"] = google_maps_url
+    map_latitude, map_longitude = _parse_google_maps_coordinates(google_maps_url)
+    if google_maps_url and (map_latitude is None or map_longitude is None) and (
+        data.get("latitude", worksite.latitude) is None or data.get("longitude", worksite.longitude) is None
+    ):
+        raise HTTPException(status_code=400, detail="無法從 Google 地圖連結解析座標，請改貼分享連結或直接填寫緯度與經度")
+    if map_latitude is not None:
+        data["latitude"] = map_latitude
+        data["longitude"] = map_longitude
     latitude = data.get("latitude", worksite.latitude)
     longitude = data.get("longitude", worksite.longitude)
     radius_m = data.get("geofence_radius_m", worksite.geofence_radius_m)
