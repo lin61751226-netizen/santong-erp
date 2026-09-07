@@ -39,6 +39,7 @@ from app.services.hr import (
     get_latest_attendance_event,
     get_today_arrival_site,
     record_attendance_event,
+    record_work_report_event,
 )
 from app.services import forklift_service
 from app.services.line_platform import (
@@ -1006,9 +1007,14 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             member.last_line_action = text
             session.add(member)
             session.commit()
+            record_work_report_event(session, employee, text, assignment=assignment)
             await line_service.reply_text(reply_token, f"已記錄：{text}")
         else:
             # 今日尚未排定工作時仍回覆確認，不要落到可用指令清單
+            record_work_report_event(
+                session, employee, text, assignment=assignment,
+                note="今日尚未排定工作，已先記錄動作回報。",
+            )
             await line_service.reply_text(
                 reply_token,
                 f"已記錄：{text}\n提醒：今日尚未排定工作，已先記錄你的動作回報。",
@@ -1042,6 +1048,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             member.note = detail
             session.add(member)
             session.commit()
+        record_work_report_event(session, employee, "異常回報", assignment=assignment, note=detail)
         # 自動關聯今日點檢的堆高機與打卡工地，同步通知老闆與管理員
         try:
             today_inspections = forklift_service.list_today_inspections_by_operator(session, employee.id)

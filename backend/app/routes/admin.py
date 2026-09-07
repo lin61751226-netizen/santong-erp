@@ -24,6 +24,7 @@ from app.models import (
     Forklift,
     ForkliftInspection,
     ForkliftStatus,
+    AttendanceEvent,
     LeaveRequest,
     LeaveStatus,
     LoginLog,
@@ -36,6 +37,7 @@ from app.models import (
     PhotoUploadLog,
     Role,
     WorkAssignment,
+    WorkReportEvent,
     Worksite,
 )
 from app.schemas import (
@@ -325,6 +327,65 @@ def _attendance_rows_for_actor(
     if employee_code:
         employees = [employee for employee in employees if employee.employee_code == employee_code]
     return build_attendance_rows(session, employees, target_date)
+
+
+def _attendance_history_dates(session: Session, employees: list[Employee]) -> list[date]:
+    """找出有考勤、派工或請假資料的日期，供歷史查詢使用。"""
+    employee_ids = [employee.id for employee in employees if employee.id is not None]
+    if not employee_ids:
+        return []
+
+    dates: set[date] = set()
+    attendance_events = session.exec(
+        select(AttendanceEvent).where(AttendanceEvent.employee_id.in_(employee_ids))
+    ).all()
+    dates.update(event.happened_at.date() for event in attendance_events if event.happened_at)
+
+    assignments = session.exec(
+        select(WorkAssignment)
+        .join(AssignmentMember, AssignmentMember.assignment_id == WorkAssignment.id)
+        .where(AssignmentMember.employee_id.in_(employee_ids))
+    ).all()
+    dates.update(assignment.work_date for assignment in assignments if assignment.work_date)
+
+    leaves = session.exec(
+        select(LeaveRequest).where(LeaveRequest.employee_id.in_(employee_ids))
+    ).all()
+    for leave in leaves:
+        current = leave.start_date
+        while current <= leave.end_date:
+            dates.add(current)
+            current += timedelta(days=1)
+    return sorted(dates)
+
+
+def _attendance_rows_for_date_filter(
+    session: Session,
+    actor: Employee,
+    target_date: Optional[date],
+    date_from: Optional[date],
+    date_to: Optional[date],
+    employee_code: Optional[str] = None,
+) -> list[dict]:
+    employees = _employees_for_actor(session, actor)
+    if employee_code:
+        employees = [employee for employee in employees if employee.employee_code == employee_code]
+    if target_date:
+        dates = [target_date]
+    else:
+        if date_from and date_to and date_from > date_to:
+            raise HTTPException(status_code=422, detail="起始日期不可晚於結束日期")
+        dates = _attendance_history_dates(session, employees)
+        if date_from:
+            dates = [item for item in dates if item >= date_from]
+        if date_to:
+            dates = [item for item in dates if item <= date_to]
+
+    rows: list[dict] = []
+    for item in dates:
+        rows.extend(build_attendance_rows(session, employees, item))
+    rows.sort(key=lambda row: (row["work_date"], row["employee_code"]), reverse=True)
+    return rows
 
 
 def _active_option_labels(session: Session, option_type: str) -> list[str]:
@@ -1057,12 +1118,71 @@ async def apply_reassignment(
 @router.get("/attendance")
 def list_attendance(
     target_date: Optional[date] = Query(default=None),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     employee_code: Optional[str] = Query(default=None),
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
-    actual_date = target_date or date.today()
-    return _attendance_rows_for_actor(session, actor, actual_date, employee_code)
+    if target_date and (date_from or date_to):
+        raise HTTPException(status_code=422, detail="單日查詢不可同時使用日期區間")
+    return _attendance_rows_for_date_filter(
+        session, actor, target_date, date_from, date_to, employee_code,
+    )
+
+
+@router.get("/work-reports")
+def list_work_reports(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    employee_code: Optional[str] = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=1000),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(status_code=422, detail="起始日期不可晚於結束日期")
+    employees = _employees_for_actor(session, actor)
+    if employee_code:
+        employees = [employee for employee in employees if employee.employee_code == employee_code]
+    employee_ids = [employee.id for employee in employees if employee.id is not None]
+    if not employee_ids:
+        return []
+
+    statement = select(WorkReportEvent).where(WorkReportEvent.employee_id.in_(employee_ids))
+    if date_from:
+        statement = statement.where(
+            WorkReportEvent.reported_at >= datetime.combine(date_from, datetime.min.time())
+        )
+    if date_to:
+        statement = statement.where(
+            WorkReportEvent.reported_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        )
+    if actor.role == Role.site_manager and actor.home_site_id:
+        statement = statement.where(WorkReportEvent.site_id == actor.home_site_id)
+
+    reports = session.exec(
+        statement.order_by(WorkReportEvent.reported_at.desc()).limit(limit)
+    ).all()
+    result = []
+    for report in reports:
+        employee = session.get(Employee, report.employee_id)
+        worksite = session.get(Worksite, report.site_id) if report.site_id else None
+        assignment = session.get(WorkAssignment, report.assignment_id) if report.assignment_id else None
+        result.append({
+            "id": report.id,
+            "employee_code": employee.employee_code if employee else None,
+            "employee_name": employee.name if employee else None,
+            "work_date": assignment.work_date.isoformat() if assignment else (
+                report.reported_at.date().isoformat() if report.reported_at else None
+            ),
+            "site_name": worksite.name if worksite else None,
+            "event_type": report.event_type,
+            "reported_at": report.reported_at.isoformat() if report.reported_at else None,
+            "note": report.note,
+            "photo_url": report.photo_url,
+        })
+    return result
 
 
 @router.get("/attendance/exceptions")

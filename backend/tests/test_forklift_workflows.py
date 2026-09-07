@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -17,8 +17,9 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
 from app.models import (
-    AdminAuditLog, DeliveryStatus, Employee, Forklift, ForkliftInspection, ForkliftStatus,
-    NotificationBatch, NotificationDelivery, Role, Worksite,
+    AdminAuditLog, AssignmentMember, AttendanceEvent, DeliveryStatus, Employee, Forklift,
+    ForkliftInspection, ForkliftStatus, NotificationBatch, NotificationDelivery, Role,
+    WorkAssignment, WorkReportEvent, Worksite,
 )
 from app.services import forklift_service as fs
 from app.services.bootstrap import _ensure_forklifts
@@ -247,6 +248,41 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(client.get("/api/forklift-inspections/export?month=2024-13").status_code, 422)
         self.assertEqual(client.get("/api/forklift-inspections/export?start_date=2026-09-30&end_date=2026-09-01").status_code, 422)
+
+    def test_attendance_and_work_reports_query_preserves_history(self):
+        assignment = WorkAssignment(
+            work_date=date(2026, 8, 1), site_id=self.site.id, work_item="歷史作業",
+        )
+        self.session.add(assignment)
+        self.session.commit()
+        self.session.add_all([
+            AssignmentMember(assignment_id=assignment.id, employee_id=self.driver.id),
+            AttendanceEvent(
+                employee_id=self.driver.id, site_id=self.site.id, assignment_id=assignment.id,
+                event_type="上班打卡", happened_at=datetime(2026, 8, 1, 1, 0),
+            ),
+            WorkReportEvent(
+                employee_id=self.driver.id, site_id=self.site.id, assignment_id=assignment.id,
+                event_type="工作完成", reported_at=datetime(2026, 8, 1, 9, 0), note="歷史回報",
+            ),
+        ])
+        self.session.commit()
+        client = self.api_client()
+
+        attendance = client.get("/api/attendance", params={"employee_code": self.driver.employee_code})
+        self.assertEqual(attendance.status_code, 200)
+        self.assertTrue(any(row["work_date"] == "2026-08-01" for row in attendance.json()))
+        history_row = next(row for row in attendance.json() if row["work_date"] == "2026-08-01")
+        self.assertEqual(history_row["site_name"], self.site.name)
+
+        reports = client.get("/api/work-reports", params={"employee_code": self.driver.employee_code})
+        self.assertEqual(reports.status_code, 200)
+        self.assertEqual(reports.json()[0]["event_type"], "工作完成")
+        self.assertEqual(reports.json()[0]["note"], "歷史回報")
+        self.assertEqual(
+            client.get("/api/work-reports", params={"date_from": "2026-09-02", "date_to": "2026-09-01"}).status_code,
+            422,
+        )
 
     def test_export_does_not_silently_truncate_at_500(self):
         self.session.add_all([ForkliftInspection(

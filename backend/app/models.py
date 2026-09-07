@@ -227,6 +227,19 @@ class AttendanceEvent(SQLModel, table=True):
     longitude: Optional[float] = None
 
 
+class WorkReportEvent(SQLModel, table=True):
+    """不可覆寫的 LINE 工作回報歷史，避免只保留派工的最後狀態。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    employee_id: int = Field(foreign_key="employee.id", index=True)
+    site_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    assignment_id: Optional[int] = Field(default=None, foreign_key="workassignment.id", index=True)
+    event_type: str = Field(index=True)
+    reported_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    source: str = Field(default="line")
+    note: Optional[str] = None
+    photo_url: Optional[str] = None
+
+
 class PhotoUploadLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     # 未綁定員工的 LINE 帳號上傳時也會留下記錄，因此允許為空

@@ -20,6 +20,7 @@ from app.models import (
     NotificationCategory,
     Role,
     WorkAssignment,
+    WorkReportEvent,
     Worksite,
 )
 
@@ -379,6 +380,30 @@ def record_attendance_event(
     return AttendanceRecordResult(event=event, assignment=assignment, anomalies=anomalies)
 
 
+def record_work_report_event(
+    session: Session,
+    employee: Employee,
+    event_type: str,
+    assignment: WorkAssignment | None = None,
+    note: Optional[str] = None,
+    photo_url: Optional[str] = None,
+) -> WorkReportEvent:
+    """保存一筆不可覆寫的工作回報，並保留與當日派工及工地的關聯。"""
+    assignment = assignment or find_assignment_for_employee(session, employee.id, date.today())
+    event = WorkReportEvent(
+        employee_id=employee.id,
+        site_id=assignment.site_id if assignment else employee.home_site_id,
+        assignment_id=assignment.id if assignment else None,
+        event_type=event_type,
+        note=note,
+        photo_url=photo_url,
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    return event
+
+
 def get_covering_leave(
     session: Session,
     employee_id: int,
@@ -414,7 +439,9 @@ def build_attendance_rows(
         if not assignment and not leave and not latest_event:
             continue
 
-        site = session.get(Worksite, assignment.site_id) if assignment else None
+        event_site_id = latest_event.site_id if latest_event and latest_event.site_id else None
+        site_id = event_site_id or (assignment.site_id if assignment else None)
+        site = session.get(Worksite, site_id) if site_id else None
         anomalies: list[str] = []
         summary_status = leave.status.value if leave else (member.ack_status.value if member else "pending")
 

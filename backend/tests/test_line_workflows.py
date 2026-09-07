@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models import AttendanceEvent, AttendanceEventType, Employee, PhotoUploadLog, Worksite
+from app.models import AttendanceEvent, AttendanceEventType, Employee, PhotoUploadLog, WorkReportEvent, Worksite
 from app.services.google_drive import GoogleDriveWorklogService
 from app.services.line import (
     _reply_attendance_options,
@@ -96,6 +96,33 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(upload_photo.await_args.kwargs["site_name"], "照片工地")
             saved = session.exec(select(PhotoUploadLog)).one()
             self.assertEqual(saved.site_id, site.id)
+
+    async def test_work_report_is_saved_as_history_without_overwriting_previous_report(self) -> None:
+        with Session(self.engine) as session:
+            employee = Employee(
+                employee_code="EMP-REPORT",
+                name="回報員工",
+                bind_token="TOKEN-REPORT",
+                line_user_id="U-report",
+            )
+            session.add(employee)
+            session.commit()
+            reply = AsyncMock(return_value=(True, "sent"))
+            with patch.object(line_service, "reply_text", reply):
+                for text in ("工作開始", "工作完成"):
+                    await process_webhook_event(session, {
+                        "type": "message", "replyToken": "reply-report",
+                        "source": {"type": "user", "userId": "U-report"},
+                        "message": {"type": "text", "text": text},
+                    })
+
+            reports = session.exec(
+                select(WorkReportEvent).where(WorkReportEvent.employee_id == employee.id)
+            ).all()
+            self.assertEqual([report.event_type for report in reports], ["工作開始", "工作完成"])
+            with Session(self.engine) as reopened:
+                saved = reopened.exec(select(WorkReportEvent)).all()
+                self.assertEqual(len(saved), 2)
 
     async def test_leave_menu_contains_all_leave_types(self) -> None:
         reply = AsyncMock(return_value=(True, "sent"))

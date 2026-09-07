@@ -611,12 +611,12 @@
         <div class="panel-header">
           <div>
             <h2>考勤與回報查詢</h2>
-            <p class="muted">第一版用工作回報狀態做簡易考勤；第二版再擴充 GPS、QR Code、拍照打卡。</p>
+            <p class="muted">不填日期可查全部歷史保存資料；填入日期可查單日。考勤與每筆工作回報均會保留。</p>
           </div>
           <div class="button-row">
             <input id="attendanceFilterDate" type="date">
             <select id="attendanceEmployee"></select>
-            <button type="button" class="button-secondary" onclick="loadAttendance()">查詢</button>
+            <button type="button" class="button-secondary" onclick="loadAttendance(); loadWorkReports();">查詢</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -635,6 +635,27 @@
               </tr>
             </thead>
             <tbody id="attendanceRows"></tbody>
+          </table>
+        </div>
+        <div class="panel-header" style="margin-top: 1.5rem;">
+          <div>
+            <h3>工作回報保存記錄</h3>
+            <p class="muted">包含已收到、已到場、工作開始、工作完成與異常回報，不會被最新狀態覆蓋。</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>回報時間</th>
+                <th>員工</th>
+                <th>日期</th>
+                <th>工地</th>
+                <th>回報內容</th>
+                <th>備註</th>
+              </tr>
+            </thead>
+            <tbody id="workReportRows"></tbody>
           </table>
         </div>
       </section>
@@ -1000,7 +1021,7 @@
     async function bootstrap() {
       document.getElementById("workDate").value = todayString();
       document.getElementById("assignmentFilterDate").value = todayString();
-      document.getElementById("attendanceFilterDate").value = todayString();
+      document.getElementById("attendanceFilterDate").value = "";
       document.getElementById("exceptionFilterDate").value = todayString();
       document.getElementById("inspectionFilterDate").value = todayString();
       document.getElementById("inspectionPeriod").value = "all";
@@ -1015,6 +1036,7 @@
         loadAssignments(),
         loadLeaves(),
         loadAttendance(),
+        loadWorkReports(),
         loadAttendanceExceptions(),
         loadLineStatus(),
         loadWorksites(),
@@ -1114,6 +1136,29 @@
       const query = params.toString() ? `?${params.toString()}` : "";
       const data = await api(`/api/attendance${query}`);
       renderAttendance(data);
+    }
+
+    async function loadWorkReports() {
+      const dateValue = document.getElementById("attendanceFilterDate").value;
+      const employeeCode = document.getElementById("attendanceEmployee").value;
+      const params = new URLSearchParams();
+      if (dateValue) {
+        params.set("date_from", dateValue);
+        params.set("date_to", dateValue);
+      }
+      if (employeeCode) params.set("employee_code", employeeCode);
+      params.set("limit", "500");
+      const data = await api(`/api/work-reports?${params.toString()}`);
+      document.getElementById("workReportRows").innerHTML = data.length ? data.map((row) => `
+        <tr>
+          <td>${formatTW(row.reported_at)}</td>
+          <td>${escapeHtml(row.employee_name || row.employee_code || "-")}<br><span class="muted">${escapeHtml(row.employee_code || "")}</span></td>
+          <td>${row.work_date || "-"}</td>
+          <td>${escapeHtml(row.site_name || "-")}</td>
+          <td><span class="pill">${escapeHtml(row.event_type || "-")}</span></td>
+          <td>${escapeHtml(row.note || "-")}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">無工作回報保存記錄</td></tr>';
     }
 
     async function loadAttendanceExceptions() {
