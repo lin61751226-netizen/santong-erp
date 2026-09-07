@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     restore_db_result = await google_drive_worklog_service.restore_database_snapshot()
     logger.info("Google Drive 資料庫快照復原結果：%s", restore_db_result.get("status"))
+    if (
+        settings.environment == "production"
+        and settings.database_url.startswith("sqlite:///")
+        and google_drive_worklog_service.is_configured()
+        and restore_db_result.get("status") == "failed"
+    ):
+        # Never continue with a newly-created empty SQLite database when the
+        # authoritative Drive snapshot could not be read.
+        raise RuntimeError("Google Drive 資料庫快照下載失敗，已停止啟動以保護歷史資料")
     init_db()
     with session_scope() as session:
         seed_demo_data(session)

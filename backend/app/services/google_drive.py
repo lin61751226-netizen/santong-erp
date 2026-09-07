@@ -33,6 +33,29 @@ LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
 DATABASE_BACKUP_FILE_NAME = "三通資料庫最新快照.sqlite3"
 OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
+# These tables are append-only or use disable/restore semantics. A lower row
+# count means an older or empty database is about to overwrite newer history.
+PRESERVED_DATABASE_TABLES = (
+    "employee",
+    "worksite",
+    "adminauditlog",
+    "workassignment",
+    "assignmentmember",
+    "notificationbatch",
+    "notificationdelivery",
+    "leaverequest",
+    "attendanceevent",
+    "workreportevent",
+    "photouploadlog",
+    "linelinksession",
+    "loginlog",
+    "meetingrecord",
+    "financeentry",
+    "masteroption",
+    "forklift",
+    "forkliftinspection",
+)
+
 logger = logging.getLogger(__name__)
 MAX_UPLOAD_RETRIES = 3
 RETRY_DELAY_SECONDS = 2
@@ -343,6 +366,34 @@ class GoogleDriveWorklogService:
                 _, done = downloader.next_chunk()
         return target.stat().st_size > 0
 
+    @staticmethod
+    def _database_record_counts(database_path: Path) -> dict[str, int]:
+        connection = sqlite3.connect(str(database_path))
+        try:
+            tables = {
+                row[0].lower()
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+            return {
+                table: (
+                    connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+                    if table in tables
+                    else 0
+                )
+                for table in PRESERVED_DATABASE_TABLES
+            }
+        finally:
+            connection.close()
+
+    def _snapshot_regressions(self, source: Path, existing: Path) -> dict[str, dict[str, int]]:
+        source_counts = self._database_record_counts(source)
+        existing_counts = self._database_record_counts(existing)
+        return {
+            table: {"local": source_counts[table], "drive": existing_counts[table]}
+            for table in PRESERVED_DATABASE_TABLES
+            if source_counts[table] < existing_counts[table]
+        }
+
     def _upload_database_snapshot(self, source: Path) -> dict:
         client = self._build_client()
         folder_id = self._system_data_folder_id(client, create=True)
@@ -369,8 +420,13 @@ class GoogleDriveWorklogService:
                 found = await asyncio.to_thread(self._download_database_snapshot, snapshot)
                 if not found:
                     return {"status": "not_found"}
-                if target.exists() and target.stat().st_size > 0:
+                if (
+                    settings.environment != "production"
+                    and target.exists()
+                    and target.stat().st_size > 0
+                ):
                     return {"status": "local_exists", "bytes": target.stat().st_size}
+                target.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(snapshot, target)
                 return {"status": "restored", "bytes": target.stat().st_size}
             except Exception as exc:
@@ -390,6 +446,16 @@ class GoogleDriveWorklogService:
                 finally:
                     target_db.close()
                     source_db.close()
+                existing_snapshot = Path(temp_dir) / f"existing-{DATABASE_BACKUP_FILE_NAME}"
+                if self._download_database_snapshot(existing_snapshot):
+                    regressions = self._snapshot_regressions(snapshot, existing_snapshot)
+                    if regressions:
+                        logger.error("拒絕以較少記錄的本機資料庫覆蓋 Google Drive：%s", regressions)
+                        return {
+                            "status": "skipped_regression",
+                            "reason": "本機資料庫的保存記錄少於 Google Drive 快照",
+                            "regressions": regressions,
+                        }
                 return self._upload_database_snapshot(snapshot)
 
     async def backup_database(self) -> dict:
