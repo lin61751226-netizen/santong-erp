@@ -256,6 +256,23 @@ class PhotoUploadLog(SQLModel, table=True):
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
+class GroupTextLog(SQLModel, table=True):
+    """LINE 群組原始文字，先完整保留，後續再由人工判斷是否納入正式日誌。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_type: str = Field(index=True)
+    source_id: str = Field(index=True)
+    line_user_id: Optional[str] = Field(default=None, index=True)
+    employee_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    site_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    assignment_id: Optional[int] = Field(default=None, foreign_key="workassignment.id", index=True)
+    source_message_id: Optional[str] = Field(default=None, index=True, unique=True)
+    content: str = Field(sa_column=Column(Text))
+    sent_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    review_status: str = Field(default="pending", index=True)
+    is_included: bool = Field(default=True)
+    note: Optional[str] = Field(default=None, sa_column=Column(Text))
+
+
 class MeetingRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(index=True)

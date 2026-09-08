@@ -3,11 +3,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -19,6 +21,7 @@ from app.models import (
     DeliveryStatus,
     Employee,
     Forklift,
+    GroupTextLog,
     LeaveType,
     LeaveRequest,
     LeaveStatus,
@@ -396,6 +399,76 @@ async def _backup_preserved_records() -> None:
         print(f"[record-backup] Google Drive 快照失敗，等待排程補做：{type(exc).__name__}")
 
 
+def _arrival_site_for_date(session: Session, employee_id: int, target_date: date) -> Worksite | None:
+    local_tz = ZoneInfo(settings.timezone)
+    start_at = datetime.combine(target_date, time.min, tzinfo=local_tz).astimezone(timezone.utc).replace(tzinfo=None)
+    end_at = (datetime.combine(target_date, time.min, tzinfo=local_tz) + timedelta(days=1)) \
+        .astimezone(timezone.utc).replace(tzinfo=None)
+    event = session.exec(
+        select(AttendanceEvent)
+        .where(
+            AttendanceEvent.employee_id == employee_id,
+            AttendanceEvent.event_type == AttendanceEventType.arrive_site.value,
+            AttendanceEvent.happened_at >= start_at,
+            AttendanceEvent.happened_at < end_at,
+        )
+        .order_by(AttendanceEvent.happened_at.desc())
+    ).first()
+    return session.get(Worksite, event.site_id) if event and event.site_id else None
+
+
+async def _save_group_text_log(
+    session: Session,
+    *,
+    event: dict[str, Any],
+    source: dict[str, Any],
+    line_user_id: str | None,
+    employee: Employee | None,
+    content: str,
+) -> None:
+    if not content:
+        return
+    message_id = str(event.get("message", {}).get("id", "")).strip() or None
+    if message_id and session.exec(
+        select(GroupTextLog).where(GroupTextLog.source_message_id == message_id)
+    ).first():
+        return
+
+    event_at = _event_datetime(event)
+    target_date = event_at.astimezone(ZoneInfo(settings.timezone)).date()
+    assignment = find_assignment_for_employee(session, employee.id, target_date) if employee and employee.id else None
+    site = session.get(Worksite, assignment.site_id) if assignment else None
+    if employee and employee.id and not site:
+        site = _arrival_site_for_date(session, employee.id, target_date)
+    if employee and employee.home_site_id and not site:
+        site = session.get(Worksite, employee.home_site_id)
+
+    source_type = str(source.get("type") or "group")
+    source_id = str(source.get("groupId") or source.get("roomId") or "unknown")
+    session.add(GroupTextLog(
+        source_type=source_type,
+        source_id=source_id,
+        line_user_id=line_user_id,
+        employee_id=employee.id if employee else None,
+        site_id=site.id if site else None,
+        assignment_id=assignment.id if assignment else None,
+        source_message_id=message_id,
+        content=content,
+        sent_at=event_at.astimezone(timezone.utc).replace(tzinfo=None),
+        note="LINE 群組原始文字，自動收集待人工篩選",
+    ))
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return
+    except Exception as exc:
+        session.rollback()
+        print(f"[group-text-log] 群組文字保存失敗：{type(exc).__name__}")
+        return
+    await _backup_preserved_records()
+
+
 async def _handle_image_message(
     session: Session,
     *,
@@ -618,6 +691,16 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             employee=employee,
         )
         return
+
+    if message_type == "text" and source_type in {"group", "room"}:
+        await _save_group_text_log(
+            session,
+            event=event,
+            source=source,
+            line_user_id=line_user_id,
+            employee=employee,
+            content=str(message.get("text", "")).strip(),
+        )
 
     if message_type != "text" or not line_user_id:
         return

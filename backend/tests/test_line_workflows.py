@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import unittest
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.pool import StaticPool
 from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
-from app.models import AttendanceEvent, AttendanceEventType, Employee, PhotoUploadLog, WorkReportEvent, Worksite
+from app.models import (
+    AssignmentMember, AttendanceEvent, AttendanceEventType, Employee, GroupTextLog,
+    PhotoUploadLog, WorkAssignment, WorkReportEvent, Worksite,
+)
 from app.services.google_drive import GoogleDriveWorklogService
 from app.services.line import (
     _reply_attendance_options,
@@ -150,12 +154,57 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "type": "message",
             "replyToken": "reply-token",
             "source": {"type": "group", "groupId": "G1", "userId": "U1"},
-            "message": {"type": "text", "text": "大家今天辛苦了"},
+            "message": {"id": "group-message-1", "type": "text", "text": "大家今天辛苦了"},
         }
         reply = AsyncMock(return_value=(True, "sent"))
         with Session(self.engine) as session, patch.object(line_service, "reply_text", reply):
             await process_webhook_event(session, event)
+            saved = session.exec(select(GroupTextLog)).one()
+            self.assertEqual(saved.source_id, "G1")
+            self.assertEqual(saved.content, "大家今天辛苦了")
+            self.assertEqual(saved.review_status, "pending")
         reply.assert_not_awaited()
+        self.backup_database.assert_awaited_once()
+
+    async def test_group_text_redelivery_is_saved_once(self) -> None:
+        event = {
+            "type": "message",
+            "replyToken": "reply-token",
+            "source": {"type": "group", "groupId": "G1", "userId": "U1"},
+            "message": {"id": "same-message", "type": "text", "text": "同一則訊息"},
+        }
+        with Session(self.engine) as session, patch.object(line_service, "reply_text", AsyncMock()):
+            await process_webhook_event(session, event)
+            await process_webhook_event(session, event)
+            self.assertEqual(len(session.exec(select(GroupTextLog)).all()), 1)
+        self.backup_database.assert_awaited_once()
+
+    async def test_group_text_uses_daily_assignment_site(self) -> None:
+        with Session(self.engine) as session:
+            employee = Employee(
+                employee_code="EMP-GROUP", name="群組員工", bind_token="TOKEN-GROUP",
+                line_user_id="U-group",
+            )
+            site = Worksite(code="GROUP-SITE", name="群組工地")
+            session.add_all([employee, site])
+            session.commit()
+            assignment = WorkAssignment(work_date=date(2026, 9, 8), site_id=site.id, work_item="搬運")
+            session.add(assignment)
+            session.commit()
+            session.add(AssignmentMember(assignment_id=assignment.id, employee_id=employee.id))
+            session.commit()
+            event_time = datetime(2026, 9, 8, 1, tzinfo=timezone.utc)
+            await process_webhook_event(session, {
+                "type": "message",
+                "timestamp": int(event_time.timestamp() * 1000),
+                "replyToken": "reply-token",
+                "source": {"type": "group", "groupId": "G1", "userId": "U-group"},
+                "message": {"id": "assigned-message", "type": "text", "text": "已完成卸料"},
+            })
+            saved = session.exec(select(GroupTextLog)).one()
+            self.assertEqual(saved.employee_id, employee.id)
+            self.assertEqual(saved.site_id, site.id)
+            self.assertEqual(saved.assignment_id, assignment.id)
 
     async def test_menu_switch_postback_is_silent(self) -> None:
         event = {

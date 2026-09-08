@@ -18,8 +18,8 @@ from app.deps import get_current_actor
 from app.main import app
 from app.models import (
     AdminAuditLog, AssignmentMember, AttendanceEvent, DeliveryStatus, Employee, Forklift,
-    ForkliftInspection, ForkliftStatus, NotificationBatch, NotificationDelivery, Role,
-    WorkAssignment, WorkReportEvent, Worksite,
+    ForkliftInspection, ForkliftStatus, GroupTextLog, NotificationBatch, NotificationDelivery,
+    PhotoUploadLog, Role, WorkAssignment, WorkReportEvent, Worksite,
 )
 from app.services import forklift_service as fs
 from app.services.bootstrap import _ensure_forklifts
@@ -226,6 +226,46 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides[get_session] = lambda: self.session
         app.dependency_overrides[get_current_actor] = lambda: self.admin
         return TestClient(app)
+
+    def test_worksite_journal_merges_all_preserved_sources(self):
+        recorded_at = datetime(2026, 9, 8, 0, 30)
+        self.session.add(GroupTextLog(
+            source_type="group", source_id="G1", line_user_id=self.driver.line_user_id,
+            employee_id=self.driver.id, site_id=self.site.id, source_message_id="journal-text-1",
+            content="完成卸料", sent_at=recorded_at,
+        ))
+        self.session.add(AttendanceEvent(
+            employee_id=self.driver.id, site_id=self.site.id, event_type="上班打卡",
+            happened_at=recorded_at, latitude=24.8, longitude=120.9,
+        ))
+        self.session.add(ForkliftInspection(
+            forklift_id=self.vehicle.id, operator_id=self.driver.id, site_id=self.site.id,
+            inspection_date=date(2026, 9, 8), inspection_items={}, all_passed=True,
+            created_at=recorded_at,
+        ))
+        self.session.add(PhotoUploadLog(
+            employee_id=self.driver.id, site_id=self.site.id, line_user_id=self.driver.line_user_id,
+            source_message_id="journal-photo-1", file_name="work.jpg", drive_file_id="file-1",
+            drive_folder_id="folder-1", drive_url="https://drive.example/work.jpg",
+            uploaded_at=recorded_at,
+        ))
+        self.session.commit()
+
+        response = self.api_client().get("/api/worksite-journals?target_date=2026-09-08")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["date"], "2026-09-08")
+        self.assertEqual(len(payload["sites"]), 1)
+        journal = payload["sites"][0]
+        self.assertEqual(journal["site_name"], self.site.name)
+        self.assertEqual(journal["counts"], {
+            "group_texts": 1, "attendance": 1, "inspections": 1, "photos": 1,
+        })
+        self.assertEqual(journal["group_texts"][0]["content"], "完成卸料")
+        self.assertEqual(journal["attendance"][0]["employee_name"], self.driver.name)
+        self.assertEqual(journal["inspections"][0]["forklift_code"], self.vehicle.forklift_code)
+        self.assertEqual(journal["photos"][0]["file_name"], "work.jpg")
 
     def test_month_export_includes_full_period_and_unknown_items(self):
         for day in [date(2024, 1, 31), date(2024, 2, 1), date(2024, 2, 29), date(2024, 3, 1)]:

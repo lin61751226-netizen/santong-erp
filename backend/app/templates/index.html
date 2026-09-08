@@ -108,6 +108,21 @@
       <div id="stats" class="stats"></div>
     </section>
 
+    <section class="panel span-12" data-workspace="overview">
+      <div class="panel-header">
+        <div>
+          <h2>今日各工地工作日誌</h2>
+          <p class="muted">自動合併 LINE 群組文字、打卡人員、堆高機點檢與工作照片；原始資料先完整保存，之後再由人員篩選。</p>
+        </div>
+        <div class="button-row">
+          <input id="journalDate" type="date" aria-label="工作日誌日期">
+          <button type="button" onclick="loadWorksiteJournals()">整理工作日誌</button>
+        </div>
+      </div>
+      <p id="journalFeedback" class="notice" role="status" aria-live="polite">正在整理今日資料。</p>
+      <div id="journalCards" class="journal-grid"></div>
+    </section>
+
 
     <section class="panel span-12" data-workspace="fleet">
       <div class="panel-header">
@@ -876,6 +891,66 @@
       `).join("");
     }
 
+    function formatTWTime(value) {
+      if (!value) return "-";
+      const iso = typeof value === "string" && value.endsWith("Z") ? value : value + "Z";
+      return new Date(iso).toLocaleTimeString("zh-TW", {
+        timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit",
+      });
+    }
+
+    async function loadWorksiteJournals() {
+      const targetDate = document.getElementById("journalDate").value || todayString();
+      const feedback = document.getElementById("journalFeedback");
+      const cards = document.getElementById("journalCards");
+      feedback.textContent = "正在合併群組文字、打卡、點檢與照片。";
+      try {
+        const data = await api(`/api/worksite-journals?target_date=${encodeURIComponent(targetDate)}`);
+        const totals = data.sites.reduce((sum, site) => {
+          sum.texts += site.counts.group_texts;
+          sum.attendance += site.counts.attendance;
+          sum.inspections += site.counts.inspections;
+          sum.photos += site.counts.photos;
+          return sum;
+        }, {texts: 0, attendance: 0, inspections: 0, photos: 0});
+        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張。全部是未刪除的原始資料。`;
+        if (!data.sites.length) {
+          cards.innerHTML = '<div class="journal-empty">所選日期尚無可整理的資料。</div>';
+          return;
+        }
+        cards.innerHTML = data.sites.map((site) => {
+          const groupTexts = site.group_texts.map(item => `
+            <li><time>${escapeHtml(formatTWTime(item.sent_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
+          `).join("") || '<li class="muted">尚無群組文字</li>';
+          const attendance = site.attendance.map(item => {
+            const mapLink = item.latitude != null && item.longitude != null
+              ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(item.latitude)},${encodeURIComponent(item.longitude)}" target="_blank" rel="noopener">查看定位</a>`
+              : "";
+            return `<li><time>${escapeHtml(formatTWTime(item.happened_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.event_type)} ${mapLink}</span></li>`;
+          }).join("") || '<li class="muted">尚無打卡</li>';
+          const inspections = site.inspections.map(item => `
+            <li><time>${escapeHtml(formatTWTime(item.created_at))}</time><strong>${escapeHtml(item.operator_name)}</strong><span>${escapeHtml(item.forklift_code)}｜${item.all_passed ? "全部正常" : "有異常"}${item.notes ? `｜${escapeHtml(item.notes)}` : ""}</span></li>
+          `).join("") || '<li class="muted">尚無點檢</li>';
+          const photos = site.photos.map(item => `
+            <li><time>${escapeHtml(formatTWTime(item.uploaded_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">${escapeHtml(item.file_name)}</a></li>
+          `).join("") || '<li class="muted">尚無工作照片</li>';
+          return `<article class="journal-card">
+            <div class="journal-card-heading">
+              <div><span class="eyebrow">工地日誌</span><h3>${escapeHtml(site.site_name)}</h3></div>
+              <div class="journal-count">${site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div>
+            </div>
+            <details open><summary>群組文字 <span>${site.counts.group_texts}</span></summary><ul class="journal-list">${groupTexts}</ul></details>
+            <details open><summary>打卡人員 <span>${site.counts.attendance}</span></summary><ul class="journal-list">${attendance}</ul></details>
+            <details open><summary>堆高機點檢 <span>${site.counts.inspections}</span></summary><ul class="journal-list">${inspections}</ul></details>
+            <details open><summary>工作照片 <span>${site.counts.photos}</span></summary><ul class="journal-list">${photos}</ul></details>
+          </article>`;
+        }).join("");
+      } catch (error) {
+        feedback.textContent = error.message;
+        cards.innerHTML = "";
+      }
+    }
+
     function renderSelectOptions() {
       const siteOptions = state.worksites.map((site) => `<option value="${site.id}">${site.name}</option>`).join("");
       document.getElementById("siteId").innerHTML = siteOptions;
@@ -1020,6 +1095,7 @@
 
     async function bootstrap() {
       document.getElementById("workDate").value = todayString();
+      document.getElementById("journalDate").value = todayString();
       document.getElementById("assignmentFilterDate").value = todayString();
       document.getElementById("attendanceFilterDate").value = "";
       document.getElementById("exceptionFilterDate").value = todayString();
@@ -1032,6 +1108,7 @@
         state.worksites.map(site => `<option value="${site.id}">${escapeHtml(site.name)}</option>`).join("");
       await Promise.all([
         loadDashboard(),
+        loadWorksiteJournals(),
         loadEmployees(),
         loadAssignments(),
         loadLeaves(),

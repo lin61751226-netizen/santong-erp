@@ -48,6 +48,7 @@ PRESERVED_DATABASE_TABLES = (
     "attendanceevent",
     "workreportevent",
     "photouploadlog",
+    "grouptextlog",
     "linelinksession",
     "loginlog",
     "meetingrecord",

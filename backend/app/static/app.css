@@ -89,6 +89,95 @@ input[hidden] { display: none; }
 [data-workspace="fleet"] #fleetFeedback { margin: 16px 0 0; }
 .notification-content { white-space: pre-line; min-width: 220px; }
 
+.journal-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.journal-card {
+  padding: 20px;
+  border: 1px solid rgba(53, 92, 79, 0.16);
+  border-left: 5px solid var(--brand);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.journal-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.journal-card-heading h3 {
+  margin-top: 8px;
+  font-size: 24px;
+}
+
+.journal-count {
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: #733d18;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.journal-card details {
+  padding: 10px 0;
+  border-top: 1px solid #efe8da;
+}
+
+.journal-card summary {
+  cursor: pointer;
+  font-weight: 800;
+  color: var(--brand);
+}
+
+.journal-card summary span {
+  display: inline-flex;
+  min-width: 25px;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  font-size: 12px;
+}
+
+.journal-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.journal-list li {
+  display: grid;
+  grid-template-columns: 70px minmax(110px, .35fr) 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #fbf8f1;
+  line-height: 1.5;
+}
+
+.journal-list time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-empty {
+  padding: 28px;
+  border: 1px dashed var(--line);
+  border-radius: 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .hero-card,
 .panel {
   background: var(--panel);
@@ -399,6 +488,14 @@ th {
   .panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .journal-list li {
+    grid-template-columns: 62px 1fr;
+  }
+
+  .journal-list li > :last-child {
+    grid-column: 1 / -1;
   }
 }
 

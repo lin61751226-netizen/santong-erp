@@ -4,10 +4,11 @@ import csv
 import calendar
 import re
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from io import StringIO
 from typing import Optional
 from urllib.parse import unquote, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,6 +26,7 @@ from app.models import (
     Forklift,
     ForkliftInspection,
     ForkliftStatus,
+    GroupTextLog,
     AttendanceEvent,
     LeaveRequest,
     LeaveStatus,
@@ -1486,6 +1488,134 @@ def list_photo_uploads(
             "note": log.note,
         })
     return result
+
+
+def _local_date_utc_bounds(target_date: date) -> tuple[datetime, datetime]:
+    local_tz = ZoneInfo(settings.timezone)
+    start = datetime.combine(target_date, time.min, tzinfo=local_tz)
+    end = start + timedelta(days=1)
+    return (
+        start.astimezone(timezone.utc).replace(tzinfo=None),
+        end.astimezone(timezone.utc).replace(tzinfo=None),
+    )
+
+
+@router.get("/worksite-journals")
+def list_worksite_journals(
+    target_date: Optional[date] = Query(default=None),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    journal_date = target_date or local_today()
+    if actor.role == Role.site_manager and not actor.home_site_id:
+        return {"date": journal_date.isoformat(), "sites": []}
+    start_at, end_at = _local_date_utc_bounds(journal_date)
+    allowed_site_id = actor.home_site_id if actor.role == Role.site_manager else None
+
+    group_statement = select(GroupTextLog).where(
+        GroupTextLog.sent_at >= start_at,
+        GroupTextLog.sent_at < end_at,
+    )
+    attendance_statement = select(AttendanceEvent).where(
+        AttendanceEvent.happened_at >= start_at,
+        AttendanceEvent.happened_at < end_at,
+    )
+    photo_statement = select(PhotoUploadLog).where(
+        PhotoUploadLog.uploaded_at >= start_at,
+        PhotoUploadLog.uploaded_at < end_at,
+    )
+    inspection_statement = select(ForkliftInspection).where(
+        ForkliftInspection.inspection_date == journal_date
+    )
+    if allowed_site_id:
+        group_statement = group_statement.where(GroupTextLog.site_id == allowed_site_id)
+        attendance_statement = attendance_statement.where(AttendanceEvent.site_id == allowed_site_id)
+        photo_statement = photo_statement.where(PhotoUploadLog.site_id == allowed_site_id)
+        inspection_statement = inspection_statement.where(ForkliftInspection.site_id == allowed_site_id)
+
+    group_logs = session.exec(group_statement.order_by(GroupTextLog.sent_at)).all()
+    attendance_logs = session.exec(attendance_statement.order_by(AttendanceEvent.happened_at)).all()
+    photo_logs = session.exec(photo_statement.order_by(PhotoUploadLog.uploaded_at)).all()
+    inspections = session.exec(inspection_statement.order_by(ForkliftInspection.created_at)).all()
+
+    employees = {row.id: row for row in session.exec(select(Employee)).all() if row.id is not None}
+    worksites = {row.id: row for row in session.exec(select(Worksite)).all() if row.id is not None}
+    forklifts = {row.id: row for row in session.exec(select(Forklift)).all() if row.id is not None}
+    buckets: dict[int | None, dict] = {}
+
+    def bucket_for(site_id: int | None) -> dict:
+        if site_id not in buckets:
+            site = worksites.get(site_id)
+            buckets[site_id] = {
+                "site_id": site_id,
+                "site_name": site.name if site else "未判定工地",
+                "group_texts": [],
+                "attendance": [],
+                "inspections": [],
+                "photos": [],
+            }
+        return buckets[site_id]
+
+    for log in group_logs:
+        employee = employees.get(log.employee_id)
+        bucket_for(log.site_id)["group_texts"].append({
+            "id": log.id,
+            "employee_code": employee.employee_code if employee else None,
+            "employee_name": employee.name if employee else "未綁定 LINE 使用者",
+            "content": log.content,
+            "sent_at": log.sent_at.isoformat() if log.sent_at else None,
+            "review_status": log.review_status,
+            "is_included": log.is_included,
+        })
+
+    for event in attendance_logs:
+        employee = employees.get(event.employee_id)
+        bucket_for(event.site_id)["attendance"].append({
+            "id": event.id,
+            "employee_code": employee.employee_code if employee else None,
+            "employee_name": employee.name if employee else "未知員工",
+            "event_type": event.event_type,
+            "happened_at": event.happened_at.isoformat() if event.happened_at else None,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
+            "note": event.note,
+        })
+
+    for inspection in inspections:
+        forklift = forklifts.get(inspection.forklift_id)
+        operator = employees.get(inspection.operator_id)
+        bucket_for(inspection.site_id)["inspections"].append({
+            "id": inspection.id,
+            "forklift_code": forklift.forklift_code if forklift else "未知堆高機",
+            "operator_name": operator.name if operator else "未知操作員",
+            "all_passed": inspection.all_passed,
+            "notes": inspection.notes,
+            "created_at": inspection.created_at.isoformat() if inspection.created_at else None,
+        })
+
+    for photo in photo_logs:
+        employee = employees.get(photo.employee_id)
+        bucket_for(photo.site_id)["photos"].append({
+            "id": photo.id,
+            "employee_code": employee.employee_code if employee else None,
+            "employee_name": employee.name if employee else "未綁定 LINE 使用者",
+            "file_name": photo.file_name,
+            "drive_url": photo.drive_url,
+            "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
+            "note": photo.note,
+        })
+
+    result = []
+    for journal in buckets.values():
+        journal["counts"] = {
+            "group_texts": len(journal["group_texts"]),
+            "attendance": len(journal["attendance"]),
+            "inspections": len(journal["inspections"]),
+            "photos": len(journal["photos"]),
+        }
+        result.append(journal)
+    result.sort(key=lambda item: (item["site_id"] is None, item["site_name"]))
+    return {"date": journal_date.isoformat(), "sites": result}
 
 
 
