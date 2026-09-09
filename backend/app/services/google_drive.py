@@ -18,6 +18,8 @@ from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials as OAuthCredentials
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from sqlmodel import Session, select
@@ -108,19 +110,7 @@ class GoogleDriveWorklogService:
         # OAuth 2.0 或 service account 任一種認證可用即可
         return self._has_oauth() or self._has_service_account()
 
-    def _credentials(self):
-        # 優先使用 OAuth 2.0 使用者認證（解決 service account 無儲存配額問題）
-        if self._has_oauth():
-            return OAuthCredentials(
-                token=None,
-                refresh_token=settings.google_oauth_refresh_token.strip(),
-                token_uri=OAUTH_TOKEN_URI,
-                client_id=settings.google_oauth_client_id.strip(),
-                client_secret=settings.google_oauth_client_secret.strip(),
-                scopes=DRIVE_SCOPE,
-            )
-
-        # Fallback：service account（僅供備援，無法上傳檔案到個人 Drive）
+    def _service_account_credentials(self):
         raw = settings.google_service_account_json.strip()
         if not raw:
             raise GoogleDriveWorklogError("GOOGLE_SERVICE_ACCOUNT_JSON 尚未設定")
@@ -136,6 +126,29 @@ class GoogleDriveWorklogService:
         if not credential_path.exists():
             raise GoogleDriveWorklogError(f"找不到 Google service account 憑證：{credential_path}")
         return service_account.Credentials.from_service_account_file(str(credential_path), scopes=DRIVE_SCOPE)
+
+    def _credentials(self):
+        # 優先使用 OAuth 2.0；若 refresh token 已失效，使用既有 service account
+        # 讀取同一個共享資料夾，避免 Render 重啟時遺失資料庫快照。
+        if self._has_oauth():
+            credentials = OAuthCredentials(
+                token=None,
+                refresh_token=settings.google_oauth_refresh_token.strip(),
+                token_uri=OAUTH_TOKEN_URI,
+                client_id=settings.google_oauth_client_id.strip(),
+                client_secret=settings.google_oauth_client_secret.strip(),
+                scopes=DRIVE_SCOPE,
+            )
+            try:
+                credentials.refresh(GoogleAuthRequest())
+                return credentials
+            except RefreshError:
+                if not self._has_service_account():
+                    raise
+                logger.warning("Google OAuth 權杖失效，改用 service account 備援認證")
+                return self._service_account_credentials()
+
+        return self._service_account_credentials()
 
     def _build_client(self):
         return build("drive", "v3", credentials=self._credentials(), cache_discovery=False)

@@ -5,8 +5,9 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from google.auth.exceptions import RefreshError
 from app.core.config import settings
 from app.services.google_drive import GoogleDriveWorklogService
 
@@ -30,6 +31,29 @@ def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 
 
 
 class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    def test_expired_oauth_uses_service_account_fallback(self) -> None:
+        service = GoogleDriveWorklogService()
+        oauth_credentials = Mock()
+        oauth_credentials.refresh.side_effect = RefreshError("invalid_grant")
+        service_credentials = object()
+
+        with (
+            patch.object(settings, "google_oauth_client_id", "oauth-client"),
+            patch.object(settings, "google_oauth_client_secret", "oauth-secret"),
+            patch.object(settings, "google_oauth_refresh_token", "expired-token"),
+            patch.object(settings, "google_service_account_json", "{}"),
+            patch("app.services.google_drive.OAuthCredentials", return_value=oauth_credentials),
+            patch(
+                "app.services.google_drive.service_account.Credentials.from_service_account_info",
+                return_value=service_credentials,
+            ) as service_account_credentials,
+        ):
+            credentials = service._credentials()
+
+        self.assertIs(credentials, service_credentials)
+        oauth_credentials.refresh.assert_called_once()
+        service_account_credentials.assert_called_once_with({}, scopes=["https://www.googleapis.com/auth/drive"])
+
     async def test_production_restore_replaces_existing_local_database(self) -> None:
         service = GoogleDriveWorklogService()
         with tempfile.TemporaryDirectory() as temp_dir:
