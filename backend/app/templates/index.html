@@ -901,6 +901,19 @@
       });
     }
 
+    function isSignSlipWorkText(value) {
+      const text = String(value || "").trim();
+      if (!text) return false;
+      const operationCommands = new Set([
+        "開始綁定", "我的行程", "我的打卡", "我的請假", "出勤打卡",
+        "上班打卡", "下班打卡", "到達工地", "離開工地", "外出", "返回",
+        "加班開始", "加班結束", "已收到", "已到場", "工作開始", "工作完成",
+        "點檢", "堆高機點檢", "開始點檢", "取消點檢", "正常", "異常",
+      ]);
+      if (operationCommands.has(text) || /^(綁定|請假|點檢工地|點檢堆高機)[:：\s]/.test(text)) return false;
+      return !/^(好|好的|收到|了解|ok|okay|辛苦了|謝謝|早安|午安|晚安)[!！。.]?$/i.test(text);
+    }
+
     async function loadWorksiteJournals() {
       const targetDate = document.getElementById("journalDate").value || todayString();
       const feedback = document.getElementById("journalFeedback");
@@ -911,7 +924,9 @@
         data.sites.forEach(site => {
           ["assignments", "group_texts", "attendance", "inspections", "photos"].forEach(section => {
             (site[section] || []).forEach(item => {
-              item._selected = section === "group_texts" ? item.is_included !== false : true;
+              item._selected = section === "group_texts"
+                ? item.is_included !== false && isSignSlipWorkText(item.content)
+                : true;
             });
           });
         });
@@ -978,32 +993,36 @@
     function buildSignSlipPage(site, journalDate) {
       const assignments = selectedJournalItems(site, "assignments");
       const texts = selectedJournalItems(site, "group_texts");
-      const attendance = selectedJournalItems(site, "attendance");
-      const inspections = selectedJournalItems(site, "inspections");
-      const photos = selectedJournalItems(site, "photos");
-      const workLines = [
+      const workLines = [...new Set([
         ...assignments.map(item => `${item.work_item}${item.notes ? `（${item.notes}）` : ""}`),
-        ...texts.map(item => `${formatTWTime(item.sent_at)} ${item.employee_name}：${item.content}`),
-      ];
-      const attendanceRows = attendance.map(item => `<tr><td>${escapeHtml(item.employee_name)}</td><td>${escapeHtml(item.event_type)}</td><td>${escapeHtml(formatTWTime(item.happened_at))}</td><td>${item.latitude != null && item.longitude != null ? "已定位" : "-"}</td></tr>`).join("") || '<tr><td colspan="4" class="blank-row">尚無出勤紀錄</td></tr>';
-      const inspectionRows = inspections.map(item => `<tr><td>${escapeHtml(item.forklift_code)}</td><td>${escapeHtml(item.operator_name)}</td><td>${item.all_passed ? "全部正常" : "有異常"}</td><td>${escapeHtml(item.notes || "-")}</td></tr>`).join("") || '<tr><td colspan="4" class="blank-row">尚無堆高機點檢紀錄</td></tr>';
-      const assignmentPeople = [...new Set(assignments.flatMap(item => item.member_names || []))];
-      const attendancePeople = [...new Set(attendance.map(item => item.employee_name).filter(Boolean))];
-      const people = [...new Set([...assignmentPeople, ...attendancePeople])];
+        ...texts.map(item => item.content),
+      ].filter(Boolean))];
       const equipment = [...new Set(assignments.flatMap(item => [item.vehicle, item.equipment]).filter(Boolean))];
-      const photoList = photos.map((item, index) => `${index + 1}. ${escapeHtml(item.file_name)}（${escapeHtml(item.employee_name)}，${escapeHtml(formatTWTime(item.uploaded_at))}）`).join("<br>") || "尚無照片附件";
-      const workContent = workLines.length ? workLines.map((line, index) => `${index + 1}. ${escapeHtml(line)}`).join("<br>") : "請填寫當日實際工作內容";
+      const vehicleValue = pattern => escapeHtml(equipment.filter(item => pattern.test(item)).join("、"));
+      const workContent = workLines.length ? workLines.map(line => escapeHtml(line)).join("<br>") : "&nbsp;";
       const slipNumber = `ST-${journalDate.replaceAll("-", "")}-${escapeHtml(site.site_code || "SITE")}`;
-      return `<section class="sign-slip">
-        <header><div><div class="company">三通工程行</div><h1>當日施工簽認單</h1></div><div class="doc-no">單號：${slipNumber}</div></header>
-        <table class="meta"><tr><th>施工日期</th><td>${escapeHtml(journalDate)}</td><th>工地</th><td>${escapeHtml(site.site_name)}</td></tr><tr><th>現場主管</th><td>${escapeHtml([...new Set(assignments.map(item => item.supervisor_name).filter(Boolean))].join("、") || "待填")}</td><th>施工人員</th><td>${escapeHtml(people.join("、") || "待填")}</td></tr><tr><th>車輛／機具</th><td colspan="3">${escapeHtml(equipment.join("、") || "-")}</td></tr></table>
-        <h2>一、當日工作內容</h2><div class="editable work-content" contenteditable="true">${workContent}</div>
-        <h2>二、出勤打卡紀錄</h2><table><thead><tr><th>人員</th><th>打卡項目</th><th>時間</th><th>定位</th></tr></thead><tbody>${attendanceRows}</tbody></table>
-        <h2>三、堆高機點檢</h2><table><thead><tr><th>堆高機</th><th>操作員</th><th>結果</th><th>備註</th></tr></thead><tbody>${inspectionRows}</tbody></table>
-        <h2>四、工作照片附件</h2><div class="editable" contenteditable="true">${photoList}</div>
-        <h2>五、現場補充與簽認</h2><div class="editable notes" contenteditable="true">請在此補充數量、工時、異常或其他需要簽認的事項。</div>
-        <div class="signatures"><div><strong>工地／客戶簽認</strong><span>簽名：</span><span>日期：</span></div><div><strong>三通工程行現場負責人</strong><span>簽名：</span><span>日期：</span></div></div>
-        <footer>本簽單由三通工程自動化管理系統依原始工作日誌製作，簽名前請核對內容。照片附件 ${photos.length} 張。</footer>
+      const [year, month, day] = journalDate.split("-").map(Number);
+      const rocDate = `${year - 1911} 年 ${month} 月 ${day} 日`;
+      return `<section class="sign-slip" contenteditable="true" spellcheck="false">
+        <div class="slip-main">
+          <header class="slip-header">
+            <div class="slip-heading"><div class="company">三　通　工　程　行</div><h1>起重專業出租</h1></div>
+            <div class="doc-no"><span class="no-label">№</span> ${slipNumber}</div>
+          </header>
+          <div class="slip-subhead"><div>客戶：<span class="fill-line">&nbsp;</span></div><div class="license-label">台照</div><div>${rocDate}</div></div>
+          <table class="form-table">
+            <colgroup><col class="label-col"><col><col><col><col><col class="small-col"><col class="wide-col"></colgroup>
+            <tr class="location-row"><th>工作地點</th><td colspan="6">${escapeHtml(site.site_name)}</td></tr>
+            <tr class="content-row"><th>工作內容</th><td colspan="6">${workContent}</td></tr>
+            <tr class="vehicle-row"><th rowspan="2">配用車輛</th><th>2.5噸</th><th>3.0噸</th><th>4.5噸</th><th>貨車</th><th rowspan="2">總時數</th><td rowspan="2"></td></tr>
+            <tr class="vehicle-values"><td>${vehicleValue(/2[.．]?5/)}</td><td>${vehicleValue(/3[.．]?0/)}</td><td>${vehicleValue(/4[.．]?5/)}</td><td>${vehicleValue(/貨車/)}</td></tr>
+            <tr class="time-row"><th>工作時間</th><td colspan="6"><span class="time-blank"></span> 時 <span class="time-blank short"></span> 分　起至　<span class="time-blank"></span> 時 <span class="time-blank short"></span> 分止</td></tr>
+            <tr class="amount-row"><th>金　額</th><td colspan="6"><span class="money-blank"></span> 萬　<span class="money-blank"></span> 仟　<span class="money-blank"></span> 佰　<span class="money-blank"></span> 拾　<span class="money-blank"></span> 元整</td></tr>
+            <tr class="signature-row"><th>司　機</th><td colspan="3"></td><th>廠商<br>簽名</th><td colspan="2"></td></tr>
+          </table>
+          <div class="phone-row">電話：0978-909-078　　0937-028-972</div>
+        </div>
+        <aside class="copy-notes"><span>第一聯：請款（白）</span><span>第二聯：存根（紅）</span><span>第三聯：客戶（黃）</span></aside>
       </section>`;
     }
 
@@ -1023,8 +1042,8 @@
       printWindow.opener = null;
       printWindow.document.open();
       printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(journal.date)} 三通工程行當日簽單</title><style>
-        *{box-sizing:border-box}body{margin:0;background:#ece9e1;color:#1f2925;font-family:"Microsoft JhengHei","Noto Sans TC",sans-serif}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;gap:12px;padding:12px;background:#243f35;color:white}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:16px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.sign-slip{width:210mm;min-height:297mm;margin:16px auto;padding:14mm 15mm;background:white;box-shadow:0 8px 30px #0002;page-break-after:always}.sign-slip:last-child{page-break-after:auto}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #355c4f;padding-bottom:10px;margin-bottom:14px}.company{font-size:18px;letter-spacing:.15em;color:#355c4f;font-weight:800}h1{margin:3px 0 0;font-size:30px}h2{margin:16px 0 7px;padding-left:9px;border-left:4px solid #d98043;font-size:17px}.doc-no{font-size:12px;color:#666}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #68756f;padding:7px;text-align:left;vertical-align:top}th{background:#edf2ef}.meta th{width:14%}.meta td{width:36%}.editable{min-height:48px;padding:9px;border:1px solid #68756f;line-height:1.7;font-size:13px}.editable:focus{outline:3px solid #f1c9a9}.work-content{min-height:92px}.notes{min-height:70px;color:#555}.blank-row{text-align:center;color:#777;height:38px}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.signatures>div{min-height:105px;padding:10px;border:1px solid #68756f;display:grid;grid-template-rows:auto 1fr auto}.signatures strong{color:#355c4f}.signatures span{display:block}footer{margin-top:12px;padding-top:8px;border-top:1px solid #bbb;font-size:10px;color:#666;text-align:center}@page{size:A4;margin:0}@media print{body{background:white}.toolbar{display:none}.sign-slip{margin:0;box-shadow:none}.editable{color:#111}}
-      </style></head><body><div class="toolbar"><span>可先點工作內容或備註直接修改</span><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
+        *{box-sizing:border-box}body{margin:0;background:#dedbd3;color:#111;font-family:"DFKai-SB","BiauKai","Microsoft JhengHei",sans-serif}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;background:#243f35;color:white;font-family:"Microsoft JhengHei",sans-serif}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:16px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.sign-slip{display:grid;grid-template-columns:minmax(0,1fr) 13mm;width:297mm;min-height:210mm;margin:16px auto;padding:6mm 6mm 5mm 9mm;background:#fff;box-shadow:0 8px 30px #0002;page-break-after:always}.sign-slip:last-child{page-break-after:auto}.sign-slip:focus{outline:4px solid #d98043}.slip-main{display:flex;min-width:0;flex-direction:column}.slip-header{position:relative;min-height:31mm;text-align:center}.slip-heading{display:inline-block}.company{font-size:28px;font-weight:700;letter-spacing:.32em}.slip-header h1{margin:5px 0 0;font-size:27px;letter-spacing:.12em}.doc-no{position:absolute;right:2mm;bottom:5mm;color:#a8574d;font-family:Georgia,serif;font-size:24px;letter-spacing:.08em}.no-label{color:#222;font-size:19px}.slip-subhead{display:grid;grid-template-columns:1fr auto 1fr;align-items:end;gap:18px;margin-bottom:2mm;padding:0 3mm;font-size:18px;font-weight:700}.slip-subhead>div:last-child{text-align:right}.fill-line{display:inline-block;min-width:58mm;border-bottom:1px solid #222;color:#555}.license-label{text-align:center}.form-table{width:100%;border:2px solid #111;border-collapse:collapse;table-layout:fixed;font-size:18px}.form-table th,.form-table td{border:1.5px solid #111;padding:5px 8px;text-align:center;vertical-align:middle}.form-table th{font-weight:500}.label-col{width:27mm}.small-col{width:24mm}.wide-col{width:35mm}.location-row{height:12mm}.location-row td{text-align:left;font-size:19px}.content-row{height:43mm}.content-row td{text-align:left;vertical-align:top;line-height:1.55;font-size:18px}.vehicle-row{height:9mm}.vehicle-values{height:9mm}.time-row,.amount-row{height:11mm}.time-row td,.amount-row td{font-size:19px;letter-spacing:.08em}.time-blank,.money-blank{display:inline-block;min-width:18mm;border-bottom:1px solid #555}.time-blank.short{min-width:11mm}.money-blank{min-width:12mm}.signature-row{height:24mm}.signature-row th:nth-of-type(2){line-height:1.2}.phone-row{padding:3mm 14mm 0;text-align:right;font-family:"Microsoft JhengHei",sans-serif;font-size:16px;font-weight:700}.copy-notes{display:grid;grid-template-rows:repeat(3,1fr);align-items:center;justify-items:center;padding:34mm 0 7mm;font-size:14px;font-weight:700}.copy-notes span{writing-mode:vertical-rl;letter-spacing:.08em}[contenteditable="true"]{caret-color:#c24f2f}[contenteditable="true"]:focus{outline:2px dashed #d98043;outline-offset:2px}@page{size:A4 landscape;margin:0}@media print{body{background:white}.toolbar{display:none}.sign-slip{margin:0;box-shadow:none}.sign-slip:focus,[contenteditable="true"]:focus{outline:none}}
+      </style></head><body><div class="toolbar"><span>整張簽單都可點擊修改，包含標題、欄位名稱及內容</span><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
       printWindow.document.close();
       printWindow.focus();
     }

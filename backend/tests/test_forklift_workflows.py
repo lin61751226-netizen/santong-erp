@@ -276,6 +276,23 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(journal["inspections"][0]["forklift_code"], self.vehicle.forklift_code)
         self.assertEqual(journal["photos"][0]["file_name"], "work.jpg")
 
+    def test_sign_slip_matches_editable_rental_form_without_private_event_details(self):
+        template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text(encoding="utf-8")
+        sign_slip_block = template.split("function buildSignSlipPage", 1)[1].split(
+            "function printWorksiteSignSlips", 1,
+        )[0]
+
+        self.assertIn('class="sign-slip" contenteditable="true"', sign_slip_block)
+        self.assertIn("三　通　工　程　行", sign_slip_block)
+        self.assertIn("起重專業出租", sign_slip_block)
+        self.assertIn("配用車輛", sign_slip_block)
+        self.assertIn("廠商<br>簽名", sign_slip_block)
+        self.assertIn("texts.map(item => item.content)", sign_slip_block)
+        self.assertNotIn("attendance", sign_slip_block)
+        self.assertNotIn("inspections", sign_slip_block)
+        self.assertNotIn("photos", sign_slip_block)
+        self.assertNotIn("employee_name", sign_slip_block)
+
     def test_month_export_includes_full_period_and_unknown_items(self):
         for day in [date(2024, 1, 31), date(2024, 2, 1), date(2024, 2, 29), date(2024, 3, 1)]:
             self.session.add(ForkliftInspection(
