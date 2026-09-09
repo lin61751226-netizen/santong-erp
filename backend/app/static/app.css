@@ -156,13 +156,28 @@ input[hidden] { display: none; }
 
 .journal-list li {
   display: grid;
-  grid-template-columns: 70px minmax(110px, .35fr) 1fr;
+  grid-template-columns: 108px minmax(110px, .35fr) 1fr;
   gap: 10px;
   align-items: start;
   padding: 9px 11px;
   border-radius: 10px;
   background: #fbf8f1;
   line-height: 1.5;
+}
+
+.journal-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.journal-choice input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--brand);
 }
 
 .journal-list time {
@@ -491,7 +506,7 @@ th {
   }
 
   .journal-list li {
-    grid-template-columns: 62px 1fr;
+    grid-template-columns: 100px 1fr;
   }
 
   .journal-list li > :last-child {

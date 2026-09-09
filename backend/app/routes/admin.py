@@ -1524,6 +1524,9 @@ def list_worksite_journals(
         PhotoUploadLog.uploaded_at >= start_at,
         PhotoUploadLog.uploaded_at < end_at,
     )
+    assignment_statement = select(WorkAssignment).where(
+        WorkAssignment.work_date == journal_date
+    )
     inspection_statement = select(ForkliftInspection).where(
         ForkliftInspection.inspection_date == journal_date
     )
@@ -1531,11 +1534,13 @@ def list_worksite_journals(
         group_statement = group_statement.where(GroupTextLog.site_id == allowed_site_id)
         attendance_statement = attendance_statement.where(AttendanceEvent.site_id == allowed_site_id)
         photo_statement = photo_statement.where(PhotoUploadLog.site_id == allowed_site_id)
+        assignment_statement = assignment_statement.where(WorkAssignment.site_id == allowed_site_id)
         inspection_statement = inspection_statement.where(ForkliftInspection.site_id == allowed_site_id)
 
     group_logs = session.exec(group_statement.order_by(GroupTextLog.sent_at)).all()
     attendance_logs = session.exec(attendance_statement.order_by(AttendanceEvent.happened_at)).all()
     photo_logs = session.exec(photo_statement.order_by(PhotoUploadLog.uploaded_at)).all()
+    assignments = session.exec(assignment_statement.order_by(WorkAssignment.start_time, WorkAssignment.id)).all()
     inspections = session.exec(inspection_statement.order_by(ForkliftInspection.created_at)).all()
 
     employees = {row.id: row for row in session.exec(select(Employee)).all() if row.id is not None}
@@ -1548,13 +1553,40 @@ def list_worksite_journals(
             site = worksites.get(site_id)
             buckets[site_id] = {
                 "site_id": site_id,
+                "site_code": site.code if site else None,
                 "site_name": site.name if site else "未判定工地",
+                "assignments": [],
                 "group_texts": [],
                 "attendance": [],
                 "inspections": [],
                 "photos": [],
             }
         return buckets[site_id]
+
+    for assignment in assignments:
+        supervisor = employees.get(assignment.supervisor_id)
+        member_rows = session.exec(
+            select(AssignmentMember).where(
+                AssignmentMember.assignment_id == assignment.id,
+                AssignmentMember.is_active.is_(True),
+            )
+        ).all()
+        bucket_for(assignment.site_id)["assignments"].append({
+            "id": assignment.id,
+            "work_item": assignment.work_item,
+            "supervisor_name": supervisor.name if supervisor else None,
+            "start_time": assignment.start_time.isoformat(timespec="minutes") if assignment.start_time else None,
+            "end_time": assignment.end_time.isoformat(timespec="minutes") if assignment.end_time else None,
+            "vehicle": assignment.vehicle,
+            "equipment": assignment.equipment,
+            "notes": assignment.notes,
+            "status": assignment.status,
+            "member_names": [
+                employees[row.employee_id].name
+                for row in member_rows
+                if row.employee_id in employees
+            ],
+        })
 
     for log in group_logs:
         employee = employees.get(log.employee_id)
@@ -1608,6 +1640,7 @@ def list_worksite_journals(
     result = []
     for journal in buckets.values():
         journal["counts"] = {
+            "assignments": len(journal["assignments"]),
             "group_texts": len(journal["group_texts"]),
             "attendance": len(journal["attendance"]),
             "inspections": len(journal["inspections"]),

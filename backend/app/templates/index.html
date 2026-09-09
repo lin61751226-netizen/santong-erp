@@ -117,6 +117,7 @@
         <div class="button-row">
           <input id="journalDate" type="date" aria-label="工作日誌日期">
           <button type="button" onclick="loadWorksiteJournals()">整理工作日誌</button>
+          <button type="button" class="button-secondary" onclick="printWorksiteSignSlips(-1)">製作全部工地簽單</button>
         </div>
       </div>
       <p id="journalFeedback" class="notice" role="status" aria-live="polite">正在整理今日資料。</p>
@@ -809,6 +810,7 @@
       workItemOptions: [],
       equipmentOptions: [],
       forkliftOptions: [],
+      worksiteJournals: null,
     };
 
     function setWorkspace(workspace, shouldScroll = true) {
@@ -906,39 +908,52 @@
       feedback.textContent = "正在合併群組文字、打卡、點檢與照片。";
       try {
         const data = await api(`/api/worksite-journals?target_date=${encodeURIComponent(targetDate)}`);
+        data.sites.forEach(site => {
+          ["assignments", "group_texts", "attendance", "inspections", "photos"].forEach(section => {
+            (site[section] || []).forEach(item => {
+              item._selected = section === "group_texts" ? item.is_included !== false : true;
+            });
+          });
+        });
+        state.worksiteJournals = data;
         const totals = data.sites.reduce((sum, site) => {
+          sum.assignments += site.counts.assignments;
           sum.texts += site.counts.group_texts;
           sum.attendance += site.counts.attendance;
           sum.inspections += site.counts.inspections;
           sum.photos += site.counts.photos;
           return sum;
-        }, {texts: 0, attendance: 0, inspections: 0, photos: 0});
-        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張。全部是未刪除的原始資料。`;
+        }, {assignments: 0, texts: 0, attendance: 0, inspections: 0, photos: 0});
+        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜派工 ${totals.assignments} 筆｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張。取消勾選只影響簽單，原始資料不會刪除。`;
         if (!data.sites.length) {
           cards.innerHTML = '<div class="journal-empty">所選日期尚無可整理的資料。</div>';
           return;
         }
-        cards.innerHTML = data.sites.map((site) => {
-          const groupTexts = site.group_texts.map(item => `
-            <li><time>${escapeHtml(formatTWTime(item.sent_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
+        cards.innerHTML = data.sites.map((site, siteIndex) => {
+          const assignmentRows = (site.assignments || []).map((item, itemIndex) => `
+            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'assignments', ${itemIndex}, this.checked)"><span>${escapeHtml(item.start_time || "全天")}</span></label></time><strong>${escapeHtml(item.supervisor_name || "未指定主管")}</strong><span>${escapeHtml(item.work_item)}｜人員：${escapeHtml((item.member_names || []).join("、") || "未指定")}${item.equipment ? `｜機具：${escapeHtml(item.equipment)}` : ""}</span></li>
+          `).join("") || '<li class="muted">尚無當日派工</li>';
+          const groupTexts = site.group_texts.map((item, itemIndex) => `
+            <li><time><label class="journal-choice"><input type="checkbox" ${item._selected ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'group_texts', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.sent_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
           `).join("") || '<li class="muted">尚無群組文字</li>';
-          const attendance = site.attendance.map(item => {
+          const attendance = site.attendance.map((item, itemIndex) => {
             const mapLink = item.latitude != null && item.longitude != null
               ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(item.latitude)},${encodeURIComponent(item.longitude)}" target="_blank" rel="noopener">查看定位</a>`
               : "";
-            return `<li><time>${escapeHtml(formatTWTime(item.happened_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.event_type)} ${mapLink}</span></li>`;
+            return `<li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'attendance', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.happened_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.event_type)} ${mapLink}</span></li>`;
           }).join("") || '<li class="muted">尚無打卡</li>';
-          const inspections = site.inspections.map(item => `
-            <li><time>${escapeHtml(formatTWTime(item.created_at))}</time><strong>${escapeHtml(item.operator_name)}</strong><span>${escapeHtml(item.forklift_code)}｜${item.all_passed ? "全部正常" : "有異常"}${item.notes ? `｜${escapeHtml(item.notes)}` : ""}</span></li>
+          const inspections = site.inspections.map((item, itemIndex) => `
+            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'inspections', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.created_at))}</span></label></time><strong>${escapeHtml(item.operator_name)}</strong><span>${escapeHtml(item.forklift_code)}｜${item.all_passed ? "全部正常" : "有異常"}${item.notes ? `｜${escapeHtml(item.notes)}` : ""}</span></li>
           `).join("") || '<li class="muted">尚無點檢</li>';
-          const photos = site.photos.map(item => `
-            <li><time>${escapeHtml(formatTWTime(item.uploaded_at))}</time><strong>${escapeHtml(item.employee_name)}</strong><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">${escapeHtml(item.file_name)}</a></li>
+          const photos = site.photos.map((item, itemIndex) => `
+            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'photos', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.uploaded_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">${escapeHtml(item.file_name)}</a></li>
           `).join("") || '<li class="muted">尚無工作照片</li>';
           return `<article class="journal-card">
             <div class="journal-card-heading">
               <div><span class="eyebrow">工地日誌</span><h3>${escapeHtml(site.site_name)}</h3></div>
-              <div class="journal-count">${site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div>
+              <div class="button-row"><div class="journal-count">${site.counts.assignments + site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div><button type="button" class="button-secondary button-compact" onclick="printWorksiteSignSlips(${siteIndex})">製作此工地簽單</button></div>
             </div>
+            <details open><summary>當日派工 <span>${site.counts.assignments}</span></summary><ul class="journal-list">${assignmentRows}</ul></details>
             <details open><summary>群組文字 <span>${site.counts.group_texts}</span></summary><ul class="journal-list">${groupTexts}</ul></details>
             <details open><summary>打卡人員 <span>${site.counts.attendance}</span></summary><ul class="journal-list">${attendance}</ul></details>
             <details open><summary>堆高機點檢 <span>${site.counts.inspections}</span></summary><ul class="journal-list">${inspections}</ul></details>
@@ -949,6 +964,69 @@
         feedback.textContent = error.message;
         cards.innerHTML = "";
       }
+    }
+
+    function setJournalSelection(siteIndex, section, itemIndex, selected) {
+      const item = state.worksiteJournals?.sites?.[siteIndex]?.[section]?.[itemIndex];
+      if (item) item._selected = selected;
+    }
+
+    function selectedJournalItems(site, section) {
+      return (site[section] || []).filter(item => item._selected !== false);
+    }
+
+    function buildSignSlipPage(site, journalDate) {
+      const assignments = selectedJournalItems(site, "assignments");
+      const texts = selectedJournalItems(site, "group_texts");
+      const attendance = selectedJournalItems(site, "attendance");
+      const inspections = selectedJournalItems(site, "inspections");
+      const photos = selectedJournalItems(site, "photos");
+      const workLines = [
+        ...assignments.map(item => `${item.work_item}${item.notes ? `（${item.notes}）` : ""}`),
+        ...texts.map(item => `${formatTWTime(item.sent_at)} ${item.employee_name}：${item.content}`),
+      ];
+      const attendanceRows = attendance.map(item => `<tr><td>${escapeHtml(item.employee_name)}</td><td>${escapeHtml(item.event_type)}</td><td>${escapeHtml(formatTWTime(item.happened_at))}</td><td>${item.latitude != null && item.longitude != null ? "已定位" : "-"}</td></tr>`).join("") || '<tr><td colspan="4" class="blank-row">尚無出勤紀錄</td></tr>';
+      const inspectionRows = inspections.map(item => `<tr><td>${escapeHtml(item.forklift_code)}</td><td>${escapeHtml(item.operator_name)}</td><td>${item.all_passed ? "全部正常" : "有異常"}</td><td>${escapeHtml(item.notes || "-")}</td></tr>`).join("") || '<tr><td colspan="4" class="blank-row">尚無堆高機點檢紀錄</td></tr>';
+      const assignmentPeople = [...new Set(assignments.flatMap(item => item.member_names || []))];
+      const attendancePeople = [...new Set(attendance.map(item => item.employee_name).filter(Boolean))];
+      const people = [...new Set([...assignmentPeople, ...attendancePeople])];
+      const equipment = [...new Set(assignments.flatMap(item => [item.vehicle, item.equipment]).filter(Boolean))];
+      const photoList = photos.map((item, index) => `${index + 1}. ${escapeHtml(item.file_name)}（${escapeHtml(item.employee_name)}，${escapeHtml(formatTWTime(item.uploaded_at))}）`).join("<br>") || "尚無照片附件";
+      const workContent = workLines.length ? workLines.map((line, index) => `${index + 1}. ${escapeHtml(line)}`).join("<br>") : "請填寫當日實際工作內容";
+      const slipNumber = `ST-${journalDate.replaceAll("-", "")}-${escapeHtml(site.site_code || "SITE")}`;
+      return `<section class="sign-slip">
+        <header><div><div class="company">三通工程行</div><h1>當日施工簽認單</h1></div><div class="doc-no">單號：${slipNumber}</div></header>
+        <table class="meta"><tr><th>施工日期</th><td>${escapeHtml(journalDate)}</td><th>工地</th><td>${escapeHtml(site.site_name)}</td></tr><tr><th>現場主管</th><td>${escapeHtml([...new Set(assignments.map(item => item.supervisor_name).filter(Boolean))].join("、") || "待填")}</td><th>施工人員</th><td>${escapeHtml(people.join("、") || "待填")}</td></tr><tr><th>車輛／機具</th><td colspan="3">${escapeHtml(equipment.join("、") || "-")}</td></tr></table>
+        <h2>一、當日工作內容</h2><div class="editable work-content" contenteditable="true">${workContent}</div>
+        <h2>二、出勤打卡紀錄</h2><table><thead><tr><th>人員</th><th>打卡項目</th><th>時間</th><th>定位</th></tr></thead><tbody>${attendanceRows}</tbody></table>
+        <h2>三、堆高機點檢</h2><table><thead><tr><th>堆高機</th><th>操作員</th><th>結果</th><th>備註</th></tr></thead><tbody>${inspectionRows}</tbody></table>
+        <h2>四、工作照片附件</h2><div class="editable" contenteditable="true">${photoList}</div>
+        <h2>五、現場補充與簽認</h2><div class="editable notes" contenteditable="true">請在此補充數量、工時、異常或其他需要簽認的事項。</div>
+        <div class="signatures"><div><strong>工地／客戶簽認</strong><span>簽名：</span><span>日期：</span></div><div><strong>三通工程行現場負責人</strong><span>簽名：</span><span>日期：</span></div></div>
+        <footer>本簽單由三通工程自動化管理系統依原始工作日誌製作，簽名前請核對內容。照片附件 ${photos.length} 張。</footer>
+      </section>`;
+    }
+
+    function printWorksiteSignSlips(siteIndex) {
+      const journal = state.worksiteJournals;
+      if (!journal?.sites?.length) {
+        document.getElementById("journalFeedback").textContent = "目前沒有可製作簽單的工作日誌，請先選日期並整理。";
+        return;
+      }
+      const sites = siteIndex === -1 ? journal.sites : [journal.sites[siteIndex]].filter(Boolean);
+      const pages = sites.map(site => buildSignSlipPage(site, journal.date)).join("");
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        document.getElementById("journalFeedback").textContent = "瀏覽器封鎖了簽單預覽視窗，請允許此網站開啟彈出式視窗後再試。";
+        return;
+      }
+      printWindow.opener = null;
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(journal.date)} 三通工程行當日簽單</title><style>
+        *{box-sizing:border-box}body{margin:0;background:#ece9e1;color:#1f2925;font-family:"Microsoft JhengHei","Noto Sans TC",sans-serif}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;gap:12px;padding:12px;background:#243f35;color:white}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:16px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.sign-slip{width:210mm;min-height:297mm;margin:16px auto;padding:14mm 15mm;background:white;box-shadow:0 8px 30px #0002;page-break-after:always}.sign-slip:last-child{page-break-after:auto}header{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #355c4f;padding-bottom:10px;margin-bottom:14px}.company{font-size:18px;letter-spacing:.15em;color:#355c4f;font-weight:800}h1{margin:3px 0 0;font-size:30px}h2{margin:16px 0 7px;padding-left:9px;border-left:4px solid #d98043;font-size:17px}.doc-no{font-size:12px;color:#666}table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #68756f;padding:7px;text-align:left;vertical-align:top}th{background:#edf2ef}.meta th{width:14%}.meta td{width:36%}.editable{min-height:48px;padding:9px;border:1px solid #68756f;line-height:1.7;font-size:13px}.editable:focus{outline:3px solid #f1c9a9}.work-content{min-height:92px}.notes{min-height:70px;color:#555}.blank-row{text-align:center;color:#777;height:38px}.signatures{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}.signatures>div{min-height:105px;padding:10px;border:1px solid #68756f;display:grid;grid-template-rows:auto 1fr auto}.signatures strong{color:#355c4f}.signatures span{display:block}footer{margin-top:12px;padding-top:8px;border-top:1px solid #bbb;font-size:10px;color:#666;text-align:center}@page{size:A4;margin:0}@media print{body{background:white}.toolbar{display:none}.sign-slip{margin:0;box-shadow:none}.editable{color:#111}}
+      </style></head><body><div class="toolbar"><span>可先點工作內容或備註直接修改</span><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
+      printWindow.document.close();
+      printWindow.focus();
     }
 
     function renderSelectOptions() {

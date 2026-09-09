@@ -229,6 +229,13 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     def test_worksite_journal_merges_all_preserved_sources(self):
         recorded_at = datetime(2026, 9, 8, 0, 30)
+        assignment = WorkAssignment(
+            work_date=date(2026, 9, 8), site_id=self.site.id, work_item="堆高機卸料",
+            supervisor_id=self.admin.id, equipment="1號堆高機",
+        )
+        self.session.add(assignment)
+        self.session.commit()
+        self.session.add(AssignmentMember(assignment_id=assignment.id, employee_id=self.driver.id))
         self.session.add(GroupTextLog(
             source_type="group", source_id="G1", line_user_id=self.driver.line_user_id,
             employee_id=self.driver.id, site_id=self.site.id, source_message_id="journal-text-1",
@@ -260,8 +267,10 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         journal = payload["sites"][0]
         self.assertEqual(journal["site_name"], self.site.name)
         self.assertEqual(journal["counts"], {
-            "group_texts": 1, "attendance": 1, "inspections": 1, "photos": 1,
+            "assignments": 1, "group_texts": 1, "attendance": 1, "inspections": 1, "photos": 1,
         })
+        self.assertEqual(journal["assignments"][0]["work_item"], "堆高機卸料")
+        self.assertEqual(journal["assignments"][0]["member_names"], [self.driver.name])
         self.assertEqual(journal["group_texts"][0]["content"], "完成卸料")
         self.assertEqual(journal["attendance"][0]["employee_name"], self.driver.name)
         self.assertEqual(journal["inspections"][0]["forklift_code"], self.vehicle.forklift_code)
