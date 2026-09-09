@@ -210,6 +210,23 @@ class LinePlatformService:
         display_name = str(profile.get("displayName") or "").strip()
         return display_name or None
 
+    async def get_group_display_name(self, source: dict[str, Any]) -> str | None:
+        if str(source.get("type") or "").strip() != "group":
+            return None
+        group_id = str(source.get("groupId") or "").strip()
+        if not group_id:
+            return None
+        try:
+            summary = await self._request(
+                "GET",
+                f"{self.api_base}/group/{group_id}/summary",
+                headers=self._headers(None),
+            )
+        except LinePlatformError:
+            return None
+        group_name = str(summary.get("groupName") or "").strip()
+        return group_name or None
+
 
 line_platform_service = LinePlatformService()
 

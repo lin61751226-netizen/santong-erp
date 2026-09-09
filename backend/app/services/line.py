@@ -485,6 +485,19 @@ async def _handle_image_message(
         await line_service.reply_text(reply_token, "目前無法取得這張照片的訊息編號，請再重新上傳一次。")
         return
 
+    source = event.get("source", {})
+    group_site = None
+    if str(source.get("type") or "").strip() == "group":
+        group_name = await line_platform_service.get_group_display_name(source)
+        normalized_group_name = "".join(str(group_name or "").split())
+        if "善捷47" in normalized_group_name:
+            group_site = session.exec(
+                select(Worksite).where(
+                    Worksite.is_active.is_(True),
+                    Worksite.name == "善捷47",
+                )
+            ).first()
+
     if not employee:
         display_name = await line_platform_service.get_source_display_name(event.get("source", {}))
         uploader_name = _fallback_uploader_name(line_user_id, display_name)
@@ -494,6 +507,7 @@ async def _handle_image_message(
                 message_id=message_id,
                 employee_name=uploader_name,
                 happened_at=_event_datetime(event),
+                site_name=group_site.name if group_site else None,
             )
         except (GoogleDriveWorklogError, LinePlatformError) as exc:
             await line_service.reply_text(
@@ -508,14 +522,19 @@ async def _handle_image_message(
                 PhotoUploadLog(
                     employee_id=None,
                     assignment_id=None,
-                    site_id=None,
+                    site_id=group_site.id if group_site else None,
                     line_user_id=line_user_id,
                     source_message_id=message_id,
                     file_name=upload.file_name,
                     drive_file_id=upload.file_id,
                     drive_folder_id=upload.folder_id,
                     drive_url=upload.file_url,
-                    note=f"未綁定員工上傳（LINE 顯示名稱：{uploader_name}）",
+                    note=(
+                        f"未綁定員工上傳（LINE 顯示名稱：{uploader_name}；"
+                        f"群組工地：{group_site.name}）"
+                        if group_site
+                        else f"未綁定員工上傳（LINE 顯示名稱：{uploader_name}）"
+                    ),
                 )
             )
             session.commit()
@@ -534,13 +553,15 @@ async def _handle_image_message(
 
     assignment = find_assignment_for_employee(session, employee.id)
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
-    site = None
-    if assignment:
+    site = group_site
+    if not site and assignment:
         site = session.get(Worksite, assignment.site_id)
-    else:
+    elif not site:
         site = get_today_arrival_site(session, employee.id)
         if not site and employee.home_site_id:
             site = session.get(Worksite, employee.home_site_id)
+    photo_assignment = assignment if assignment and site and assignment.site_id == site.id else None
+    photo_member = member if photo_assignment else None
 
     try:
         upload = await google_drive_worklog_service.upload_line_photo(
@@ -553,24 +574,21 @@ async def _handle_image_message(
         await line_service.reply_text(reply_token, f"已收到照片，但上傳 Google 雲端硬碟失敗：{exc}")
         return
 
-    if assignment:
-        site = session.get(Worksite, assignment.site_id)
-        report_photos = list(assignment.report_photos or [])
+    if photo_assignment:
+        report_photos = list(photo_assignment.report_photos or [])
         report_photos.append(upload.file_url)
-        assignment.report_photos = report_photos
-        session.add(assignment)
-    elif employee.home_site_id:
-        site = session.get(Worksite, employee.home_site_id)
+        photo_assignment.report_photos = report_photos
+        session.add(photo_assignment)
 
-    if member:
-        member.photo_url = upload.file_url
-        member.last_line_action = "上傳照片"
-        session.add(member)
+    if photo_member:
+        photo_member.photo_url = upload.file_url
+        photo_member.last_line_action = "上傳照片"
+        session.add(photo_member)
 
     session.add(
         PhotoUploadLog(
             employee_id=employee.id,
-            assignment_id=assignment.id if assignment else None,
+            assignment_id=photo_assignment.id if photo_assignment else None,
             site_id=site.id if site else None,
             line_user_id=line_user_id,
             source_message_id=message_id,

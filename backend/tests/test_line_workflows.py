@@ -112,6 +112,52 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(saved.site_id, site.id)
             self.assertEqual(self.backup_database.await_count, 1)
 
+    async def test_shanjie_47_group_photo_uses_group_site_even_when_uploader_is_unbound(self) -> None:
+        with Session(self.engine) as session:
+            site = Worksite(code="善捷47", name="善捷47")
+            session.add(site)
+            session.commit()
+            session.refresh(site)
+            upload = DriveUploadResult(
+                "file-47", "photo.jpg", "https://drive/photo-47", "folder-47",
+                "2026-09-09_善捷47", "image/jpeg",
+            )
+            event = {
+                "timestamp": 0,
+                "source": {"type": "group", "groupId": "G-shanjie-47", "userId": "U-unbound"},
+            }
+            with (
+                patch.object(line_platform_service, "get_group_display_name", AsyncMock(return_value="善捷47工作群組")),
+                patch.object(line_platform_service, "get_source_display_name", AsyncMock(return_value="未綁定員工")),
+                patch("app.services.line.google_drive_worklog_service.upload_line_photo", AsyncMock(return_value=upload)) as upload_photo,
+            ):
+                await _handle_image_message(
+                    session,
+                    event=event,
+                    message={"id": "group-photo-47"},
+                    reply_token="reply",
+                    line_user_id="U-unbound",
+                    employee=None,
+                )
+
+            self.assertEqual(upload_photo.await_args.kwargs["site_name"], "善捷47")
+            saved = session.exec(select(PhotoUploadLog)).one()
+            self.assertEqual(saved.site_id, site.id)
+            self.assertIn("群組工地：善捷47", saved.note)
+            self.assertEqual(self.backup_database.await_count, 1)
+
+    async def test_group_display_name_reads_line_group_summary(self) -> None:
+        source = {"type": "group", "groupId": "G-shanjie-47", "userId": "U1"}
+        with patch.object(
+            line_platform_service,
+            "_request",
+            AsyncMock(return_value={"groupName": "善捷47"}),
+        ) as request:
+            group_name = await line_platform_service.get_group_display_name(source)
+
+        self.assertEqual(group_name, "善捷47")
+        self.assertIn("/group/G-shanjie-47/summary", request.await_args.args[1])
+
     async def test_work_report_is_saved_as_history_without_overwriting_previous_report(self) -> None:
         with Session(self.engine) as session:
             employee = Employee(
