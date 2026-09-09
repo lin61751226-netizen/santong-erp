@@ -287,6 +287,8 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("起重專業出租", sign_slip_block)
         self.assertIn('includes("齊裕") ? "齊裕營造"', sign_slip_block)
         self.assertIn('class="customer-field"', sign_slip_block)
+        self.assertIn('class="driver-name-cell"', sign_slip_block)
+        self.assertIn('.driver-name-cell{font-size:42px;font-weight:700}', template)
         self.assertIn("配用車輛", sign_slip_block)
         self.assertIn("廠商<br>簽名", sign_slip_block)
         self.assertIn("texts.map(item => item.content)", sign_slip_block)
