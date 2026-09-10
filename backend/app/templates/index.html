@@ -990,6 +990,22 @@
       return (site[section] || []).filter(item => item._selected !== false);
     }
 
+    const signSlipDrivers = ["林育弘", "林建成", "朱勝忠", "林金生", "林金谷"];
+    const chineseMoneyDigits = ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"];
+
+    function countVehicleUnits(entries, pattern) {
+      return entries.reduce((total, entry) => {
+        const value = String(entry || "");
+        if (!pattern.test(value)) return total;
+        const quantityMatch = value.match(/(?:數量|台數|x|X|×)\s*(\d+)/) || value.match(/(\d+)\s*台/);
+        return total + Number(quantityMatch?.[1] || 1);
+      }, 0);
+    }
+
+    function signSlipMoneySelect(unit) {
+      return `<label class="money-digit"><select aria-label="${unit}位數">${chineseMoneyDigits.map(digit => `<option value="${digit}">${digit}</option>`).join("")}</select><span>${unit}</span></label>`;
+    }
+
     function buildSignSlipPage(site, journalDate, copyLabel) {
       const assignments = selectedJournalItems(site, "assignments");
       const texts = selectedJournalItems(site, "group_texts");
@@ -997,9 +1013,18 @@
         ...assignments.map(item => `${item.work_item}${item.notes ? `（${item.notes}）` : ""}`),
         ...texts.map(item => item.content),
       ].filter(Boolean))];
-      const equipment = [...new Set(assignments.flatMap(item => [item.vehicle, item.equipment]).filter(Boolean))];
-      const vehicleValue = pattern => escapeHtml(equipment.filter(item => pattern.test(item)).join("、"));
-      const workContent = workLines.length ? workLines.map(line => escapeHtml(line)).join("<br>") : "&nbsp;";
+      const vehicleEntries = assignments.flatMap(item => [item.vehicle, item.equipment]).filter(Boolean);
+      const vehicleCounts = {
+        twoPointFive: countVehicleUnits(vehicleEntries, /2[.．]?5/),
+        threePointZero: countVehicleUnits(vehicleEntries, /3[.．]?0/),
+        fourPointFive: countVehicleUnits(vehicleEntries, /4[.．]?5/),
+        truck: countVehicleUnits(vehicleEntries, /貨車/),
+      };
+      const forkliftCount = vehicleCounts.twoPointFive + vehicleCounts.threePointZero + vehicleCounts.fourPointFive;
+      const normalHoursExpression = Array.from({ length: forkliftCount }, () => "8").join("+") || "0";
+      const initialNormalHours = forkliftCount * 8;
+      const hoursLine = `<div class="hour-calculation">工時計算：<strong class="forklift-count">${forkliftCount}</strong> 台正常作業 <input class="hours-expression" inputmode="decimal" value="${normalHoursExpression}" aria-label="正常工作時數算式"> = <strong class="normal-hours-total">${initialNormalHours}</strong> 小時　加班 <input class="overtime-hours" inputmode="decimal" value="0" aria-label="加班時數"> 小時　共計 <strong class="calculated-total-hours">${initialNormalHours}</strong> 小時</div>`;
+      const workContent = `${workLines.length ? workLines.map(line => escapeHtml(line)).join("<br>") : "&nbsp;"}${hoursLine}`;
       const slipNumber = `ST-${journalDate.replaceAll("-", "")}-${escapeHtml(site.site_code || "SITE")}`;
       const customerName = String(site.site_name || "").includes("齊裕") ? "齊裕營造" : "";
       const [year, month, day] = journalDate.split("-").map(Number);
@@ -1015,11 +1040,11 @@
             <colgroup><col class="label-col"><col><col><col><col><col class="small-col"><col class="wide-col"></colgroup>
             <tr class="location-row"><th>工作地點</th><td colspan="6">${escapeHtml(site.site_name)}</td></tr>
             <tr class="content-row"><th>工作內容</th><td colspan="6">${workContent}</td></tr>
-            <tr class="vehicle-row"><th rowspan="2">配用車輛</th><th>2.5噸</th><th>3.0噸</th><th>4.5噸</th><th>貨車</th><th rowspan="2">總時數</th><td rowspan="2"></td></tr>
-            <tr class="vehicle-values"><td>${vehicleValue(/2[.．]?5/)}</td><td>${vehicleValue(/3[.．]?0/)}</td><td>${vehicleValue(/4[.．]?5/)}</td><td>${vehicleValue(/貨車/)}</td></tr>
+            <tr class="vehicle-row"><th rowspan="2">配用車輛</th><th>2.5噸</th><th>3.0噸</th><th>4.5噸</th><th>貨車</th><th rowspan="2">總時數</th><td class="total-hours-cell" rowspan="2">${initialNormalHours}小時</td></tr>
+            <tr class="vehicle-values"><td>${vehicleCounts.twoPointFive || ""}</td><td>${vehicleCounts.threePointZero || ""}</td><td>${vehicleCounts.fourPointFive || ""}</td><td>${vehicleCounts.truck || ""}</td></tr>
             <tr class="time-row"><th>工作時間</th><td colspan="6"><span class="time-blank"></span> 時 <span class="time-blank short"></span> 分　起至　<span class="time-blank"></span> 時 <span class="time-blank short"></span> 分止</td></tr>
-            <tr class="amount-row"><th>金　額</th><td colspan="6"><span class="money-blank"></span> 萬　<span class="money-blank"></span> 仟　<span class="money-blank"></span> 佰　<span class="money-blank"></span> 拾　<span class="money-blank"></span> 元整</td></tr>
-            <tr class="signature-row"><th>司　機</th><td class="driver-name-cell" colspan="3"></td><th>廠商<br>簽名</th><td colspan="2"></td></tr>
+            <tr class="amount-row"><th>金　額</th><td colspan="6" contenteditable="false">${signSlipMoneySelect("萬")}${signSlipMoneySelect("仟")}${signSlipMoneySelect("佰")}${signSlipMoneySelect("拾")}${signSlipMoneySelect("元")}<span>整</span></td></tr>
+            <tr class="signature-row"><th>司　機</th><td class="driver-name-cell" colspan="3" contenteditable="false"><select class="driver-name-select" aria-label="選擇司機"><option value="">請選擇司機</option>${signSlipDrivers.map(name => `<option value="${name}">${name}</option>`).join("")}</select></td><th>廠商<br>簽名</th><td colspan="2"></td></tr>
           </table>
           <div class="phone-row">電話：0978-909-078　　0937-028-972</div>
         </div>
@@ -1046,14 +1071,32 @@
       printWindow.opener = null;
       printWindow.document.open();
       printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(journal.date)} 三通工程行當日簽單</title><style>
-        *{box-sizing:border-box}body{margin:0;background:#dedbd3;color:#111;font-family:"DFKai-SB","BiauKai","Microsoft JhengHei",sans-serif;font-size:14px}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;background:#243f35;color:white;font-family:"Microsoft JhengHei",sans-serif}.toolbar label{display:flex;align-items:center;gap:6px;font-weight:700}.toolbar select{border:0;border-radius:6px;padding:8px 10px;font-size:16px}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:17px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.print-sheet{width:210mm;height:297mm;margin:16px auto;background:#fff;box-shadow:0 8px 30px #0002;page-break-after:always;overflow:hidden}.print-sheet:last-child{page-break-after:auto}.sign-slip{display:grid;grid-template-columns:minmax(0,1fr) 9mm;width:210mm;height:148.5mm;margin:0;padding:3mm 4mm 2.5mm 6mm;background:#fff;overflow:hidden}.sign-slip:first-child{border-bottom:1px dashed #777}.sign-slip:focus{outline:3px solid #d98043;outline-offset:-3px}.slip-main{display:flex;min-width:0;flex-direction:column}.slip-header{position:relative;min-height:18mm;text-align:center}.slip-heading{display:inline-block}.company{font-size:25px;font-weight:700;letter-spacing:.27em}.slip-header h1{margin:1px 0 0;font-size:22px;letter-spacing:.1em}.doc-no{position:absolute;right:1mm;bottom:2mm;color:#a8574d;font-family:Georgia,serif;font-size:19px;letter-spacing:.04em}.no-label{color:#222;font-size:16px}.slip-subhead{display:grid;grid-template-columns:1.35fr auto 1fr;align-items:end;gap:8px;margin-bottom:1mm;padding:0 2mm;font-size:15px;font-weight:700}.slip-subhead>div:last-child{text-align:right}.customer-field{display:flex;align-items:baseline;gap:2mm;white-space:nowrap}.fill-line{display:inline-block;min-width:30mm;border-bottom:1px solid #222;color:#111;text-align:left}.license-label{text-align:center}.form-table{width:100%;border:1.5px solid #111;border-collapse:collapse;table-layout:fixed;font-size:14px}.form-table th,.form-table td{border:1px solid #111;padding:2px 4px;text-align:center;vertical-align:middle}.form-table th{font-weight:500}.label-col{width:20mm}.small-col{width:18mm}.wide-col{width:25mm}.location-row{height:8mm}.location-row td{text-align:left;font-size:15px}.content-row{height:38mm}.content-row td{text-align:left;vertical-align:top;line-height:1.2;font-size:14px}.vehicle-row{height:6mm}.vehicle-values{height:6mm}.time-row,.amount-row{height:7mm}.time-row td,.amount-row td{font-size:14px;letter-spacing:.03em}.time-blank,.money-blank{display:inline-block;min-width:12mm;border-bottom:1px solid #555}.time-blank.short{min-width:8mm}.money-blank{min-width:8mm}.signature-row{height:16mm}.signature-row th:nth-of-type(2){line-height:1.1}.driver-name-cell{font-size:42px;line-height:1;font-weight:700}.phone-row{padding:1.5mm 8mm 0;text-align:right;font-family:"Microsoft JhengHei",sans-serif;font-size:13px;font-weight:700}.copy-label{display:flex;align-items:center;justify-content:center;padding:20mm 0 3mm;font-size:12px;font-weight:700}.copy-label span{writing-mode:vertical-rl;letter-spacing:.06em}[contenteditable="true"]{caret-color:#c24f2f}[contenteditable="true"]:focus{outline:2px dashed #d98043;outline-offset:2px}@page{size:A4 portrait;margin:0}@media print{body{background:white}.toolbar{display:none}.print-sheet{margin:0;box-shadow:none}.sign-slip:focus,[contenteditable="true"]:focus{outline:none}}
+        *{box-sizing:border-box}body{margin:0;background:#dedbd3;color:#111;font-family:"DFKai-SB","BiauKai","Microsoft JhengHei",sans-serif;font-size:14px}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;background:#243f35;color:white;font-family:"Microsoft JhengHei",sans-serif}.toolbar label{display:flex;align-items:center;gap:6px;font-weight:700}.toolbar select{border:0;border-radius:6px;padding:8px 10px;font-size:16px}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:17px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.print-sheet{width:210mm;height:297mm;margin:16px auto;background:#fff;box-shadow:0 8px 30px #0002;page-break-after:always;overflow:hidden}.print-sheet:last-child{page-break-after:auto}.sign-slip{display:grid;grid-template-columns:minmax(0,1fr) 9mm;width:210mm;height:148.5mm;margin:0;padding:3mm 4mm 2.5mm 6mm;background:#fff;overflow:hidden}.sign-slip:first-child{border-bottom:1px dashed #777}.sign-slip:focus{outline:3px solid #d98043;outline-offset:-3px}.slip-main{display:flex;min-width:0;flex-direction:column}.slip-header{position:relative;min-height:18mm;text-align:center}.slip-heading{display:inline-block}.company{font-size:25px;font-weight:700;letter-spacing:.27em}.slip-header h1{margin:1px 0 0;font-size:22px;letter-spacing:.1em}.doc-no{position:absolute;right:1mm;bottom:2mm;color:#a8574d;font-family:Georgia,serif;font-size:19px;letter-spacing:.04em}.no-label{color:#222;font-size:16px}.slip-subhead{display:grid;grid-template-columns:1.35fr auto 1fr;align-items:end;gap:8px;margin-bottom:1mm;padding:0 2mm;font-size:15px;font-weight:700}.slip-subhead>div:last-child{text-align:right}.customer-field{display:flex;align-items:baseline;gap:2mm;white-space:nowrap}.fill-line{display:inline-block;min-width:30mm;border-bottom:1px solid #222;color:#111;text-align:left}.license-label{text-align:center}.form-table{width:100%;border:1.5px solid #111;border-collapse:collapse;table-layout:fixed;font-size:14px}.form-table th,.form-table td{border:1px solid #111;padding:2px 4px;text-align:center;vertical-align:middle}.form-table th{font-weight:500}.label-col{width:20mm}.small-col{width:18mm}.wide-col{width:25mm}.location-row{height:8mm}.location-row td{text-align:left;font-size:15px}.content-row{height:38mm}.content-row td{text-align:left;vertical-align:top;line-height:1.2;font-size:14px}.hour-calculation{margin-top:2px;text-align:center;font-size:14px;white-space:nowrap}.hours-expression,.overtime-hours{width:12mm;border:0;border-bottom:1px solid #555;background:transparent;font:inherit;text-align:center}.vehicle-row{height:6mm}.vehicle-values{height:6mm}.time-row,.amount-row{height:7mm}.time-row td,.amount-row td{font-size:14px;letter-spacing:.03em}.time-blank{display:inline-block;min-width:12mm;border-bottom:1px solid #555}.time-blank.short{min-width:8mm}.money-digit{display:inline-flex;align-items:center;margin:0 1.5mm}.money-digit select{width:8mm;padding:0;border:0;border-bottom:1px solid #555;border-radius:0;background:transparent;font:inherit;text-align:center}.signature-row{height:16mm}.signature-row th:nth-of-type(2){line-height:1.1}.driver-name-cell{font-size:42px;line-height:1;font-weight:700}.driver-name-select{width:100%;border:0;background:transparent;font:inherit;text-align:center;font-weight:inherit}.phone-row{padding:1.5mm 8mm 0;text-align:right;font-family:"Microsoft JhengHei",sans-serif;font-size:13px;font-weight:700}.copy-label{display:flex;align-items:center;justify-content:center;padding:20mm 0 3mm;font-size:12px;font-weight:700}.copy-label span{writing-mode:vertical-rl;letter-spacing:.06em}[contenteditable="true"]{caret-color:#c24f2f}[contenteditable="true"]:focus{outline:2px dashed #d98043;outline-offset:2px}@page{size:A4 portrait;margin:0}@media print{body{background:white}.toolbar{display:none}.print-sheet{margin:0;box-shadow:none}.sign-slip:focus,[contenteditable="true"]:focus{outline:none}}
       </style></head><body><div class="toolbar"><span>每張 A4 上下二聯，修改任一聯會同步另一聯</span><label>司機姓名字級<select onchange="document.querySelectorAll('.driver-name-cell').forEach(cell=>cell.style.fontSize=this.value+'px')"><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="42" selected>42</option><option value="48">48</option><option value="56">56</option></select></label><label>字型<select onchange="document.querySelectorAll('.driver-name-cell').forEach(cell=>cell.style.fontFamily=this.value)"><option value="DFKai-SB, BiauKai, serif">標楷體</option><option value="Microsoft JhengHei, sans-serif">微軟正黑體</option><option value="PMingLiU, serif">新細明體</option></select></label><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
       printWindow.document.close();
+      const updateSlipHours = slip => {
+        const values = String(slip.querySelector(".hours-expression")?.value || "").split("+").map(value => Number(value.trim()));
+        const normalHours = values.length && values.every(value => Number.isFinite(value) && value >= 0) ? values.reduce((sum, value) => sum + value, 0) : 0;
+        const overtimeHours = Number(slip.querySelector(".overtime-hours")?.value || 0);
+        const totalHours = normalHours + (Number.isFinite(overtimeHours) && overtimeHours >= 0 ? overtimeHours : 0);
+        slip.querySelector(".normal-hours-total").textContent = normalHours;
+        slip.querySelector(".calculated-total-hours").textContent = totalHours;
+        slip.querySelector(".total-hours-cell").textContent = `${totalHours}小時`;
+      };
       printWindow.document.querySelectorAll(".print-sheet").forEach(sheet => {
         const copies = [...sheet.querySelectorAll(".sign-slip")];
+        copies.forEach(updateSlipHours);
         copies.forEach((copy, index) => copy.addEventListener("input", () => {
+          updateSlipHours(copy);
           const otherCopy = copies[index === 0 ? 1 : 0];
           otherCopy.querySelector(".slip-main").innerHTML = copy.querySelector(".slip-main").innerHTML;
+          updateSlipHours(otherCopy);
+        }));
+        copies.forEach((copy, index) => copy.addEventListener("change", () => {
+          updateSlipHours(copy);
+          const otherCopy = copies[index === 0 ? 1 : 0];
+          otherCopy.querySelector(".slip-main").innerHTML = copy.querySelector(".slip-main").innerHTML;
+          updateSlipHours(otherCopy);
         }));
       });
       printWindow.focus();
