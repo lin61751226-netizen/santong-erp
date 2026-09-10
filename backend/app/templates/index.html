@@ -1145,22 +1145,37 @@
         updateSlipDrivers(slip);
         updateSlipHours(slip);
       };
-      printWindow.document.querySelectorAll(".print-sheet").forEach(sheet => {
-        const copies = [...sheet.querySelectorAll(".sign-slip")];
-        copies.forEach(updateSignSlip);
-        copies.forEach((copy, index) => copy.addEventListener("input", () => {
-          updateSignSlip(copy);
-          const otherCopy = copies[index === 0 ? 1 : 0];
-          otherCopy.querySelector(".slip-main").innerHTML = copy.querySelector(".slip-main").innerHTML;
-          updateSignSlip(otherCopy);
-        }));
-        copies.forEach((copy, index) => copy.addEventListener("change", () => {
-          updateSignSlip(copy);
-          const otherCopy = copies[index === 0 ? 1 : 0];
-          otherCopy.querySelector(".slip-main").innerHTML = copy.querySelector(".slip-main").innerHTML;
-          updateSignSlip(otherCopy);
-        }));
-      });
+      const copySlipFormValues = (source, target) => {
+        const sourceControls = [...source.querySelectorAll("input, select")];
+        const targetControls = [...target.querySelectorAll("input, select")];
+        sourceControls.forEach((sourceControl, index) => {
+          const targetControl = targetControls[index];
+          if (!targetControl) return;
+          if (sourceControl.tagName === "INPUT" && sourceControl.type === "checkbox") {
+            targetControl.checked = sourceControl.checked;
+          } else {
+            targetControl.value = sourceControl.value;
+          }
+        });
+      };
+      const syncSignSlipCopy = source => {
+        const copies = [...source.closest(".print-sheet").querySelectorAll(".sign-slip")];
+        const target = copies.find(copy => copy !== source);
+        if (!target) return;
+        target.querySelector(".slip-main").innerHTML = source.querySelector(".slip-main").innerHTML;
+        // innerHTML 不會帶出輸入框當下值與核取狀態，需逐欄同步。
+        copySlipFormValues(source, target);
+        updateSignSlip(target);
+      };
+      printWindow.document.querySelectorAll(".sign-slip").forEach(updateSignSlip);
+      const handleSignSlipEdit = event => {
+        const source = event.target.closest?.(".sign-slip");
+        if (!source) return;
+        updateSignSlip(source);
+        syncSignSlipCopy(source);
+      };
+      printWindow.document.addEventListener("input", handleSignSlipEdit, true);
+      printWindow.document.addEventListener("change", handleSignSlipEdit, true);
       printWindow.focus();
     }
 
