@@ -1037,7 +1037,7 @@
       </div>`;
     }
 
-    function buildSignSlipPage(site, journalDate, copyLabel) {
+    function buildSignSlipPage(site, journalDate, copyLabel, isMasterCopy) {
       const assignments = selectedJournalItems(site, "assignments");
       const texts = selectedJournalItems(site, "group_texts");
       const workLines = [...new Set([
@@ -1062,7 +1062,10 @@
       const customerName = String(site.site_name || "").includes("齊裕") ? "齊裕營造" : "";
       const [year, month, day] = journalDate.split("-").map(Number);
       const rocDate = `${year - 1911} 年 ${month} 月 ${day} 日`;
-      return `<section class="sign-slip" contenteditable="true" spellcheck="false">
+      const copyAttributes = isMasterCopy
+        ? 'contenteditable="true" data-sign-slip-role="master"'
+        : 'contenteditable="false" data-sign-slip-role="copy" style="pointer-events:none;"';
+      return `<section class="sign-slip" ${copyAttributes} spellcheck="false">
         <div class="slip-main">
           <header class="slip-header">
             <div class="slip-heading"><div class="company">三　通　工　程　行</div><h1>起重專業出租</h1></div>
@@ -1093,8 +1096,8 @@
       }
       const sites = siteIndex === -1 ? journal.sites : [journal.sites[siteIndex]].filter(Boolean);
       const pages = sites.map(site => `<div class="print-sheet">
-        ${buildSignSlipPage(site, journal.date, "第一聯：請款")}
-        ${buildSignSlipPage(site, journal.date, "第二聯：客戶")}
+        ${buildSignSlipPage(site, journal.date, "第一聯：請款", true)}
+        ${buildSignSlipPage(site, journal.date, "第二聯：客戶", false)}
       </div>`).join("");
       const printWindow = window.open("", "_blank");
       if (!printWindow) {
@@ -1107,6 +1110,8 @@
         *{box-sizing:border-box}body{margin:0;background:#dedbd3;color:#111;font-family:"DFKai-SB","BiauKai","Microsoft JhengHei",sans-serif;font-size:14px}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;background:#243f35;color:white;font-family:"Microsoft JhengHei",sans-serif}.toolbar label{display:flex;align-items:center;gap:6px;font-weight:700}.toolbar select{border:0;border-radius:6px;padding:8px 10px;font-size:16px}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:17px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.print-sheet{width:210mm;height:297mm;margin:16px auto;background:#fff;box-shadow:0 8px 30px #0002;page-break-after:always;overflow:hidden}.print-sheet:last-child{page-break-after:auto}.sign-slip{display:grid;grid-template-columns:minmax(0,1fr) 9mm;width:210mm;height:148.5mm;margin:0;padding:3mm 4mm 2.5mm 6mm;background:#fff;overflow:hidden}.sign-slip:first-child{border-bottom:1px dashed #777}.sign-slip:focus{outline:3px solid #d98043;outline-offset:-3px}.slip-main{display:flex;min-width:0;flex-direction:column}.slip-header{position:relative;min-height:18mm;text-align:center}.slip-heading{display:inline-block}.company{font-size:25px;font-weight:700;letter-spacing:.27em}.slip-header h1{margin:1px 0 0;font-size:22px;letter-spacing:.1em}.doc-no{position:absolute;right:1mm;bottom:2mm;color:#a8574d;font-family:Georgia,serif;font-size:19px;letter-spacing:.04em}.no-label{color:#222;font-size:16px}.slip-subhead{display:grid;grid-template-columns:1.35fr auto 1fr;align-items:end;gap:8px;margin-bottom:1mm;padding:0 2mm;font-size:15px;font-weight:700}.slip-subhead>div:last-child{text-align:right}.customer-field{display:flex;align-items:baseline;gap:2mm;white-space:nowrap}.fill-line{display:inline-block;min-width:30mm;border-bottom:1px solid #222;color:#111;text-align:left}.license-label{text-align:center}.form-table{width:100%;border:1.5px solid #111;border-collapse:collapse;table-layout:fixed;font-size:14px}.form-table th,.form-table td{border:1px solid #111;padding:2px 4px;text-align:center;vertical-align:middle}.form-table th{font-weight:500}.label-col{width:20mm}.small-col{width:18mm}.wide-col{width:25mm}.location-row{height:8mm}.location-row td{text-align:left;font-size:15px}.content-row{height:38mm}.content-row td{text-align:left;vertical-align:top;line-height:1.2;font-size:14px}.hour-calculation{margin-top:2px;text-align:center;font-size:14px;white-space:nowrap}.hours-expression,.overtime-hours{width:12mm;border:0;border-bottom:1px solid #555;background:transparent;font:inherit;text-align:center}.vehicle-row{height:6mm}.vehicle-values{height:6mm}.time-row,.amount-row{height:7mm}.time-row td,.amount-row td{font-size:14px;letter-spacing:.03em}.time-blank{display:inline-block;min-width:12mm;border-bottom:1px solid #555}.time-blank.short{min-width:8mm}.money-digit{display:inline-flex;align-items:center;margin:0 1.5mm}.money-digit select{width:8mm;padding:0;border:0;border-bottom:1px solid #555;border-radius:0;background:transparent;font:inherit;text-align:center}.signature-row{height:16mm}.signature-row th:nth-of-type(2){line-height:1.1}.driver-name-cell{font-size:42px;line-height:1;font-weight:700}.driver-name-select{width:100%;border:0;background:transparent;font:inherit;text-align:center;font-weight:inherit}.phone-row{padding:1.5mm 8mm 0;text-align:right;font-family:"Microsoft JhengHei",sans-serif;font-size:13px;font-weight:700}.copy-label{display:flex;align-items:center;justify-content:center;padding:20mm 0 3mm;font-size:12px;font-weight:700}.copy-label span{writing-mode:vertical-rl;letter-spacing:.06em}[contenteditable="true"]{caret-color:#c24f2f}[contenteditable="true"]:focus{outline:2px dashed #d98043;outline-offset:2px}@page{size:A4 portrait;margin:0}@media print{body{background:white}.toolbar{display:none}.print-sheet{margin:0;box-shadow:none}.sign-slip:focus,[contenteditable="true"]:focus{outline:none}}
       </style></head><body><div class="toolbar"><span>每張 A4 上下二聯，修改任一聯會同步另一聯</span><label>司機姓名字級<select onchange="document.querySelectorAll('.driver-name-cell').forEach(cell=>cell.style.fontSize=this.value+'px')"><option value="28">28</option><option value="32">32</option><option value="36">36</option><option value="42" selected>42</option><option value="48">48</option><option value="56">56</option></select></label><label>字型<select onchange="document.querySelectorAll('.driver-name-cell').forEach(cell=>cell.style.fontFamily=this.value)"><option value="DFKai-SB, BiauKai, serif">標楷體</option><option value="Microsoft JhengHei, sans-serif">微軟正黑體</option><option value="PMingLiU, serif">新細明體</option></select></label><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
       printWindow.document.close();
+      const toolbarMessage = printWindow.document.querySelector(".toolbar span");
+      if (toolbarMessage) toolbarMessage.textContent = "請只修改第一聯；第二聯會自動完整帶入。";
       const updateSlipVehicleCounts = slip => {
         const vehicleInputs = [...slip.querySelectorAll(".vehicle-count-input")];
         const forkliftCount = vehicleInputs
@@ -1158,24 +1163,44 @@
           }
         });
       };
-      const syncSignSlipCopy = source => {
-        const copies = [...source.closest(".print-sheet").querySelectorAll(".sign-slip")];
-        const target = copies.find(copy => copy !== source);
-        if (!target) return;
+      const syncSignSlipCopy = (source, target) => {
+        if (!source || !target) return;
         target.querySelector(".slip-main").innerHTML = source.querySelector(".slip-main").innerHTML;
         // innerHTML 不會帶出輸入框當下值與核取狀態，需逐欄同步。
         copySlipFormValues(source, target);
         updateSignSlip(target);
       };
-      printWindow.document.querySelectorAll(".sign-slip").forEach(updateSignSlip);
+      const signSlipSignature = slip => JSON.stringify([
+        slip.querySelector(".slip-main").innerHTML,
+        ...[...slip.querySelectorAll("input, select")].map(control => [
+          control.tagName, control.type, control.value, control.checked,
+        ]),
+      ]);
+      const syncAllSignSlipCopies = () => {
+        printWindow.document.querySelectorAll(".print-sheet").forEach(sheet => {
+          const source = sheet.querySelector('[data-sign-slip-role="master"]');
+          const target = sheet.querySelector('[data-sign-slip-role="copy"]');
+          if (!source || !target) return;
+          updateSignSlip(source);
+          const signature = signSlipSignature(source);
+          if (target.dataset.sourceSignature === signature) return;
+          syncSignSlipCopy(source, target);
+          target.dataset.sourceSignature = signature;
+        });
+      };
+      printWindow.document.querySelectorAll('[data-sign-slip-role="master"]').forEach(updateSignSlip);
+      syncAllSignSlipCopies();
       const handleSignSlipEdit = event => {
-        const source = event.target.closest?.(".sign-slip");
+        const source = event.target.closest?.('[data-sign-slip-role="master"]');
         if (!source) return;
         updateSignSlip(source);
-        syncSignSlipCopy(source);
+        syncAllSignSlipCopies();
       };
       printWindow.document.addEventListener("input", handleSignSlipEdit, true);
       printWindow.document.addEventListener("change", handleSignSlipEdit, true);
+      // 有些瀏覽器的列印視窗不會冒泡表單事件，定時比對可確保第二聯仍會更新。
+      printWindow.setInterval(syncAllSignSlipCopies, 250);
+      printWindow.addEventListener("beforeprint", syncAllSignSlipCopies);
       printWindow.focus();
     }
 
