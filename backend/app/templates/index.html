@@ -1045,7 +1045,9 @@
         ...texts.map(item => item.content),
       ].filter(Boolean))];
       const assignedVehicleCounts = getVehicleCounts(assignments.flatMap(item => [item.vehicle, item.equipment]).filter(Boolean));
-      const inspectedVehicleCounts = getVehicleCounts((site.inspections || []).map(item => item.forklift_model).filter(Boolean));
+      const inspectedVehicleCounts = getVehicleCounts([
+        ...new Map((site.inspections || []).map(item => [item.forklift_code, item.forklift_model])).values(),
+      ].filter(Boolean));
       // 派工未填噸數時，以當日點檢的實際車型補足；同一車不會重複相加。
       const vehicleCounts = Object.fromEntries(Object.keys(signSlipVehicleTypes).map(type => [
         type,
