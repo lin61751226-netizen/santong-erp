@@ -44,7 +44,10 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.inactive = Employee(employee_code="INACTIVE", name="停用管理員", bind_token="inactive", role=Role.admin, status="inactive", line_user_id="U-inactive")
         self.session.add_all([self.site, self.driver, self.boss, self.admin, self.unbound, self.inactive])
         self.session.commit()
-        self.vehicle = Forklift(forklift_code="1號", fuel_level=80, current_site_id=self.site.id)
+        self.vehicle = Forklift(
+            forklift_code="1號", model="自排 2.5噸柴油車", fuel_level=80,
+            current_site_id=self.site.id,
+        )
         self.session.add(self.vehicle)
         self.session.commit()
         self.token = patch.object(settings, "line_channel_access_token", "test-token")
@@ -274,6 +277,7 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(journal["group_texts"][0]["content"], "完成卸料")
         self.assertEqual(journal["attendance"][0]["employee_name"], self.driver.name)
         self.assertEqual(journal["inspections"][0]["forklift_code"], self.vehicle.forklift_code)
+        self.assertEqual(journal["inspections"][0]["forklift_model"], self.vehicle.model)
         self.assertEqual(journal["photos"][0]["file_name"], "work.jpg")
 
     def test_sign_slip_matches_editable_rental_form_without_private_event_details(self):
@@ -289,7 +293,10 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="customer-field"', sign_slip_block)
         self.assertIn('class="driver-name-cell"', sign_slip_block)
         self.assertIn('signSlipDrivers = ["林育弘", "林建成", "朱勝忠", "林金生", "林金谷"]', template)
-        self.assertIn('class="driver-name-select"', sign_slip_block)
+        self.assertIn('class="driver-picker-options"', template)
+        self.assertIn('type="checkbox" value="${name}"', template)
+        self.assertIn('class="driver-name-display', template)
+        self.assertNotIn('class="driver-name-select"', sign_slip_block)
         self.assertIn('.driver-name-cell{font-size:42px;line-height:1;font-weight:700}', template)
         self.assertIn('司機姓名字級<select', template)
         self.assertIn('<option value="42" selected>42</option>', template)
@@ -310,13 +317,16 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('class="hours-expression"', sign_slip_block)
         self.assertIn('class="overtime-hours"', sign_slip_block)
         self.assertIn('class="total-hours-cell"', sign_slip_block)
-        self.assertIn('countVehicleUnits(vehicleEntries', sign_slip_block)
+        self.assertIn('getVehicleCounts(assignments.flatMap', sign_slip_block)
+        self.assertIn('forklift_model', sign_slip_block)
+        self.assertIn('class="vehicle-count-input"', template)
+        self.assertIn('updateSlipVehicleCounts', template)
+        self.assertIn('updateSlipDrivers', template)
         self.assertIn('chineseMoneyDigits = ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"]', template)
         self.assertIn('class="money-digit"', template)
         self.assertIn("廠商<br>簽名", sign_slip_block)
         self.assertIn("texts.map(item => item.content)", sign_slip_block)
         self.assertNotIn("attendance", sign_slip_block)
-        self.assertNotIn("inspections", sign_slip_block)
         self.assertNotIn("photos", sign_slip_block)
         self.assertNotIn("employee_name", sign_slip_block)
 

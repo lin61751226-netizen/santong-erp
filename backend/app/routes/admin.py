@@ -1619,6 +1619,7 @@ def list_worksite_journals(
         bucket_for(inspection.site_id)["inspections"].append({
             "id": inspection.id,
             "forklift_code": forklift.forklift_code if forklift else "未知堆高機",
+            "forklift_model": forklift.model if forklift else None,
             "operator_name": operator.name if operator else "未知操作員",
             "all_passed": inspection.all_passed,
             "notes": inspection.notes,
