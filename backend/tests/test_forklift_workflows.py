@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -29,6 +30,7 @@ from app.services.forklift_notifications import (
 )
 from app.services.line import line_service, process_webhook_event
 from app.services.line_platform import build_default_rich_menu_payloads, generate_default_rich_menu_images
+from app.services.scheduler import push_daily_attendance_summary
 
 
 class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
@@ -103,6 +105,62 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.backup_database.await_count, 1)
         delivery = self.session.exec(select(NotificationDelivery).where(NotificationDelivery.employee_id == self.unbound.id)).one()
         self.assertEqual(delivery.delivery_status, DeliveryStatus.skipped)
+
+    async def test_daily_attendance_summary_sends_to_three_recipients_once(self):
+        self.boss.employee_code = "BOSS001"
+        self.admin.employee_code = "ADMIN001"
+        clerk = Employee(
+            employee_code="ADMIN002",
+            name="秀蓉",
+            bind_token="clerk",
+            role=Role.admin,
+            line_user_id="U-clerk",
+        )
+        incomplete_driver = Employee(
+            employee_code="TEST02",
+            name="未下班司機",
+            bind_token="driver-2",
+        )
+        self.session.add_all([clerk, incomplete_driver])
+        self.session.commit()
+
+        target_date = date(2026, 9, 14)
+        self.session.add_all([
+            AttendanceEvent(
+                employee_id=self.driver.id,
+                event_type="上班打卡",
+                happened_at=datetime(2026, 9, 14, 0, 10),
+            ),
+            AttendanceEvent(
+                employee_id=self.driver.id,
+                event_type="下班打卡",
+                happened_at=datetime(2026, 9, 14, 9, 5),
+            ),
+            AttendanceEvent(
+                employee_id=incomplete_driver.id,
+                event_type="上班打卡",
+                happened_at=datetime(2026, 9, 14, 0, 20),
+            ),
+        ])
+        self.session.commit()
+
+        @contextmanager
+        def test_session_scope():
+            yield self.session
+
+        with patch("app.services.scheduler.session_scope", test_session_scope):
+            first_result = await push_daily_attendance_summary(target_date)
+            second_result = await push_daily_attendance_summary(target_date)
+
+        self.assertEqual(first_result["status"], "sent")
+        self.assertEqual(second_result["status"], "already_sent")
+        self.assertEqual(self.push.await_count, 3)
+        batch = self.session.exec(select(NotificationBatch)).one()
+        self.assertEqual(batch.target_scope, "daily_attendance_summary")
+        self.assertEqual(batch.target_value, "2026-09-14")
+        self.assertIn("測試司機　08:10", batch.content)
+        self.assertIn("測試司機　17:05", batch.content)
+        self.assertIn("未下班司機　未下班打卡", batch.content)
 
     async def test_group_chatter_does_not_advance_inspection(self):
         await self.begin(group=True)

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     google_oauth_refresh_token: str = ""
     daily_push_hour: int = 7
     daily_push_minute: int = 0
+    # 每日上下班打卡彙整，固定於台灣時間晚間發送給指定管理人員。
+    attendance_summary_hour: int = 19
+    attendance_summary_minute: int = 0
     # 後台登入與權限
     default_password: str = "Santong@2026"
     login_fail_limit: int = 3

@@ -38,6 +38,10 @@ services:
         value: "7"
       - key: DAILY_PUSH_MINUTE
         value: "0"
+      - key: ATTENDANCE_SUMMARY_HOUR
+        value: "19"
+      - key: ATTENDANCE_SUMMARY_MINUTE
+        value: "0"
       - key: DEFAULT_PASSWORD
         value: "Santong@2026"
       - key: LOGIN_FAIL_LIMIT
