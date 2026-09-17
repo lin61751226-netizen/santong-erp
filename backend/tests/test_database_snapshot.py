@@ -78,6 +78,28 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
         oauth_credentials.refresh.assert_called_once()
         service_account_credentials.assert_called_once_with({}, scopes=["https://www.googleapis.com/auth/drive"])
 
+    def test_oauth_refresh_is_shared_for_concurrent_drive_operations(self) -> None:
+        service = GoogleDriveWorklogService()
+        oauth_credentials = Mock(valid=False)
+
+        def refresh(_request) -> None:
+            oauth_credentials.valid = True
+
+        oauth_credentials.refresh.side_effect = refresh
+
+        with (
+            patch.object(settings, "google_oauth_client_id", "oauth-client"),
+            patch.object(settings, "google_oauth_client_secret", "oauth-secret"),
+            patch.object(settings, "google_oauth_refresh_token", "valid-token"),
+            patch("app.services.google_drive.OAuthCredentials", return_value=oauth_credentials),
+        ):
+            first = service._credentials()
+            second = service._credentials()
+
+        self.assertIs(first, oauth_credentials)
+        self.assertIs(second, oauth_credentials)
+        oauth_credentials.refresh.assert_called_once()
+
     async def test_production_restore_replaces_existing_local_database(self) -> None:
         service = GoogleDriveWorklogService()
         with tempfile.TemporaryDirectory() as temp_dir:

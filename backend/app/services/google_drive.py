@@ -84,6 +84,10 @@ class GoogleDriveWorklogService:
     def __init__(self) -> None:
         # 所有即時／排程快照依序執行，避免較舊快照晚完成而覆蓋較新資料。
         self._database_backup_lock = threading.Lock()
+        # 同一服務執行期間共用 OAuth access token，避免啟動時多項 Drive
+        # 作業同時以同一 refresh token 向 Google 重新換取權杖。
+        self._oauth_credentials_lock = threading.Lock()
+        self._oauth_credentials: OAuthCredentials | None = None
 
     def _has_oauth(self) -> bool:
         return bool(
@@ -142,21 +146,33 @@ class GoogleDriveWorklogService:
             raise GoogleDriveWorklogError(f"找不到 Google service account 憑證：{credential_path}")
         return service_account.Credentials.from_service_account_file(str(credential_path), scopes=DRIVE_SCOPE)
 
+    def _oauth_credentials_from_refresh_token(self) -> OAuthCredentials:
+        with self._oauth_credentials_lock:
+            created = False
+            if self._oauth_credentials is None:
+                created = True
+                self._oauth_credentials = OAuthCredentials(
+                    token=None,
+                    refresh_token=settings.google_oauth_refresh_token.strip(),
+                    token_uri=OAUTH_TOKEN_URI,
+                    client_id=settings.google_oauth_client_id.strip(),
+                    client_secret=settings.google_oauth_client_secret.strip(),
+                    scopes=DRIVE_SCOPE,
+            )
+            try:
+                if created or not self._oauth_credentials.valid:
+                    self._oauth_credentials.refresh(GoogleAuthRequest())
+                return self._oauth_credentials
+            except RefreshError:
+                self._oauth_credentials = None
+                raise
+
     def _credentials(self):
         # 優先使用 OAuth 2.0；若 refresh token 已失效，使用既有 service account
         # 讀取同一個共享資料夾，避免 Render 重啟時遺失資料庫快照。
         if self._has_oauth():
-            credentials = OAuthCredentials(
-                token=None,
-                refresh_token=settings.google_oauth_refresh_token.strip(),
-                token_uri=OAUTH_TOKEN_URI,
-                client_id=settings.google_oauth_client_id.strip(),
-                client_secret=settings.google_oauth_client_secret.strip(),
-                scopes=DRIVE_SCOPE,
-            )
             try:
-                credentials.refresh(GoogleAuthRequest())
-                return credentials
+                return self._oauth_credentials_from_refresh_token()
             except RefreshError as exc:
                 if not self._has_service_account():
                     raise GoogleDriveWorklogError(
