@@ -104,6 +104,20 @@ class GoogleDriveWorklogService:
             return True
         return Path(raw).exists()
 
+    @staticmethod
+    def _oauth_refresh_failure_kind(exc: RefreshError) -> str:
+        """Classify OAuth failures for operations logs without exposing credentials."""
+        detail = " ".join(str(part).lower() for part in exc.args)
+        if "invalid_client" in detail:
+            return "invalid_client"
+        if "invalid_grant" in detail:
+            return "invalid_grant"
+        if "unauthorized_client" in detail:
+            return "unauthorized_client"
+        if "access_denied" in detail:
+            return "access_denied"
+        return "unknown_refresh_error"
+
     def is_configured(self) -> bool:
         folder_id = settings.google_drive_worklog_folder_id.strip()
         if not folder_id or len(folder_id) < 10:
@@ -148,7 +162,10 @@ class GoogleDriveWorklogService:
                     raise GoogleDriveWorklogError(
                         "Google Drive OAuth 授權已失效，請管理員重新授權後更新 Render 設定"
                     ) from exc
-                logger.warning("Google OAuth 權杖失效，改用 service account 備援認證")
+                logger.warning(
+                    "Google OAuth 更新失敗（%s），改用 service account 備援認證",
+                    self._oauth_refresh_failure_kind(exc),
+                )
                 return self._service_account_credentials()
 
         return self._service_account_credentials()

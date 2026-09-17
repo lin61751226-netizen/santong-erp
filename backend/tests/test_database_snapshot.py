@@ -31,6 +31,15 @@ def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 
 
 
 class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    def test_oauth_refresh_failure_kind_hides_sensitive_detail(self) -> None:
+        service = GoogleDriveWorklogService()
+
+        result = service._oauth_refresh_failure_kind(
+            RefreshError("invalid_client", {"client_secret": "must-not-log"})
+        )
+
+        self.assertEqual(result, "invalid_client")
+
     def test_expired_oauth_without_service_account_explains_reauthorization(self) -> None:
         service = GoogleDriveWorklogService()
         oauth_credentials = Mock()
