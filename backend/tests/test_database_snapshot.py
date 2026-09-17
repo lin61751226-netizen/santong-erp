@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from google.auth.exceptions import RefreshError
 from app.core.config import settings
-from app.services.google_drive import GoogleDriveWorklogService
+from app.services.google_drive import GoogleDriveWorklogError, GoogleDriveWorklogService
 
 
 def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 0) -> None:
@@ -31,6 +31,21 @@ def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 
 
 
 class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    def test_expired_oauth_without_service_account_explains_reauthorization(self) -> None:
+        service = GoogleDriveWorklogService()
+        oauth_credentials = Mock()
+        oauth_credentials.refresh.side_effect = RefreshError("invalid_grant")
+
+        with (
+            patch.object(settings, "google_oauth_client_id", "oauth-client"),
+            patch.object(settings, "google_oauth_client_secret", "oauth-secret"),
+            patch.object(settings, "google_oauth_refresh_token", "expired-token"),
+            patch.object(settings, "google_service_account_json", ""),
+            patch("app.services.google_drive.OAuthCredentials", return_value=oauth_credentials),
+        ):
+            with self.assertRaisesRegex(GoogleDriveWorklogError, "OAuth 授權已失效"):
+                service._credentials()
+
     def test_expired_oauth_uses_service_account_fallback(self) -> None:
         service = GoogleDriveWorklogService()
         oauth_credentials = Mock()

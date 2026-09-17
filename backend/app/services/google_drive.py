@@ -21,6 +21,7 @@ from google.oauth2.credentials import Credentials as OAuthCredentials
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 from sqlmodel import Session, select
 
@@ -142,9 +143,11 @@ class GoogleDriveWorklogService:
             try:
                 credentials.refresh(GoogleAuthRequest())
                 return credentials
-            except RefreshError:
+            except RefreshError as exc:
                 if not self._has_service_account():
-                    raise
+                    raise GoogleDriveWorklogError(
+                        "Google Drive OAuth 授權已失效，請管理員重新授權後更新 Render 設定"
+                    ) from exc
                 logger.warning("Google OAuth 權杖失效，改用 service account 備援認證")
                 return self._service_account_credentials()
 
@@ -585,12 +588,43 @@ class GoogleDriveWorklogService:
             except Exception as e:
                 last_exception = e
                 logger.error(f"上傳失敗（嘗試 {attempt}/{MAX_UPLOAD_RETRIES}）: {file_name}, 錯誤: {e}")
+                # 授權、權限與資料夾設定不會因等待而恢復，避免同一張照片無效重試三次。
+                if self._is_non_retryable_upload_error(e):
+                    raise GoogleDriveWorklogError(self._friendly_upload_error(e)) from e
                 if attempt < MAX_UPLOAD_RETRIES:
                     logger.info(f"等待 {RETRY_DELAY_SECONDS} 秒後重試...")
                     time.sleep(RETRY_DELAY_SECONDS)
 
         logger.error(f"檔案上傳最終失敗（已重試 {MAX_UPLOAD_RETRIES} 次）: {file_name}")
-        raise GoogleDriveWorklogError(f"檔案上傳失敗（已重試 {MAX_UPLOAD_RETRIES} 次）: {last_exception}")
+        raise GoogleDriveWorklogError(
+            f"檔案上傳失敗（已重試 {MAX_UPLOAD_RETRIES} 次）：{self._friendly_upload_error(last_exception)}"
+        )
+
+    @staticmethod
+    def _is_non_retryable_upload_error(exc: Exception) -> bool:
+        if isinstance(exc, (GoogleDriveWorklogError, RefreshError)):
+            return True
+        if isinstance(exc, HttpError):
+            return exc.resp.status in {400, 401, 403, 404}
+        return False
+
+    @staticmethod
+    def _friendly_upload_error(exc: Exception | None) -> str:
+        if isinstance(exc, GoogleDriveWorklogError):
+            return str(exc)
+        if isinstance(exc, RefreshError):
+            return "Google Drive OAuth 授權已失效，請管理員重新授權"
+        if isinstance(exc, HttpError):
+            detail = str(exc)
+            if "storageQuotaExceeded" in detail:
+                return "Google Drive 上傳帳號沒有可用儲存空間，請重新授權可寫入的公司帳號"
+            if exc.resp.status == 401:
+                return "Google Drive 授權已失效，請管理員重新授權"
+            if exc.resp.status == 403:
+                return "Google Drive 資料夾沒有上傳權限，請確認授權帳號可編輯目標資料夾"
+            if exc.resp.status == 404:
+                return "找不到 Google Drive 目標資料夾，請確認資料夾設定"
+        return str(exc) if exc else "未知錯誤"
     async def upload_line_photo(
         self,
         *,
