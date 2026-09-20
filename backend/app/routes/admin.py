@@ -110,10 +110,10 @@ def _management_document_category(file_name: str) -> tuple[str, str]:
     title = file_name.rsplit(".", 1)[0]
     if "計價" in file_name and ("推高機" in file_name or "堆高機" in file_name):
         return "推高機計價", title
-    if "收支" in file_name:
-        return "收支明細", title
     if "通訊錄" in file_name or "全年管理" in file_name:
         return "通訊錄與年度管理", title
+    if "收支" in file_name:
+        return "收支明細", title
     return "公司文件", title
 
 
@@ -1531,6 +1531,16 @@ def list_managed_documents(
     documents = session.exec(
         select(ManagedDocument).order_by(ManagedDocument.created_at.desc(), ManagedDocument.id.desc())
     ).all()
+    # 修正舊版分類順序造成「通訊錄／全年管理」被歸入收支明細的既有紀錄。
+    corrected = False
+    for document in documents:
+        category, _ = _management_document_category(document.original_file_name)
+        if document.category == "收支明細" and category == "通訊錄與年度管理":
+            document.category = category
+            session.add(document)
+            corrected = True
+    if corrected:
+        session.commit()
     return [_serialize_managed_document(session, item) for item in documents]
 
 
