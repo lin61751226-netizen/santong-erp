@@ -272,6 +272,27 @@ class ManagedDocument(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class WorkHourImportLog(SQLModel, table=True):
+    """工作日誌寫入推高機計價表的不可覆蓋稽核紀錄。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    managed_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    worksite_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    work_date: date = Field(index=True)
+    worksheet_name: str
+    target_label: str
+    target_row: int
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    support_hours: float = 0
+    previous_normal_hours: Optional[float] = None
+    previous_overtime_hours: Optional[float] = None
+    previous_support_hours: Optional[float] = None
+    drive_file_id: str
+    drive_url: str
+    imported_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class GroupTextLog(SQLModel, table=True):
     """LINE 群組原始文字，先完整保留，後續再由人工判斷是否納入正式日誌。"""
     id: Optional[int] = Field(default=None, primary_key=True)

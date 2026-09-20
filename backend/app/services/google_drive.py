@@ -61,6 +61,7 @@ PRESERVED_DATABASE_TABLES = (
     "forklift",
     "forkliftinspection",
     "manageddocument",
+    "workhourimportlog",
 )
 
 logger = logging.getLogger(__name__)
@@ -774,5 +775,56 @@ class GoogleDriveWorklogService:
         if not self.is_configured():
             return []
         return await asyncio.to_thread(self._list_management_documents_sync)
+
+    def _download_file_bytes_sync(self, file_id: str) -> bytes:
+        client = self._build_client()
+        request = client.files().get_media(fileId=file_id, supportsAllDrives=True)
+        buffer = io.BytesIO()
+        downloader = MediaIoBaseDownload(buffer, request)
+        complete = False
+        while not complete:
+            _, complete = downloader.next_chunk()
+        return buffer.getvalue()
+
+    async def download_file_bytes(self, file_id: str) -> bytes:
+        """下載已保存於 Drive 的檔案內容，供受控的計價表預覽與寫入使用。"""
+        if not self.is_configured():
+            raise GoogleDriveWorklogError("Google Drive 文件庫尚未完成設定")
+        return await asyncio.to_thread(self._download_file_bytes_sync, file_id)
+
+    def _update_file_bytes_sync(self, *, file_id: str, file_name: str, content: bytes, content_type: str) -> str:
+        client = self._build_client()
+        media = MediaIoBaseUpload(io.BytesIO(content), mimetype=content_type, resumable=False)
+        updated = (
+            client.files()
+            .update(
+                fileId=file_id,
+                body={"name": file_name},
+                media_body=media,
+                fields="id,webViewLink",
+                supportsAllDrives=True,
+            )
+            .execute()
+        )
+        return updated.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+
+    async def update_file_bytes(
+        self,
+        *,
+        file_id: str,
+        file_name: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        """更新同一個 Drive 檔案並保留 Google Drive 的版本修訂歷史。"""
+        if not self.is_configured():
+            raise GoogleDriveWorklogError("Google Drive 文件庫尚未完成設定")
+        return await asyncio.to_thread(
+            self._update_file_bytes_sync,
+            file_id=file_id,
+            file_name=file_name,
+            content=content,
+            content_type=content_type,
+        )
 google_drive_worklog_service = GoogleDriveWorklogService()
 

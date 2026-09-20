@@ -280,6 +280,39 @@
     <section class="panel span-12" data-workspace="documents">
       <div class="panel-header">
         <div>
+          <h2>工作日誌匯入計價工時</h2>
+          <p class="muted">由每日工地日誌帶入工時，選擇計價標別後先看預覽；確認才寫入 Google Drive 推高機計價表。</p>
+        </div>
+      </div>
+      <div class="action-callout">
+        <strong>安全匯入</strong>
+        <span>正常／加班／支援工時分別寫入當日計價列的 B、D、F 欄。每次匯入會保留 Google Drive 修訂、系統稽核紀錄與資料庫快照。</span>
+      </div>
+      <form id="costHourImportForm" class="form-grid">
+        <div><label for="costImportDocument">推高機計價表</label><select id="costImportDocument" required></select></div>
+        <div><label for="costImportDate">工作日誌日期</label><input id="costImportDate" type="date" required></div>
+        <div><label for="costImportWorksite">工地</label><select id="costImportWorksite" required></select></div>
+        <div><label for="costImportTarget">計價標別</label><select id="costImportTarget" required disabled><option value="">請先選計價表與日期</option></select></div>
+        <div><label for="costImportNormal">正常工時</label><input id="costImportNormal" type="number" min="0" max="10000" step="0.5" value="0" required></div>
+        <div><label for="costImportOvertime">加班工時</label><input id="costImportOvertime" type="number" min="0" max="10000" step="0.5" value="0" required></div>
+        <div><label for="costImportSupport">支援工時</label><input id="costImportSupport" type="number" min="0" max="10000" step="0.5" value="0" required></div>
+        <div class="full button-row">
+          <button type="button" class="button-secondary" onclick="previewCostHourImport()">載入預覽</button>
+          <button id="costHourImportSubmit" type="submit" disabled>確認匯入工時</button>
+        </div>
+      </form>
+      <p id="costHourImportFeedback" class="notice" role="status" aria-live="polite">請先由工作日誌帶入，或自行選擇日期、工地與標別。</p>
+      <div id="costHourPreview" class="console" hidden></div>
+      <div class="panel-header" style="margin-top:22px;"><div><h3>最近匯入紀錄</h3><p class="muted">每一筆都保留寫入前工時、寫入標別與 Google Drive 連結。</p></div><button type="button" class="button-secondary button-compact" onclick="loadCostHourImports()">重新整理</button></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>匯入時間</th><th>日期／工地</th><th>標別／工作表</th><th>正常</th><th>加班</th><th>支援</th><th>操作人</th><th>檔案</th></tr></thead>
+        <tbody id="costHourImportRows"></tbody>
+      </table></div>
+    </section>
+
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header">
+        <div>
           <h2>公司 Excel 文件庫</h2>
           <p class="muted">上傳後自動保存原始檔至 Google Drive、建立版本紀錄；不覆蓋舊檔。推高機計價表會保留作為後續依標別匯入工時的指定檔案。</p>
         </div>
@@ -839,6 +872,8 @@
       equipmentOptions: [],
       forkliftOptions: [],
       worksiteJournals: null,
+      managedDocuments: [],
+      costHourPreview: null,
     };
 
     function setWorkspace(workspace, shouldScroll = true) {
@@ -994,7 +1029,7 @@
           return `<article class="journal-card">
             <div class="journal-card-heading">
               <div><span class="eyebrow">工地日誌</span><h3>${escapeHtml(site.site_name)}</h3></div>
-              <div class="button-row"><div class="journal-count">${site.counts.assignments + site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div><button type="button" class="button-secondary button-compact" onclick="printWorksiteSignSlips(${siteIndex})">製作此工地簽單</button></div>
+              <div class="button-row"><div class="journal-count">${site.counts.assignments + site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div><button type="button" class="button-secondary button-compact" onclick="openJournalHourImport(${siteIndex})">匯入工時</button><button type="button" class="button-secondary button-compact" onclick="printWorksiteSignSlips(${siteIndex})">製作此工地簽單</button></div>
             </div>
             <details open><summary>當日派工 <span>${site.counts.assignments}</span></summary><ul class="journal-list">${assignmentRows}</ul></details>
             <details open><summary>群組文字 <span>${site.counts.group_texts}</span></summary><ul class="journal-list">${groupTexts}</ul></details>
@@ -1377,6 +1412,7 @@
     async function bootstrap() {
       document.getElementById("workDate").value = todayString();
       document.getElementById("journalDate").value = todayString();
+      document.getElementById("costImportDate").value = todayString();
       document.getElementById("assignmentFilterDate").value = todayString();
       document.getElementById("attendanceFilterDate").value = "";
       document.getElementById("exceptionFilterDate").value = todayString();
@@ -1407,6 +1443,7 @@
         loadLoginLogs(),
         loadMasterOptions(),
         loadManagedDocuments(),
+        loadCostHourImports(),
       ]);
       setWorkspace("overview", false);
     }
@@ -1446,6 +1483,8 @@
       if (!rows) return;
       try {
         const data = await api("/api/documents");
+        state.managedDocuments = data;
+        renderCostHourImportOptions();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>
@@ -1459,6 +1498,129 @@
       } catch (error) {
         rows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
       }
+    }
+
+    function renderCostHourImportOptions() {
+      const documentSelect = document.getElementById("costImportDocument");
+      const worksiteSelect = document.getElementById("costImportWorksite");
+      if (!documentSelect || !worksiteSelect) return;
+      const selectedDocument = documentSelect.value;
+      const selectedWorksite = worksiteSelect.value;
+      const costDocuments = state.managedDocuments.filter(item => item.category === "推高機計價");
+      documentSelect.innerHTML = costDocuments.length
+        ? costDocuments.map(item => `<option value="${item.id}">${escapeHtml(item.original_file_name)}</option>`).join("")
+        : '<option value="">尚未保存推高機計價表</option>';
+      worksiteSelect.innerHTML = '<option value="">請選擇工地</option>' + state.worksites.map(site =>
+        `<option value="${site.id}">${escapeHtml(site.code)}｜${escapeHtml(site.name)}</option>`
+      ).join("");
+      if ([...documentSelect.options].some(option => option.value === selectedDocument)) documentSelect.value = selectedDocument;
+      if ([...worksiteSelect.options].some(option => option.value === selectedWorksite)) worksiteSelect.value = selectedWorksite;
+    }
+
+    async function loadCostHourTargets() {
+      const documentId = document.getElementById("costImportDocument").value;
+      const workDate = document.getElementById("costImportDate").value;
+      const targetSelect = document.getElementById("costImportTarget");
+      const feedback = document.getElementById("costHourImportFeedback");
+      state.costHourPreview = null;
+      document.getElementById("costHourImportSubmit").disabled = true;
+      document.getElementById("costHourPreview").hidden = true;
+      if (!documentId || !workDate) {
+        targetSelect.disabled = true;
+        targetSelect.innerHTML = '<option value="">請先選計價表與日期</option>';
+        return;
+      }
+      feedback.textContent = "正在讀取計價表的可用標別與當日原始工時。";
+      try {
+        const data = await api(`/api/cost-hour-imports/targets?document_id=${encodeURIComponent(documentId)}&work_date=${encodeURIComponent(workDate)}`);
+        targetSelect.disabled = false;
+        targetSelect.innerHTML = '<option value="">請選擇標別</option>' + data.targets.map(item =>
+          `<option value="${escapeAttr(item.label)}">${escapeHtml(item.label)}｜${escapeHtml(item.worksheet_name)}｜原工時 ${item.existing.normal_hours ?? 0}/${item.existing.overtime_hours ?? 0}/${item.existing.support_hours ?? 0}</option>`
+        ).join("");
+        feedback.textContent = `已讀取 ${data.targets.length} 個可匯入標別，請選擇後載入預覽。`;
+      } catch (error) {
+        targetSelect.disabled = true;
+        targetSelect.innerHTML = '<option value="">無法讀取標別</option>';
+        feedback.textContent = error.message;
+      }
+    }
+
+    function currentCostHourPayload() {
+      return {
+        document_id: Number(document.getElementById("costImportDocument").value),
+        worksite_id: Number(document.getElementById("costImportWorksite").value),
+        work_date: document.getElementById("costImportDate").value,
+        target_label: document.getElementById("costImportTarget").value,
+        normal_hours: Number(document.getElementById("costImportNormal").value || 0),
+        overtime_hours: Number(document.getElementById("costImportOvertime").value || 0),
+        support_hours: Number(document.getElementById("costImportSupport").value || 0),
+      };
+    }
+
+    async function previewCostHourImport() {
+      const feedback = document.getElementById("costHourImportFeedback");
+      const preview = document.getElementById("costHourPreview");
+      const payload = currentCostHourPayload();
+      if (!payload.document_id || !payload.worksite_id || !payload.work_date || !payload.target_label) {
+        feedback.textContent = "請先選擇計價表、工作日誌日期、工地與計價標別。";
+        return;
+      }
+      feedback.textContent = "正在比對計價表的日期列與原工時。";
+      try {
+        const data = await api("/api/cost-hour-imports/preview", { method: "POST", body: JSON.stringify(payload) });
+        state.costHourPreview = { payload, data };
+        preview.hidden = false;
+        preview.textContent = [
+          `計價檔：${data.document_name}`,
+          `工地／日期：${data.worksite_name}／${data.work_date}`,
+          `標別：${data.target_label}（${data.worksheet_name} 第 ${data.target_row} 列）`,
+          `目前 B/D/F：正常 ${data.existing.normal_hours ?? 0}、加班 ${data.existing.overtime_hours ?? 0}、支援 ${data.existing.support_hours ?? 0} 小時`,
+          `將匯入 B/D/F：正常 ${data.incoming.normal_hours}、加班 ${data.incoming.overtime_hours}、支援 ${data.incoming.support_hours} 小時`,
+          data.warning,
+        ].join("\n");
+        document.getElementById("costHourImportSubmit").disabled = false;
+        feedback.textContent = "預覽完成；確認數字後才按「確認匯入工時」。";
+      } catch (error) {
+        preview.hidden = true;
+        document.getElementById("costHourImportSubmit").disabled = true;
+        feedback.textContent = error.message;
+      }
+    }
+
+    async function loadCostHourImports() {
+      const rows = document.getElementById("costHourImportRows");
+      try {
+        const data = await api("/api/cost-hour-imports");
+        rows.innerHTML = data.length ? data.map(item => `<tr>
+          <td>${escapeHtml(formatTW(item.created_at))}</td><td>${escapeHtml(item.work_date)}／${escapeHtml(item.worksite_name)}</td>
+          <td>${escapeHtml(item.target_label)}／${escapeHtml(item.worksheet_name)}</td><td>${escapeHtml(item.normal_hours)}</td>
+          <td>${escapeHtml(item.overtime_hours)}</td><td>${escapeHtml(item.support_hours)}</td><td>${escapeHtml(item.imported_by_name)}</td>
+          <td><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟計價檔</a></td>
+        </tr>`).join("") : '<tr><td colspan="8" style="text-align:center;color:#888;">尚未匯入工時</td></tr>';
+      } catch (error) {
+        rows.innerHTML = `<tr><td colspan="8">${escapeHtml(error.message)}</td></tr>`;
+      }
+    }
+
+    async function openJournalHourImport(siteIndex) {
+      const journal = state.worksiteJournals;
+      const site = journal?.sites?.[siteIndex];
+      if (!site) return;
+      setWorkspace("documents");
+      document.getElementById("costImportDate").value = journal.date;
+      renderCostHourImportOptions();
+      const worksite = state.worksites.find(item => item.id === site.site_id);
+      if (worksite) document.getElementById("costImportWorksite").value = String(worksite.id);
+      const assigned = getVehicleCounts((site.assignments || []).flatMap(item => [item.vehicle, item.equipment]).filter(Boolean));
+      const inspected = getVehicleCounts((site.inspections || []).map(item => item.forklift_model).filter(Boolean));
+      const forkliftCount = ["twoPointFive", "threePointZero", "fourPointFive"].reduce(
+        (total, key) => total + Math.max(assigned[key], inspected[key]), 0,
+      );
+      document.getElementById("costImportNormal").value = forkliftCount * 8;
+      document.getElementById("costImportOvertime").value = 0;
+      document.getElementById("costImportSupport").value = 0;
+      await loadCostHourTargets();
+      document.getElementById("costHourImportFeedback").textContent = `已帶入 ${site.site_name} 的工作日誌；正常工時先依 ${forkliftCount} 台堆高機 × 8 小時計算，可依實際支援或加班調整。`;
     }
 
     async function loadLineStatus() {
@@ -1928,6 +2090,33 @@
         feedback.textContent = error.message;
       } finally {
         submitButton.disabled = false;
+      }
+    });
+
+    document.getElementById("costImportDocument").addEventListener("change", loadCostHourTargets);
+    document.getElementById("costImportDate").addEventListener("change", loadCostHourTargets);
+    document.getElementById("costHourImportForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const feedback = document.getElementById("costHourImportFeedback");
+      const submitButton = document.getElementById("costHourImportSubmit");
+      const payload = currentCostHourPayload();
+      if (!state.costHourPreview || JSON.stringify(state.costHourPreview.payload) !== JSON.stringify(payload)) {
+        submitButton.disabled = true;
+        feedback.textContent = "工時或標別已變更，請先重新載入預覽再確認匯入。";
+        return;
+      }
+      submitButton.disabled = true;
+      feedback.textContent = "正在寫入 Google Drive 計價檔並建立匯入紀錄，請稍候...";
+      try {
+        const data = await api("/api/cost-hour-imports", { method: "POST", body: JSON.stringify(payload) });
+        feedback.textContent = `${data.message}（${data.worksheet_name} 第 ${data.target_row} 列）。`;
+        document.getElementById("costHourPreview").hidden = true;
+        state.costHourPreview = null;
+        await Promise.all([loadCostHourImports(), loadAuditLogs(), loadManagedDocuments()]);
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        submitButton.disabled = !state.costHourPreview;
       }
     });
 

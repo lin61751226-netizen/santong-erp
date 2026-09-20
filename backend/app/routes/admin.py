@@ -35,6 +35,7 @@ from app.models import (
     LoginStatus,
     MasterOption,
     ManagedDocument,
+    WorkHourImportLog,
     MeetingRecord,
     NotificationCategory,
     NotificationBatch,
@@ -62,6 +63,7 @@ from app.schemas import (
     ReassignmentApplyRequest,
     SimulateLineMessage,
     WorksiteLocationUpdate,
+    CostHourImportRequest,
 )
 from app.services.hr import (
     apply_reassignment_to_assignment,
@@ -77,6 +79,7 @@ from app.services.hr import (
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 from app.services.google_drive import google_drive_worklog_service
+from app.services.cost_workbook import CostWorkbookError, find_cost_sheet_target, import_cost_hours, list_cost_sheet_targets
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
@@ -1645,6 +1648,194 @@ async def upload_managed_documents(
     if uploaded:
         await google_drive_worklog_service.backup_database()
     return {"message": f"已保存 {len(uploaded)} 份文件", "uploaded": uploaded, "failed": failed}
+
+
+def _cost_document_or_400(session: Session, document_id: int) -> ManagedDocument:
+    document = session.get(ManagedDocument, document_id)
+    if not document or document.category != "推高機計價":
+        raise HTTPException(status_code=404, detail="找不到可匯入工時的推高機計價檔")
+    return document
+
+
+async def _read_cost_targets(document: ManagedDocument, target_date: date):
+    try:
+        content = await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
+        return content, list_cost_sheet_targets(content, document.original_file_name, target_date)
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"無法讀取 Google Drive 計價檔：{exc}") from exc
+
+
+@router.get("/cost-hour-imports/targets")
+async def list_cost_hour_import_targets(
+    document_id: int = Query(..., ge=1),
+    work_date: date = Query(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, document_id)
+    _, targets = await _read_cost_targets(document, work_date)
+    return {
+        "document_id": document.id,
+        "document_name": document.original_file_name,
+        "work_date": work_date.isoformat(),
+        "targets": [
+            {
+                "label": target.label,
+                "worksheet_name": target.worksheet_name,
+                "row_number": target.row_number,
+                "existing": {
+                    "normal_hours": target.normal_hours,
+                    "overtime_hours": target.overtime_hours,
+                    "support_hours": target.support_hours,
+                },
+            }
+            for target in targets
+        ],
+    }
+
+
+@router.post("/cost-hour-imports/preview")
+async def preview_cost_hour_import(
+    payload: CostHourImportRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    worksite = session.get(Worksite, payload.worksite_id)
+    if not worksite:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    content, _ = await _read_cost_targets(document, payload.work_date)
+    try:
+        target = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "document_name": document.original_file_name,
+        "worksite_name": worksite.name,
+        "work_date": payload.work_date.isoformat(),
+        "target_label": target.label,
+        "worksheet_name": target.worksheet_name,
+        "target_row": target.row_number,
+        "existing": {
+            "normal_hours": target.normal_hours,
+            "overtime_hours": target.overtime_hours,
+            "support_hours": target.support_hours,
+        },
+        "incoming": {
+            "normal_hours": payload.normal_hours,
+            "overtime_hours": payload.overtime_hours,
+            "support_hours": payload.support_hours,
+        },
+        "cells": {"normal_hours": f"B{target.row_number}", "overtime_hours": f"D{target.row_number}", "support_hours": f"F{target.row_number}"},
+        "warning": "確認匯入後會更新 Google Drive 計價檔的同一日期列；Google Drive 會保留檔案版本修訂，系統也會保存本次匯入紀錄。",
+    }
+
+
+@router.post("/cost-hour-imports")
+async def apply_cost_hour_import(
+    payload: CostHourImportRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    worksite = session.get(Worksite, payload.worksite_id)
+    if not worksite:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    content, _ = await _read_cost_targets(document, payload.work_date)
+    try:
+        previous = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
+        updated_content, target = import_cost_hours(
+            content,
+            document.original_file_name,
+            payload.work_date,
+            payload.target_label,
+            normal_hours=payload.normal_hours,
+            overtime_hours=payload.overtime_hours,
+            support_hours=payload.support_hours,
+        )
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        drive_url = await google_drive_worklog_service.update_file_bytes(
+            file_id=document.drive_file_id,
+            file_name=document.stored_file_name,
+            content=updated_content,
+            content_type=document.content_type or "application/vnd.ms-excel.sheet.macroEnabled.12",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google Drive 計價檔更新失敗，未寫入系統紀錄：{exc}") from exc
+
+    document.drive_url = drive_url
+    session.add(document)
+    import_log = WorkHourImportLog(
+        managed_document_id=document.id,
+        worksite_id=worksite.id,
+        work_date=payload.work_date,
+        worksheet_name=target.worksheet_name,
+        target_label=target.label,
+        target_row=target.row_number,
+        normal_hours=payload.normal_hours,
+        overtime_hours=payload.overtime_hours,
+        support_hours=payload.support_hours,
+        previous_normal_hours=previous.normal_hours,
+        previous_overtime_hours=previous.overtime_hours,
+        previous_support_hours=previous.support_hours,
+        drive_file_id=document.drive_file_id,
+        drive_url=drive_url,
+        imported_by_id=actor.id,
+    )
+    session.add(import_log)
+    session.commit()
+    session.refresh(import_log)
+    _write_admin_audit(
+        session,
+        actor,
+        action="import_hours",
+        entity_type="cost_workbook",
+        entity_id=import_log.id,
+        summary=(
+            f"匯入工時：{worksite.name}｜{payload.work_date.isoformat()}｜{target.label}｜"
+            f"正常 {payload.normal_hours}、加班 {payload.overtime_hours}、支援 {payload.support_hours} 小時"
+        ),
+    )
+    backup_result = await google_drive_worklog_service.backup_database()
+    return {
+        "message": "工時已匯入 Google Drive 計價檔，並保留 Drive 修訂與系統紀錄",
+        "worksheet_name": target.worksheet_name,
+        "target_row": target.row_number,
+        "drive_url": drive_url,
+        "backup_status": backup_result.get("status"),
+    }
+
+
+@router.get("/cost-hour-imports")
+def list_cost_hour_imports(
+    limit: int = Query(default=30, ge=1, le=200),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    logs = session.exec(
+        select(WorkHourImportLog).order_by(WorkHourImportLog.created_at.desc()).limit(limit)
+    ).all()
+    return [
+        {
+            "id": log.id,
+            "work_date": log.work_date.isoformat(),
+            "worksite_name": session.get(Worksite, log.worksite_id).name if log.worksite_id and session.get(Worksite, log.worksite_id) else "-",
+            "target_label": log.target_label,
+            "worksheet_name": log.worksheet_name,
+            "target_row": log.target_row,
+            "normal_hours": log.normal_hours,
+            "overtime_hours": log.overtime_hours,
+            "support_hours": log.support_hours,
+            "imported_by_name": session.get(Employee, log.imported_by_id).name if log.imported_by_id and session.get(Employee, log.imported_by_id) else "系統",
+            "created_at": log.created_at.isoformat(),
+            "drive_url": log.drive_url,
+        }
+        for log in logs
+    ]
 
 
 def _local_date_utc_bounds(target_date: date) -> tuple[datetime, datetime]:

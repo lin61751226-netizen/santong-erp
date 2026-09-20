@@ -141,6 +141,16 @@ class LineRichMenuDeployRequest(BaseModel):
     set_default: bool = True
 
 
+class CostHourImportRequest(BaseModel):
+    document_id: int
+    worksite_id: int
+    work_date: date
+    target_label: str = Field(min_length=1, max_length=100)
+    normal_hours: float = Field(ge=0, le=10000)
+    overtime_hours: float = Field(default=0, ge=0, le=10000)
+    support_hours: float = Field(default=0, ge=0, le=10000)
+
+
 # ---- 堆高機出租管理 ----
 
 class ForkliftCareUpdate(BaseModel):
