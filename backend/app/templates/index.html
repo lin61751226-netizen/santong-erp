@@ -281,12 +281,12 @@
       <div class="panel-header">
         <div>
           <h2>工作日誌匯入計價工時</h2>
-          <p class="muted">由每日工地日誌帶入工時，選擇計價標別後先看預覽；確認才寫入 Google Drive 推高機計價表。</p>
+          <p class="muted">填入工時後依序完成第 1 步預覽與第 2 步儲存；只有第 2 步會寫入 Google Drive 推高機計價表。</p>
         </div>
       </div>
       <div class="action-callout">
-        <strong>安全匯入</strong>
-        <span>正常／加班／支援工時分別寫入當日計價列的 B、D、F 欄。每次匯入會保留 Google Drive 修訂、系統稽核紀錄與資料庫快照。</span>
+          <strong>儲存方式</strong>
+          <span>第 1 步先核對日期、標別與 B／D／F 欄；第 2 步按「儲存工時到 Google Drive」才會寫入。每次匯入保留 Drive 修訂、系統稽核紀錄與資料庫快照。</span>
       </div>
       <form id="costHourImportForm" class="form-grid">
         <div><label for="costImportDocument">推高機計價表</label><select id="costImportDocument" required></select></div>
@@ -297,11 +297,11 @@
         <div><label for="costImportOvertime">加班工時</label><input id="costImportOvertime" type="number" min="0" max="10000" step="0.5" value="0" required></div>
         <div><label for="costImportSupport">支援工時</label><input id="costImportSupport" type="number" min="0" max="10000" step="0.5" value="0" required></div>
         <div class="full button-row">
-          <button type="button" class="button-secondary" onclick="previewCostHourImport()">載入預覽</button>
-          <button id="costHourImportSubmit" type="submit" disabled>確認匯入工時</button>
+          <button type="button" class="button-secondary" onclick="previewCostHourImport()">第 1 步：核對寫入內容</button>
+          <button id="costHourImportSubmit" type="submit" disabled>第 2 步：儲存工時到 Google Drive</button>
         </div>
       </form>
-      <p id="costHourImportFeedback" class="notice" role="status" aria-live="polite">請先由工作日誌帶入，或自行選擇日期、工地與標別。</p>
+      <p id="costHourImportFeedback" class="notice" role="status" aria-live="polite">請先由工作日誌帶入，或自行選擇日期、工地與標別；輸入數字後仍須完成第 1、2 步才會保存。</p>
       <div id="costHourPreview" class="console" hidden></div>
       <div class="panel-header" style="margin-top:22px;"><div><h3>最近匯入紀錄</h3><p class="muted">每一筆都保留寫入前工時、寫入標別與 Google Drive 連結。</p></div><button type="button" class="button-secondary button-compact" onclick="loadCostHourImports()">重新整理</button></div>
       <div class="table-wrap"><table>
@@ -1579,7 +1579,7 @@
           data.warning,
         ].join("\n");
         document.getElementById("costHourImportSubmit").disabled = false;
-        feedback.textContent = "預覽完成；確認數字後才按「確認匯入工時」。";
+        feedback.textContent = "第 1 步完成；數字無誤後請按「第 2 步：儲存工時到 Google Drive」。";
       } catch (error) {
         preview.hidden = true;
         document.getElementById("costHourImportSubmit").disabled = true;
@@ -2102,14 +2102,14 @@
       const payload = currentCostHourPayload();
       if (!state.costHourPreview || JSON.stringify(state.costHourPreview.payload) !== JSON.stringify(payload)) {
         submitButton.disabled = true;
-        feedback.textContent = "工時或標別已變更，請先重新載入預覽再確認匯入。";
+        feedback.textContent = "工時或標別已變更，請重新完成第 1 步核對後再儲存。";
         return;
       }
       submitButton.disabled = true;
-      feedback.textContent = "正在寫入 Google Drive 計價檔並建立匯入紀錄，請稍候...";
+      feedback.textContent = "正在儲存工時到 Google Drive 計價檔並建立匯入紀錄，請稍候...";
       try {
         const data = await api("/api/cost-hour-imports", { method: "POST", body: JSON.stringify(payload) });
-        feedback.textContent = `${data.message}（${data.worksheet_name} 第 ${data.target_row} 列）。`;
+        feedback.textContent = `已完成第 2 步：${data.message}（${data.worksheet_name} 第 ${data.target_row} 列）。`;
         document.getElementById("costHourPreview").hidden = true;
         state.costHourPreview = null;
         await Promise.all([loadCostHourImports(), loadAuditLogs(), loadManagedDocuments()]);
