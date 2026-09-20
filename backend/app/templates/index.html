@@ -1632,7 +1632,8 @@
       return Number(value || 0).toLocaleString("zh-TW", { maximumFractionDigits: 0 });
     }
 
-    const COST_WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+    // 後端 weekday 使用 Python date.weekday()：週一 0 … 週日 6。
+    const COST_WEEKDAYS = ["一", "二", "三", "四", "五", "六", "日"];
 
     function currentCostMonthPayload() {
       const monthValue = document.getElementById("costMonthMonth").value;
@@ -1664,8 +1665,9 @@
       const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);
       if (!rates || !Number.isFinite(h) || h <= 0) return 0;
       if (h < 8) return h * Number(rates.normal_hourly);
-      if (h === 8) return Number(rates.daily);
-      return Number(rates.daily) + (h - 8) * Number(rates.ot_rate);
+      const fullDays = Math.floor(h / 8);
+      const remainder = h - fullDays * 8;
+      return fullDays * Number(rates.daily) + remainder * Number(rates.ot_rate);
     }
     function costOvertimeAmount(rates, hours, isHoliday) {
       const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);

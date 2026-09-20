@@ -22,7 +22,7 @@ from app.routes import admin as admin_routes
 def _normal_formula(column: str, row: int) -> str:
     return (
         f'=IF(B{row}="","",IF(B{row}<8,B{row}*參數!${column}$22,'
-        f'IF(B{row}=8,參數!${column}$23,參數!${column}$23+(B{row}-8)*參數!${column}$24)))'
+        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$24))'
     )
 
 
@@ -141,7 +141,7 @@ class TestCostMonthApi:
         assert day1["forklift_count"] == 2
         assert day1["incoming_normal"] == 16
         assert day1["action"] == "write"
-        assert day1["amount"]["normal_amount"] == 14000   # 16 小時：6000 + 8*1000
+        assert day1["amount"]["normal_amount"] == 12000   # 16 小時：2 個日薪
         day2 = next(day for day in label_45["days"] if day["date"] == "2026-09-02")
         assert day2["units"]["twoPointFive"] == 2
         assert day2["incoming_normal"] == 16
@@ -204,11 +204,11 @@ class TestCostMonthApi:
         assert day1["hours"]["overtime_hours"] == 2
         assert day1["amount"]["normal_amount"] == 6000
         assert day1["amount"]["overtime_amount"] == 2000  # 9/1 週二平日費率
-        # 請款：9/1 正常6000+加班2000，9/2 正常14000 → 未稅 22000、稅 1100、含稅 23100
-        assert label_45["summary"]["invoice_untaxed"] == 22000
-        assert label_45["summary"]["invoice_tax"] == 1100
-        assert label_45["summary"]["invoice_taxed"] == 23100
-        assert plan["invoice"]["taxed"] == 23100
+        # 請款：9/1 正常6000+加班2000，9/2 正常12000 → 未稅 20000、稅 1000、含稅 21000
+        assert label_45["summary"]["invoice_untaxed"] == 20000
+        assert label_45["summary"]["invoice_tax"] == 1000
+        assert label_45["summary"]["invoice_taxed"] == 21000
+        assert plan["invoice"]["taxed"] == 21000
 
     def test_month_apply_with_overrides_writes_overtime(self):
         response = self.client.post("/api/cost-hour-imports/month", json={

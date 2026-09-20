@@ -22,7 +22,7 @@ LABEL_COLUMNS = {"45": "B", "新竹寶山1": "I"}
 def _normal_formula(column: str, row: int) -> str:
     return (
         f'=IF(B{row}="","",IF(B{row}<8,B{row}*參數!${column}$22,'
-        f'IF(B{row}=8,參數!${column}$23,參數!${column}$23+(B{row}-8)*參數!${column}$24)))'
+        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$24))'
     )
 
 
@@ -92,6 +92,8 @@ def test_day_pricing_rules():
     assert day_cost(rates, 7, 0, 0, False).normal_amount == 5600      # 未滿 8 以時薪計
     assert day_cost(rates, 8, 0, 0, False).normal_amount == 6000      # 剛好 8 計日薪
     assert day_cost(rates, 10, 0, 0, False).normal_amount == 8000     # 超過 8：日薪 + 超時
+    assert day_cost(rates, 16, 0, 0, False).normal_amount == 12000    # 2 台各 8H
+    assert day_cost(rates, 24, 0, 0, False).normal_amount == 18000    # 3 台各 8H
     assert day_cost(rates, 8, 2, 0, False).overtime_amount == 2000    # 平日超時費
     assert day_cost(rates, 8, 2, 0, True).overtime_amount == 2400     # 假日加班費
     assert day_cost(rates, 8, 0, 2, False).support_amount == 1600    # 司機支援
@@ -108,10 +110,31 @@ def test_formula_evaluation_matches_rules():
         c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
         is_holiday=False,
     )
-    assert cost.normal_amount == 8000   # 6000 + 2*1000
+    assert cost.normal_amount == 8000   # 1 個日薪 + 2 小時超時
     assert cost.overtime_amount == 2000
     assert cost.support_amount == 800
     assert cost.total == 10800
+
+
+def test_legacy_normal_formula_is_upgraded_for_multiple_daily_rates():
+    workbook = openpyxl.load_workbook(BytesIO(_workbook_bytes()), data_only=False)
+    workbook["11509-45"]["C5"] = (
+        '=IF(B5="","",IF(B5<8,B5*參數!$B$22,'
+        'IF(B5=8,參數!$B$23,參數!$B$23+(B5-8)*參數!$B$24)))'
+    )
+    source = BytesIO()
+    workbook.save(source)
+
+    updated, results = import_month_hours(
+        source.getvalue(), "計價表.xlsx", "11509",
+        [MonthHourUpdate(label="45", day=date(2026, 9, 1), normal_hours=24)],
+    )
+    assert results[0].cost.normal_amount == 18000
+
+    formula_workbook = openpyxl.load_workbook(BytesIO(updated), data_only=False)
+    assert "INT(B5/8)" in formula_workbook["11509-45"]["C5"].value
+    cached = openpyxl.load_workbook(BytesIO(updated), data_only=True)
+    assert cached["11509-45"]["C5"].value == 18000
 
 
 def test_month_import_writes_multiple_days_and_labels_once():
@@ -126,7 +149,7 @@ def test_month_import_writes_multiple_days_and_labels_once():
     assert [result.action for result in results] == ["written", "written", "written"]
     by_key = {(result.label, result.day): result for result in results}
     assert by_key[("45", date(2026, 9, 1))].cost.normal_amount == 6000
-    assert by_key[("45", date(2026, 9, 2))].cost.normal_amount == 7000       # 6000 + 1*1000
+    assert by_key[("45", date(2026, 9, 2))].cost.normal_amount == 7000       # 1 個日薪 + 1 小時超時
     assert by_key[("新竹寶山1", date(2026, 9, 1))].cost.normal_amount == 8000
 
     workbook = openpyxl.load_workbook(BytesIO(updated), data_only=False)

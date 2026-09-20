@@ -286,6 +286,30 @@ def normalize_overtime_formula(formula: Optional[str], is_holiday: bool) -> Opti
     return _PARAM_REF_FULL.sub(replace_rate, formula)
 
 
+def normalize_normal_formula(formula: Optional[str]) -> Optional[str]:
+    """把 C 欄正常工時公式改為「每 8 小時一個日薪」的計價方式。
+
+    只改寫可辨識的標準計價公式；自訂公式（例如人工公式）保留原樣。
+    """
+    if not formula:
+        return formula
+    row_match = re.search(r"\$?B\$?(\d+)", formula)
+    rate_columns: dict[int, str] = {}
+    for rate_row in (22, 23, 24):
+        match = re.search(rf"參數!\$?([A-Z]{{1,3}})\$?{rate_row}\b", formula)
+        if not match:
+            return formula
+        rate_columns[rate_row] = match.group(1)
+    if not row_match:
+        return formula
+    row = row_match.group(1)
+    prefix = "=" if formula.startswith("=") else ""
+    return (
+        f'{prefix}IF(B{row}="","",IF(B{row}<8,B{row}*參數!${rate_columns[22]}$22,'
+        f'INT(B{row}/8)*參數!${rate_columns[23]}$23+MOD(B{row},8)*參數!${rate_columns[24]}$24))'
+    )
+
+
 def _row_is_holiday(worksheet, row_number: int) -> bool:
     formula = worksheet.cell(row=row_number, column=5).value  # E 欄
     if not isinstance(formula, str):
@@ -366,14 +390,14 @@ def read_pricing_parameters(content: bytes, file_name: str) -> PricingParameters
 # ---------------------------------------------------------------------------
 
 def normal_day_amount(rates: LabelRates, hours: Optional[float]) -> float:
-    """重現 C 欄：未滿 8H 用時薪；剛好 8H 給日薪；超過 8H 為日薪＋超時費。"""
+    """計算 C 欄：每滿 8H 算一個日薪，剩餘時數再用超時費率。"""
     if hours is None:
         return 0.0
     if hours < 8:
         return hours * rates.normal_hourly
-    if hours == 8:
-        return rates.daily
-    return rates.daily + (hours - 8) * rates.ot_rate
+    full_days = int(hours // 8)
+    remainder = hours - full_days * 8
+    return full_days * rates.daily + remainder * rates.ot_rate
 
 
 def overtime_day_amount(rates: LabelRates, hours: Optional[float], is_holiday: bool) -> float:
@@ -508,7 +532,7 @@ class _FormulaParser:
             return ("num", float(token) if "." in token else int(token))
         except ValueError:
             pass
-        if token.upper() in ("IF", "ROUND") and self._peek() == "(":
+        if token.upper() in ("IF", "ROUND", "INT", "MOD") and self._peek() == "(":
             self._next()
             args = []
             if self._peek() != ")":
@@ -550,6 +574,14 @@ class _FormulaParser:
                     raise CostWorkbookError("IF 函式需要三個參數")
                 chosen = args[1] if self._truthy(self._eval(args[0])) else args[2]
                 return self._eval(chosen)
+            if name == "INT":
+                if len(args) != 1:
+                    raise CostWorkbookError("INT 函式需要一個參數")
+                return int(float(self._eval(args[0])))
+            if name == "MOD":
+                if len(args) != 2:
+                    raise CostWorkbookError("MOD 函式需要兩個參數")
+                return float(self._eval(args[0])) % float(self._eval(args[1]))
             digits = int(self._eval(args[1])) if len(args) > 1 else 0
             return _excel_round(float(self._eval(args[0])), digits)
         raise CostWorkbookError(f"不支援的公式節點：{kind}")
@@ -600,6 +632,7 @@ def evaluate_day_amounts(
 ) -> DayCost:
     """以活頁簿每日公式計算金額；缺公式時退回分段規則。"""
     # 加班假日規則由呼叫端傳入，活頁簿既有 E 欄公式先依第 24／25 列規則正規化。
+    normalized_c_formula = normalize_normal_formula(c_formula)
     normalized_e_formula = normalize_overtime_formula(e_formula, is_holiday)
     values = {"B": normal_hours, "D": overtime_hours, "F": support_hours}
 
@@ -610,7 +643,7 @@ def evaluate_day_amounts(
         return 0.0 if result == "" or result is None else float(result)
 
     return DayCost(
-        normal_amount=amount(c_formula, normal_day_amount(rates, normal_hours)),
+        normal_amount=amount(normalized_c_formula, normal_day_amount(rates, normal_hours)),
         overtime_amount=amount(normalized_e_formula, overtime_day_amount(rates, overtime_hours, is_holiday)),
         support_amount=amount(g_formula, support_day_amount(rates, support_hours)),
     )
@@ -1006,7 +1039,7 @@ class _WorkbookCalculator:
     確保「算不準就不回填快取」，不寫入任何猜測值。
     """
 
-    SUPPORTED_FUNCTIONS = {"IF", "ROUND", "SUM", "IFERROR"}
+    SUPPORTED_FUNCTIONS = {"IF", "ROUND", "INT", "MOD", "SUM", "IFERROR"}
 
     def __init__(self, workbook):
         self.workbook = workbook
@@ -1263,6 +1296,14 @@ class _WorkbookFormulaCalculator(_WorkbookCalculator):
             if name == "ROUND":
                 digits = int(raw_args[1]) if len(raw_args) > 1 else 0
                 return _excel_round(as_number(raw_args[0]), digits)
+            if name == "INT":
+                if len(raw_args) != 1:
+                    raise CostWorkbookError("INT 函式需要一個參數")
+                return int(as_number(raw_args[0]))
+            if name == "MOD":
+                if len(raw_args) != 2:
+                    raise CostWorkbookError("MOD 函式需要兩個參數")
+                return as_number(raw_args[0]) % as_number(raw_args[1])
             if name == "SUM":
                 return sum(as_number(item) for item in raw_args)
             raise CostWorkbookError(f"不支援的函式：{name}")
@@ -1326,6 +1367,13 @@ def align_overtime_holiday_rules(workbook, period: str) -> int:
             day = _as_date(worksheet.cell(row=row_number, column=1).value)
             if day is None:
                 continue
+            normal_cell = worksheet.cell(row=row_number, column=3)
+            normal_formula = normal_cell.value
+            if isinstance(normal_formula, str) and "參數!" in normal_formula:
+                normalized_normal = normalize_normal_formula(normal_formula)
+                if normalized_normal != normal_formula:
+                    normal_cell.value = normalized_normal
+                    changed += 1
             cell = worksheet.cell(row=row_number, column=5)
             formula = cell.value
             if isinstance(formula, str) and "參數!" in formula:
