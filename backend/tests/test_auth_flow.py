@@ -12,6 +12,7 @@ from app.core.db import get_session
 from app.core.security import hash_password
 from app.main import app
 from app.models import Employee, LoginLog, LoginStatus, Role
+from app.services import bootstrap
 
 
 class AuthFlowTests(unittest.TestCase):
@@ -261,3 +262,34 @@ class AuthFlowTests(unittest.TestCase):
         again = self._login(password="Santong@2026")
         self.assertEqual(again.status_code, 200)
         self.assertTrue(again.json()["must_change_password"])
+
+    def test_one_time_bootstrap_reset_only_resets_selected_admin(self) -> None:
+        with Session(self.engine) as session:
+            selected = session.exec(
+                select(Employee).where(Employee.employee_code == "ADMIN001")
+            ).one()
+            selected.password_hash = hash_password("Custom@123")
+            selected.must_change_password = False
+            selected.failed_login_count = 3
+            selected.locked_until = datetime.utcnow() + timedelta(minutes=15)
+            selected.session_key = "stale-session"
+            selected.session_expires_at = datetime.utcnow() + timedelta(hours=1)
+            session.add(selected)
+            session.commit()
+
+            with patch.object(bootstrap.settings, "reset_employee_code_once", "ADMIN001"), patch.object(
+                bootstrap, "_ensure_worksites", return_value={}
+            ), patch.object(bootstrap, "_rename_legacy_employee_codes"), patch.object(
+                bootstrap, "_deactivate_unlisted_employees"
+            ), patch.object(bootstrap, "_ensure_forklifts"), patch.object(
+                bootstrap, "_ensure_master_options"
+            ):
+                bootstrap.seed_demo_data(session)
+
+            session.refresh(selected)
+            self.assertTrue(selected.must_change_password)
+            self.assertIsNone(selected.locked_until)
+            self.assertEqual(selected.failed_login_count, 0)
+            self.assertIsNone(selected.session_key)
+            self.assertIsNone(selected.session_expires_at)
+            self.assertTrue(selected.password_hash)

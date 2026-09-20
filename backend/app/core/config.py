@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     attendance_summary_minute: int = 0
     # 後台登入與權限
     default_password: str = "Santong@2026"
+    # 僅供一次性帳號復原使用；完成部署後應立即清空 Render 環境變數。
+    reset_employee_code_once: str = ""
     login_fail_limit: int = 3
     login_lock_minutes: int = 15
     session_expire_minutes: int = 480

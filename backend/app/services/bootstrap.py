@@ -393,3 +393,21 @@ def seed_demo_data(session: Session) -> None:
     if unlocked_count:
         print(f"[bootstrap] 已自動解鎖 {unlocked_count} 個管理員帳號")
 
+    # 這是明確指定、一次性的人工作業開關，不會在一般重新部署時觸發。
+    # 完成復原後必須清除 RESET_EMPLOYEE_CODE_ONCE，避免後續啟動再次覆蓋密碼。
+    reset_code = settings.reset_employee_code_once.strip()
+    if reset_code:
+        employee = session.exec(
+            select(Employee).where(Employee.employee_code == reset_code)
+        ).first()
+        if employee and employee.role in {Role.owner, Role.admin}:
+            employee.password_hash = hash_password(settings.default_password)
+            employee.must_change_password = True
+            employee.failed_login_count = 0
+            employee.locked_until = None
+            employee.session_key = None
+            employee.session_expires_at = None
+            session.add(employee)
+            session.commit()
+            print(f"[bootstrap] 一次性重設管理員密碼並清除登入狀態：{employee.employee_code}")
+
