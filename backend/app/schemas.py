@@ -151,6 +151,30 @@ class CostHourImportRequest(BaseModel):
     support_hours: float = Field(default=0, ge=0, le=10000)
 
 
+class CostMonthHourOverride(BaseModel):
+    """整月預覽後，使用者手動調整的單日工時（正常／加班／支援，小時）。"""
+
+    label: str
+    date: date
+    normal_hours: Optional[float] = None
+    overtime_hours: Optional[float] = None
+    support_hours: Optional[float] = None
+
+
+class CostMonthImportRequest(BaseModel):
+    """整月批次匯入：依工作日誌自動彙整整月各標別正常工時。"""
+
+    document_id: int
+    year: int = Field(ge=2020, le=2200)
+    month: int = Field(ge=1, le=12)
+    # 已有工時的日期是否覆寫，預設略過以保護人工輸入。
+    overwrite: bool = False
+    # 限定要處理的標別；None 代表活頁簿中所有能對應到工地的標別。
+    labels: Optional[list[str]] = None
+    # 預覽後人工調整的單日工時；被調整的日期即使原本已有值也會寫入。
+    overrides: list[CostMonthHourOverride] = []
+
+
 # ---- 堆高機出租管理 ----
 
 class ForkliftCareUpdate(BaseModel):

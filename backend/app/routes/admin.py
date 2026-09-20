@@ -64,6 +64,7 @@ from app.schemas import (
     SimulateLineMessage,
     WorksiteLocationUpdate,
     CostHourImportRequest,
+    CostMonthImportRequest,
 )
 from app.services.hr import (
     apply_reassignment_to_assignment,
@@ -79,7 +80,23 @@ from app.services.hr import (
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 from app.services.google_drive import google_drive_worklog_service
-from app.services.cost_workbook import CostWorkbookError, find_cost_sheet_target, import_cost_hours, list_cost_sheet_targets
+from app.services.cost_workbook import (
+    CostWorkbookError,
+    MonthHourUpdate,
+    count_forklift_units,
+    evaluate_day_amounts,
+    _excel_round as excel_round,
+    find_cost_sheet_target,
+    import_cost_hours,
+    import_month_hours,
+    list_cost_sheet_targets,
+    match_label_for_site,
+    normal_hours_from_units,
+    read_month_cost_data,
+    read_pricing_parameters,
+    roc_period,
+    totals_from_day_costs,
+)
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
@@ -1711,6 +1728,48 @@ async def preview_cost_hour_import(
         target = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
     except CostWorkbookError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    pricing = None
+    try:
+        parameters = read_pricing_parameters(content, document.original_file_name)
+        rates = parameters.rates_for(target.label)
+        existing_amount = evaluate_day_amounts(
+            parameters, rates, target.row_number,
+            target.normal_hours, target.overtime_hours, target.support_hours,
+            c_formula=target.c_formula, e_formula=target.e_formula, g_formula=target.g_formula,
+            is_holiday=target.is_holiday,
+        )
+        incoming_amount = evaluate_day_amounts(
+            parameters, rates, target.row_number,
+            payload.normal_hours, payload.overtime_hours, payload.support_hours,
+            c_formula=target.c_formula, e_formula=target.e_formula, g_formula=target.g_formula,
+            is_holiday=target.is_holiday,
+        )
+        pricing = {
+            "is_holiday": target.is_holiday,
+            "tax_rate": parameters.tax_rate,
+            "safety_rate": parameters.safety_rate,
+            "rates": {
+                "normal_hourly": rates.normal_hourly,
+                "daily": rates.daily,
+                "ot_rate": rates.ot_rate,
+                "holiday_rate": rates.holiday_rate,
+                "support_rate": rates.support_rate,
+            },
+            "existing_amount": {
+                "normal_amount": existing_amount.normal_amount,
+                "overtime_amount": existing_amount.overtime_amount,
+                "support_amount": existing_amount.support_amount,
+                "total": existing_amount.total,
+            },
+            "incoming_amount": {
+                "normal_amount": incoming_amount.normal_amount,
+                "overtime_amount": incoming_amount.overtime_amount,
+                "support_amount": incoming_amount.support_amount,
+                "total": incoming_amount.total,
+            },
+        }
+    except CostWorkbookError:
+        pricing = None
     return {
         "document_name": document.original_file_name,
         "worksite_name": worksite.name,
@@ -1729,6 +1788,7 @@ async def preview_cost_hour_import(
             "support_hours": payload.support_hours,
         },
         "cells": {"normal_hours": f"B{target.row_number}", "overtime_hours": f"D{target.row_number}", "support_hours": f"F{target.row_number}"},
+        "pricing": pricing,
         "warning": "確認匯入後會更新 Google Drive 計價檔的同一日期列；Google Drive 會保留檔案版本修訂，系統也會保存本次匯入紀錄。",
     }
 
@@ -1846,6 +1906,374 @@ def _local_date_utc_bounds(target_date: date) -> tuple[datetime, datetime]:
         start.astimezone(timezone.utc).replace(tzinfo=None),
         end.astimezone(timezone.utc).replace(tzinfo=None),
     )
+
+
+
+# ---------------------------------------------------------------------------
+# 整月批次：工作日誌工時自動彙整、預覽與寫入
+# ---------------------------------------------------------------------------
+
+def _month_bounds(year: int, month: int):
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, 1), date(year, month, last_day)
+
+
+def _gather_month_journal(session: Session, first_day: date, last_day: date) -> dict:
+    """彙整整月每日每工地的派工車輛文字與點檢車型（邏輯同單日工作日誌）。"""
+    assignments = session.exec(
+        select(WorkAssignment).where(
+            WorkAssignment.work_date >= first_day,
+            WorkAssignment.work_date <= last_day,
+        )
+    ).all()
+    inspections = session.exec(
+        select(ForkliftInspection).where(
+            ForkliftInspection.inspection_date >= first_day,
+            ForkliftInspection.inspection_date <= last_day,
+        )
+    ).all()
+    forklifts = {row.id: row for row in session.exec(select(Forklift)).all() if row.id is not None}
+    buckets: dict[tuple, dict] = {}
+    for assignment in assignments:
+        bucket = buckets.setdefault(
+            (assignment.site_id, assignment.work_date), {"assigned": [], "inspected": []}
+        )
+        for text in (assignment.vehicle, assignment.equipment):
+            if text:
+                bucket["assigned"].append(str(text))
+    for inspection in inspections:
+        forklift = forklifts.get(inspection.forklift_id)
+        model = getattr(forklift, "model", None) if forklift else None
+        if model:
+            bucket = buckets.setdefault(
+                (inspection.site_id, inspection.inspection_date), {"assigned": [], "inspected": []}
+            )
+            bucket["inspected"].append(str(model))
+    return buckets
+
+
+def _serialize_rates(rates) -> dict:
+    return {
+        "normal_hourly": rates.normal_hourly,
+        "daily": rates.daily,
+        "ot_rate": rates.ot_rate,
+        "holiday_rate": rates.holiday_rate,
+        "support_rate": rates.support_rate,
+        "rent": rates.rent,
+        "rent_start_month": rates.rent_start_month,
+    }
+
+
+def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
+                      session: Session, selected_labels, overwrite: bool, overrides=None):
+    """產生整月寫入計畫（乾跑結果），同時回傳待寫入的 MonthHourUpdate 清單。"""
+    first_day, last_day = _month_bounds(year, month)
+    period = roc_period(first_day)
+    data = read_month_cost_data(content, file_name, period)
+    parameters = data.parameters
+    worksites = {row.id: row for row in session.exec(select(Worksite)).all() if row.id is not None}
+    journal = _gather_month_journal(session, first_day, last_day)
+    override_map = {}
+    for item in overrides or []:
+        raw_date = item.date if hasattr(item, 'date') else item['date']
+        key_date = raw_date if hasattr(raw_date, 'isoformat') else date.fromisoformat(str(raw_date)[:10])
+        item_label = item.label if hasattr(item, 'label') else item['label']
+
+        def _field(item_obj, field_name):
+            value = getattr(item_obj, field_name) if hasattr(item_obj, field_name) else item_obj.get(field_name)
+            return None if value is None else float(value)
+
+        override_map[(item_label, key_date)] = {
+            'normal_hours': _field(item, 'normal_hours'),
+            'overtime_hours': _field(item, 'overtime_hours'),
+            'support_hours': _field(item, 'support_hours'),
+        }
+
+    labels = list(selected_labels) if selected_labels else list(data.sheets.keys())
+    warnings: list[str] = []
+    serialized_labels: list[dict] = []
+    updates: list[MonthHourUpdate] = []
+    totals_counter = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0}
+    invoice_totals = {"untaxed": 0.0, "tax": 0, "taxed": 0}
+
+    for label in sorted(labels):
+        if label not in data.sheets:
+            warnings.append(f"活頁簿 {period} 沒有標別「{label}」的工時表，已略過")
+            continue
+        rates = parameters.labels.get(label)
+        rows = data.sheets[label]
+
+        matched_site = None
+        for site in worksites.values():
+            if match_label_for_site(site.code, site.name, [label]) == label:
+                matched_site = site
+                break
+
+        days_payload: list[dict] = []
+        daily_costs = []
+        counters = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0}
+
+        for row in rows:
+            units = {"twoPointFive": 0, "threePointZero": 0, "fourPointFive": 0, "total": 0}
+            bucket = journal.get((matched_site.id, row.day)) if matched_site else None
+            if bucket:
+                units = count_forklift_units(bucket["assigned"], bucket["inspected"])
+            forklift_count = units["total"]
+            incoming_normal = normal_hours_from_units(units)
+            override = override_map.get((label, row.day))
+            has_override = override is not None
+
+            if has_override:
+                action = "write"
+            elif matched_site is None:
+                action = "no_worksite"
+            elif forklift_count == 0:
+                action = "empty"
+            elif row.normal_hours is not None and not overwrite:
+                action = "skipped_exists"
+            else:
+                action = "write"
+
+            if has_override and override['normal_hours'] is not None:
+                effective_n = override['normal_hours']
+            elif action == "write":
+                effective_n = float(incoming_normal)
+            else:
+                effective_n = row.normal_hours
+
+            effective_o = override['overtime_hours'] if has_override else row.overtime_hours
+            effective_s = override['support_hours'] if has_override else row.support_hours
+
+            if action == "write":
+                counters["write"] += 1
+                updates.append(MonthHourUpdate(
+                    label=label,
+                    day=row.day,
+                    normal_hours=float(effective_n) if effective_n is not None else 0.0,
+                    overtime_hours=effective_o,
+                    support_hours=effective_s,
+                    worksite_id=matched_site.id if matched_site else None,
+                    forklift_count=forklift_count,
+                    force=has_override,
+                ))
+            else:
+                counters[action] += 1
+            cost = None
+            if rates:
+                cost = evaluate_day_amounts(
+                    parameters, rates, row.row_number,
+                    effective_n, effective_o, effective_s,
+                    c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                    is_holiday=row.is_holiday,
+                )
+                daily_costs.append(cost)
+
+            days_payload.append({
+                "date": row.day.isoformat(),
+                "weekday": row.day.weekday(),
+                "is_holiday": row.is_holiday,
+                "units": {key: units[key] for key in ("twoPointFive", "threePointZero", "fourPointFive")},
+                "forklift_count": forklift_count,
+                "existing": {
+                    "normal_hours": row.normal_hours,
+                    "overtime_hours": row.overtime_hours,
+                    "support_hours": row.support_hours,
+                },
+                "incoming_normal": incoming_normal,
+                "action": action,
+                "overridden": has_override,
+                "hours": {
+                    "normal_hours": effective_n,
+                    "overtime_hours": effective_o,
+                    "support_hours": effective_s,
+                },
+                "amount": {
+                    "normal_amount": cost.normal_amount,
+                    "overtime_amount": cost.overtime_amount,
+                    "support_amount": cost.support_amount,
+                    "total": cost.total,
+                } if cost else None,
+            })
+
+        totals = totals_from_day_costs(
+            rates, daily_costs, month, parameters.tax_rate, parameters.safety_rate
+        ) if rates else None
+        if rates:
+            invoice_untaxed = round(sum(dc.normal_amount + dc.overtime_amount for dc in daily_costs), 2)
+            invoice_tax = int(excel_round(invoice_untaxed * parameters.tax_rate, 0))
+            invoice_taxed = int(round(invoice_untaxed + invoice_tax))
+            invoice_totals['untaxed'] = round(invoice_totals['untaxed'] + invoice_untaxed, 2)
+            invoice_totals['tax'] += invoice_tax
+            invoice_totals['taxed'] += invoice_taxed
+        else:
+            invoice_untaxed = invoice_tax = invoice_taxed = 0
+        if matched_site is None:
+            warnings.append(f"標別「{label}」找不到對應工地，不會寫入，請確認工地代號／名稱")
+
+        for key in totals_counter:
+            totals_counter[key] += counters[key]
+
+        serialized_labels.append({
+            "label": label,
+            "worksheet_name": rows[0].worksheet_name,
+            "matched": matched_site is not None,
+            "worksite_id": matched_site.id if matched_site else None,
+            "worksite_name": matched_site.name if matched_site else None,
+            "rates": _serialize_rates(rates) if rates else None,
+            "days": days_payload,
+            "summary": {
+                "write": counters["write"],
+                "skipped_exists": counters["skipped_exists"],
+                "empty": counters["empty"],
+                "no_worksite": counters["no_worksite"],
+                "untaxed": totals.untaxed if totals else 0,
+                "tax": totals.tax if totals else 0,
+                "taxed": totals.taxed if totals else 0,
+                "safety": totals.safety if totals else 0,
+                "rent": totals.rent if totals else 0,
+                "net_profit": totals.net_profit if totals else 0,
+                "invoice_untaxed": invoice_untaxed,
+                "invoice_tax": invoice_tax,
+                "invoice_taxed": invoice_taxed,
+            },
+        })
+
+    plan = {
+        "year": year,
+        "month": month,
+        "period": period,
+        "overwrite": overwrite,
+        "tax_rate": parameters.tax_rate,
+        "safety_rate": parameters.safety_rate,
+        "labels": serialized_labels,
+        "warnings": warnings,
+        "counts": {
+            "write": totals_counter["write"],
+            "skipped_exists": totals_counter["skipped_exists"],
+            "empty": totals_counter["empty"],
+            "no_worksite": totals_counter["no_worksite"],
+            "labels": len(serialized_labels),
+        },
+        "invoice": invoice_totals,
+    }
+    return plan, updates
+
+
+async def _download_cost_content(document: ManagedDocument) -> bytes:
+    try:
+        return await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"無法讀取 Google Drive 計價檔：{exc}") from exc
+
+
+@router.post("/cost-hour-imports/month-preview")
+async def preview_cost_month_imports(
+    payload: CostMonthImportRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    content = await _download_cost_content(document)
+    try:
+        plan, _ = _build_month_plan(
+            content, document.original_file_name, payload.year, payload.month,
+            session, payload.labels, payload.overwrite, payload.overrides,
+        )
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    plan["document_id"] = document.id
+    plan["document_name"] = document.original_file_name
+    return plan
+
+
+@router.post("/cost-hour-imports/month")
+async def apply_cost_month_imports(
+    payload: CostMonthImportRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    content = await _download_cost_content(document)
+    try:
+        plan, updates = _build_month_plan(
+            content, document.original_file_name, payload.year, payload.month,
+            session, payload.labels, payload.overwrite, payload.overrides,
+        )
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not updates:
+        raise HTTPException(
+            status_code=400,
+            detail="整月沒有可寫入的工時（可能尚無工作日誌，或日期皆已填入）；如要重新計算已存在日期，請勾選覆寫。",
+        )
+
+    period = plan["period"]
+    try:
+        updated_content, results = import_month_hours(
+            content, document.original_file_name, period, updates, overwrite=payload.overwrite
+        )
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        drive_url = await google_drive_worklog_service.update_file_bytes(
+            file_id=document.drive_file_id,
+            file_name=document.stored_file_name,
+            content=updated_content,
+            content_type=document.content_type or "application/vnd.ms-excel.sheet.macroEnabled.12",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Google Drive 計價檔更新失敗，未寫入系統紀錄：{exc}") from exc
+
+    document.drive_url = drive_url
+    session.add(document)
+
+    site_by_label = {item["label"]: item["worksite_id"] for item in plan["labels"]}
+    written = [result for result in results if result.action == "written"]
+    for result in written:
+        session.add(WorkHourImportLog(
+            managed_document_id=document.id,
+            worksite_id=site_by_label.get(result.label),
+            work_date=result.day,
+            worksheet_name=result.worksheet_name,
+            target_label=result.label,
+            target_row=result.row_number or 0,
+            normal_hours=result.normal_hours or 0,
+            overtime_hours=result.overtime_hours or 0,
+            support_hours=result.support_hours or 0,
+            previous_normal_hours=result.previous_normal,
+            previous_overtime_hours=result.previous_overtime,
+            previous_support_hours=result.previous_support,
+            drive_file_id=document.drive_file_id,
+            drive_url=drive_url,
+            imported_by_id=actor.id,
+        ))
+    session.commit()
+
+    _write_admin_audit(
+        session,
+        actor,
+        action="import_hours_month",
+        entity_type="cost_workbook",
+        entity_id=document.id,
+        summary=(
+            f"整月批次匯入工時：{period}｜寫入 {len(written)} 日｜"
+            f"略過已存在 {plan['counts']['skipped_exists']} 日｜無作業 {plan['counts']['empty']} 日"
+        ),
+    )
+    backup_result = await google_drive_worklog_service.backup_database()
+    return {
+        "message": f"已將 {period} 工作日誌工時批次寫入 Google Drive 計價檔（{len(written)} 日），並保留修訂與系統紀錄",
+        "period": period,
+        "written": len(written),
+        "skipped_exists": plan["counts"]["skipped_exists"],
+        "empty": plan["counts"]["empty"],
+        "no_worksite": plan["counts"]["no_worksite"],
+        "warnings": plan["warnings"],
+        "drive_url": drive_url,
+        "backup_status": backup_result.get("status"),
+    }
 
 
 @router.get("/worksite-journals")

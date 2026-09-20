@@ -313,6 +313,31 @@
     <section class="panel span-12" data-workspace="documents">
       <div class="panel-header">
         <div>
+          <h2>整月批次匯入（工作日誌自動彙整）</h2>
+          <p class="muted">選作業月份後，系統依每日工作日誌的派工／點檢堆高機台數×8 小時，自動彙整各標別整月正常工時；先整月預覽確認，再一次寫入 Google Drive 計價檔。</p>
+        </div>
+      </div>
+      <div class="action-callout">
+        <strong>計價與安全規則</strong>
+        <span>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率「只認週日」，週六與平日皆用平日超時費。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</span>
+      </div>
+      <form id="costMonthImportForm" class="form-grid">
+        <div><label for="costMonthDocument">推高機計價表</label><select id="costMonthDocument" required></select></div>
+        <div><label for="costMonthMonth">作業月份</label><input id="costMonthMonth" type="month" required></div>
+        <div class="full"><label><input id="costMonthOverwrite" type="checkbox"> 覆寫已填正常工時的日期（依工作日誌重算；預設不勾，只補空白日期）</label></div>
+        <div class="full button-row">
+          <button type="button" class="button-secondary" onclick="previewCostMonthImport()">第 1 步：整月預覽</button>
+          <button id="costMonthSubmit" type="submit" disabled>第 2 步：整月寫入 Google Drive</button>
+          <button type="button" class="button-secondary" id="costMonthInvoiceBtn" onclick="printCostMonthInvoice()" disabled>列印當月請款單</button>
+        </div>
+      </form>
+      <p id="costMonthFeedback" class="notice" role="status" aria-live="polite">請先選推高機計價表與作業月份，再按整月預覽。</p>
+      <div id="costMonthPreview" class="console" hidden style="white-space:normal;max-height:60vh;overflow:auto;"></div>
+    </section>
+
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header">
+        <div>
           <h2>公司 Excel 文件庫</h2>
           <p class="muted">上傳後自動保存原始檔至 Google Drive、建立版本紀錄；不覆蓋舊檔。推高機計價表會保留作為後續依標別匯入工時的指定檔案。</p>
         </div>
@@ -874,6 +899,7 @@
       worksiteJournals: null,
       managedDocuments: [],
       costHourPreview: null,
+      costMonthPreview: null,
     };
 
     function setWorkspace(workspace, shouldScroll = true) {
@@ -1515,6 +1541,16 @@
       ).join("");
       if ([...documentSelect.options].some(option => option.value === selectedDocument)) documentSelect.value = selectedDocument;
       if ([...worksiteSelect.options].some(option => option.value === selectedWorksite)) worksiteSelect.value = selectedWorksite;
+      const monthDocumentSelect = document.getElementById("costMonthDocument");
+      if (monthDocumentSelect) {
+        const previousMonthDocument = monthDocumentSelect.value;
+        monthDocumentSelect.innerHTML = costDocuments.length
+          ? costDocuments.map(item => `<option value="${item.id}">${escapeHtml(item.original_file_name)}</option>`).join("")
+          : '<option value="">尚未保存推高機計價表</option>';
+        if ([...monthDocumentSelect.options].some(option => option.value === previousMonthDocument)) monthDocumentSelect.value = previousMonthDocument;
+        const monthInput = document.getElementById("costMonthMonth");
+        if (monthInput && !monthInput.value) monthInput.value = todayString().slice(0, 7);
+      }
     }
 
     async function loadCostHourTargets() {
@@ -1576,6 +1612,11 @@
           `標別：${data.target_label}（${data.worksheet_name} 第 ${data.target_row} 列）`,
           `目前 B/D/F：正常 ${data.existing.normal_hours ?? 0}、加班 ${data.existing.overtime_hours ?? 0}、支援 ${data.existing.support_hours ?? 0} 小時`,
           `將匯入 B/D/F：正常 ${data.incoming.normal_hours}、加班 ${data.incoming.overtime_hours}、支援 ${data.incoming.support_hours} 小時`,
+          ...(data.pricing ? [
+            `計價單價：時薪 ${data.pricing.rates.normal_hourly}、日薪8H ${data.pricing.rates.daily}、超時 ${data.pricing.rates.ot_rate}、假日 ${data.pricing.rates.holiday_rate}、支援 ${data.pricing.rates.support_rate}${data.pricing.is_holiday ? "（本日為假日）" : ""}`,
+            `目前金額：正常 ${fmtCostAmount(data.pricing.existing_amount.normal_amount)}、加班 ${fmtCostAmount(data.pricing.existing_amount.overtime_amount)}、支援 ${fmtCostAmount(data.pricing.existing_amount.support_amount)}，合計 ${fmtCostAmount(data.pricing.existing_amount.total)}`,
+            `匯入後金額：正常 ${fmtCostAmount(data.pricing.incoming_amount.normal_amount)}、加班 ${fmtCostAmount(data.pricing.incoming_amount.overtime_amount)}、支援 ${fmtCostAmount(data.pricing.incoming_amount.support_amount)}，合計 ${fmtCostAmount(data.pricing.incoming_amount.total)}`,
+          ] : []),
           data.warning,
         ].join("\n");
         document.getElementById("costHourImportSubmit").disabled = false;
@@ -1583,6 +1624,313 @@
       } catch (error) {
         preview.hidden = true;
         document.getElementById("costHourImportSubmit").disabled = true;
+        feedback.textContent = error.message;
+      }
+    }
+
+    function fmtCostAmount(value) {
+      return Number(value || 0).toLocaleString("zh-TW", { maximumFractionDigits: 0 });
+    }
+
+    const COST_WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+
+    function currentCostMonthPayload() {
+      const monthValue = document.getElementById("costMonthMonth").value;
+      let year = 0, month = 0;
+      if (monthValue) {
+        const parts = monthValue.split("-").map(Number);
+        year = parts[0];
+        month = parts[1];
+      }
+      return {
+        document_id: Number(document.getElementById("costMonthDocument").value),
+        year,
+        month,
+        overwrite: document.getElementById("costMonthOverwrite").checked,
+        labels: null,
+      };
+    }
+
+    function costActionLabel(action) {
+      return {
+        write: "將寫入",
+        skipped_exists: "略過（已填）",
+        empty: "無作業",
+        no_worksite: "無對應工地",
+      }[action] || action;
+    }
+
+    function costNormalAmount(rates, hours) {
+      const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);
+      if (!rates || !Number.isFinite(h) || h <= 0) return 0;
+      if (h < 8) return h * Number(rates.normal_hourly);
+      if (h === 8) return Number(rates.daily);
+      return Number(rates.daily) + (h - 8) * Number(rates.ot_rate);
+    }
+    function costOvertimeAmount(rates, hours, isHoliday) {
+      const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);
+      if (!rates || !Number.isFinite(h) || h <= 0) return 0;
+      return h * Number(isHoliday ? rates.holiday_rate : rates.ot_rate);
+    }
+    function costSupportAmount(rates, hours) {
+      const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);
+      if (!rates || !Number.isFinite(h) || h <= 0) return 0;
+      return h * Number(rates.support_rate);
+    }
+    function costInputValue(value) { return (value === null || value === undefined) ? "" : value; }
+
+    function renderCostMonthPreview(data) {
+      const box = document.getElementById("costMonthPreview");
+      window.__costMonthData = data;
+      const warnings = (data.warnings || []).map(item => `<li>${escapeHtml(item)}</li>`).join("");
+      const labelCards = data.labels.map((item, labelIndex) => {
+        const summary = item.summary;
+        const rate = item.rates;
+        const head = `<summary><strong>${escapeHtml(item.label)}</strong>｜${escapeHtml(item.worksite_name || "未對應工地")}｜寫入 <span id="cm-write-${labelIndex}">${summary.write}</span> 日、略過 ${summary.skipped_exists} 日｜請款未稅 <strong id="cm-inv-untaxed-${labelIndex}">${fmtCostAmount(summary.invoice_untaxed)}</strong>、含稅 <strong id="cm-inv-taxed-${labelIndex}">${fmtCostAmount(summary.invoice_taxed)}</strong>｜工時未稅 <span id="cm-untaxed-${labelIndex}">${fmtCostAmount(summary.untaxed)}</span>、含稅 <span id="cm-taxed-${labelIndex}">${fmtCostAmount(summary.taxed)}</span>、安衛 <span id="cm-safety-${labelIndex}">${fmtCostAmount(summary.safety)}</span>、租金 ${fmtCostAmount(summary.rent)}、月淨利 <span id="cm-net-${labelIndex}">${fmtCostAmount(summary.net_profit)}</span></summary>`;
+        if (!item.matched) {
+          return `<details class="cost-month-label">${head}<p class="muted">活頁簿有此標別但找不到對應工地，整月不會寫入；請確認工地代號／名稱是否包含「${escapeHtml(item.label)}」。</p></details>`;
+        }
+        const visibleDays = item.days.filter(day => day.action !== "empty");
+        const rows = visibleDays.map((day) => {
+          const units = day.units || {};
+          const unitText = [
+            units.twoPointFive ? `2.5T×${units.twoPointFive}` : "",
+            units.threePointZero ? `3T×${units.threePointZero}` : "",
+            units.fourPointFive ? `4.5T×${units.fourPointFive}` : "",
+          ].filter(Boolean).join(" ") || "0";
+          const nInit = costInputValue(day.hours.normal_hours);
+          const oInit = costInputValue(day.hours.overtime_hours);
+          const sInit = costInputValue(day.hours.support_hours);
+          const common = `type="number" min="0" step="0.5" class="cost-month-input" style="width:62px;"
+            data-label="${escapeAttr(item.label)}" data-date="${day.date}"
+            data-init-n="${nInit}" data-init-o="${oInit}" data-init-s="${sInit}"
+            oninput="recalcCostMonth(${labelIndex})"`;
+          const dayLabel = day.is_holiday ? " 假日（週日）" : (day.weekday === 5 ? "（週六）" : "");
+          return `<tr data-row-date="${day.date}"${day.is_holiday ? ' class="cost-holiday-row"' : ""}>
+            <td>${escapeHtml(day.date.slice(5))} 週${COST_WEEKDAYS[day.weekday]}${dayLabel}</td>
+            <td>${escapeHtml(unitText)}</td>
+            <td>${day.forklift_count} 台</td>
+            <td><input ${common} data-field="n" value="${nInit}"></td>
+            <td><input ${common} data-field="o" value="${oInit}"></td>
+            <td><input ${common} data-field="s" value="${sInit}"></td>
+            <td class="cm-action">${escapeHtml(costActionLabel(day.action))}</td>
+            <td style="text-align:right;" class="cm-amount-normal">0</td>
+            <td style="text-align:right;" class="cm-amount-overtime">0</td>
+            <td style="text-align:right;" class="cm-amount-support">0</td>
+            <td style="text-align:right;"><strong class="cm-amount-total">0</strong></td>
+          </tr>`;
+        }).join("");
+        const rateText = rate
+          ? `時薪 ${fmtCostAmount(rate.normal_hourly)}｜日薪8H ${fmtCostAmount(rate.daily)}｜超時 ${fmtCostAmount(rate.ot_rate)}｜假日(週日) ${fmtCostAmount(rate.holiday_rate)}｜支援 ${fmtCostAmount(rate.support_rate)}`
+          : "";
+        return `<details class="cost-month-label" ${summary.write ? "open" : ""}>${head}
+          <p class="muted">${rateText}　可直接修改下方工時，金額會自動重算；調整過的日期即使原本已填也會寫入。</p>
+          <div class="table-wrap"><table>
+            <thead><tr><th>日期</th><th>噸位</th><th>台數</th><th>正常</th><th>加班</th><th>支援</th><th>動作</th><th>正常金額</th><th>加班金額</th><th>支援金額</th><th>合計</th></tr></thead>
+            <tbody id="cm-tbody-${labelIndex}">${rows || '<tr><td colspan="11" class="muted">整月無工作日誌或皆為空白。</td></tr>'}</tbody>
+          </table></div>
+        </details>`;
+      }).join("");
+      box.innerHTML = `
+        <p><strong>${escapeHtml(data.document_name || "")}｜${data.year} 年 ${data.month} 月（${data.period}）</strong>｜預計寫入 ${data.counts.write} 日、略過已填 ${data.counts.skipped_exists} 日、無作業 ${data.counts.empty} 日</p>
+        <p>全標請款合計：未稅 <strong id="cm-inv-total-untaxed">0</strong>、營業稅 <span id="cm-inv-total-tax">0</span>、含稅 <strong id="cm-inv-total-taxed">0</strong>（僅計正常＋加班，不含支援）。可直接在表格調整工時，金額即時重算，並可用「列印當月請款單」輸出。</p>
+        ${warnings ? `<ul style="color:#a33;">${warnings}</ul>` : ""}
+        ${labelCards}`;
+      box.hidden = false;
+      data.labels.forEach((_, index) => recalcCostMonth(index));
+      const invoiceButton = document.getElementById("costMonthInvoiceBtn");
+      if (invoiceButton) invoiceButton.disabled = false;
+    }
+
+    function recalcCostMonth(labelIndex) {
+      const data = window.__costMonthData;
+      if (!data || !data.labels[labelIndex]) return;
+      const item = data.labels[labelIndex];
+      const rate = item.rates;
+      const tbody = document.getElementById(`cm-tbody-${labelIndex}`);
+      if (!tbody) return;
+      const visibleDays = item.days.filter(day => day.action !== "empty");
+      const trs = tbody.querySelectorAll("tr[data-row-date]");
+      let untaxed = 0;
+      let invoiceUntaxed = 0;
+      let writeCount = 0;
+      visibleDays.forEach((day, rowIndex) => {
+        const tr = trs[rowIndex];
+        if (!tr) return;
+        const inputs = tr.querySelectorAll("input.cost-month-input");
+        const nInput = inputs[0], oInput = inputs[1], sInput = inputs[2];
+        const n = nInput.value, o = oInput.value, s = sInput.value;
+        const dirtyN = String(n) !== String(nInput.dataset.initN);
+        const dirtyO = String(o) !== String(oInput.dataset.initO);
+        const dirtyS = String(s) !== String(sInput.dataset.initS);
+        const dirty = dirtyN || dirtyO || dirtyS;
+        const normalAmount = costNormalAmount(rate, n);
+        const overtimeAmount = costOvertimeAmount(rate, o, day.is_holiday);
+        const supportAmount = costSupportAmount(rate, s);
+        tr.querySelector(".cm-amount-normal").textContent = fmtCostAmount(normalAmount);
+        tr.querySelector(".cm-amount-overtime").textContent = fmtCostAmount(overtimeAmount);
+        tr.querySelector(".cm-amount-support").textContent = fmtCostAmount(supportAmount);
+        tr.querySelector(".cm-amount-total").textContent = fmtCostAmount(normalAmount + overtimeAmount + supportAmount);
+        tr.classList.toggle("cm-dirty", dirty);
+        tr.querySelector(".cm-action").textContent = dirty ? "已調整（寫入）" : costActionLabel(day.action);
+        day.hours.normal_hours = n === "" ? null : Number(n);
+        day.hours.overtime_hours = o === "" ? null : Number(o);
+        day.hours.support_hours = s === "" ? null : Number(s);
+        day.amount = {
+          normal_amount: normalAmount,
+          overtime_amount: overtimeAmount,
+          support_amount: supportAmount,
+          total: normalAmount + overtimeAmount + supportAmount,
+        };
+        day._dirty = { n: dirtyN, o: dirtyO, s: dirtyS };
+        day.overridden = dirty;
+        untaxed += normalAmount + overtimeAmount + supportAmount;
+        invoiceUntaxed += normalAmount + overtimeAmount;
+        if (day.action === "write" || dirty) writeCount += 1;
+      });
+      const tax = Math.round(untaxed * Number(data.tax_rate || 0.05));
+      const taxed = untaxed + tax;
+      const safety = Math.round(untaxed * Number(data.safety_rate || 0.006));
+      const rent = Number(item.summary.rent || 0);
+      const netProfit = untaxed + tax + taxed + safety + rent;
+      const invoiceTax = Math.round(invoiceUntaxed * Number(data.tax_rate || 0.05));
+      const invoiceTaxed = invoiceUntaxed + invoiceTax;
+      const setText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = fmtCostAmount(value); };
+      setText(`cm-write-${labelIndex}`, writeCount);
+      setText(`cm-untaxed-${labelIndex}`, untaxed);
+      setText(`cm-taxed-${labelIndex}`, taxed);
+      setText(`cm-safety-${labelIndex}`, safety);
+      setText(`cm-net-${labelIndex}`, netProfit);
+      setText(`cm-inv-untaxed-${labelIndex}`, invoiceUntaxed);
+      setText(`cm-inv-taxed-${labelIndex}`, invoiceTaxed);
+      Object.assign(item.summary, {
+        write: writeCount, untaxed, tax, taxed, safety, net_profit: netProfit,
+        invoice_untaxed: invoiceUntaxed, invoice_tax: invoiceTax, invoice_taxed: invoiceTaxed,
+      });
+      recalcCostMonthTotals();
+    }
+
+    function recalcCostMonthTotals() {
+      const data = window.__costMonthData;
+      if (!data) return;
+      let untaxed = 0, tax = 0, taxed = 0;
+      data.labels.forEach((item) => {
+        if (!item.matched) return;
+        untaxed += Number(item.summary.invoice_untaxed || 0);
+        tax += Number(item.summary.invoice_tax || 0);
+        taxed += Number(item.summary.invoice_taxed || 0);
+      });
+      const setText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = fmtCostAmount(value); };
+      setText("cm-inv-total-untaxed", untaxed);
+      setText("cm-inv-total-tax", tax);
+      setText("cm-inv-total-taxed", taxed);
+    }
+
+    function collectCostMonthOverrides() {
+      const data = window.__costMonthData;
+      const overrides = [];
+      if (!data) return overrides;
+      data.labels.forEach((item) => {
+        if (!item.matched) return;
+        item.days.forEach((day) => {
+          if (day.action === "empty" || !day.overridden || !day._dirty) return;
+          const dirty = day._dirty;
+          const valueOrNull = (isDirty, hours) => {
+            if (!isDirty) return null;
+            return hours === null ? 0 : Number(hours);
+          };
+          overrides.push({
+            label: item.label,
+            date: day.date,
+            normal_hours: valueOrNull(dirty.n, day.hours.normal_hours),
+            overtime_hours: valueOrNull(dirty.o, day.hours.overtime_hours),
+            support_hours: valueOrNull(dirty.s, day.hours.support_hours),
+          });
+        });
+      });
+      return overrides;
+    }
+
+    function printCostMonthInvoice() {
+      const data = window.__costMonthData;
+      if (!data) return;
+      const rocYear = data.year - 1911;
+      const money = value => fmtCostAmount(value || 0);
+      const hours = value => (value === null || value === undefined || value === 0) ? "" : (Number.isInteger(Number(value)) ? String(value) : String(value));
+      const billItems = data.labels.filter(item => item.matched && Number(item.summary.invoice_untaxed || 0) > 0);
+      if (!billItems.length) {
+        document.getElementById("costMonthFeedback").textContent = "目前沒有可列印的請款金額，請先執行整月預覽或調整工時。";
+        return;
+      }
+      const pages = billItems.map((item) => {
+        const rows = item.days
+          .filter(day => day.action !== "empty")
+          .filter(day => (Number(day.hours.normal_hours) || 0) > 0 || (Number(day.hours.overtime_hours) || 0) > 0);
+        const normalSum = rows.reduce((sum, day) => sum + Number(day.amount.normal_amount || 0), 0);
+        const overtimeSum = rows.reduce((sum, day) => sum + Number(day.amount.overtime_amount || 0), 0);
+        const rowsHtml = rows.map(day => `<tr>
+          <td>${escapeHtml(day.date.slice(8))} 日</td>
+          <td>${hours(day.hours.normal_hours)}</td><td class="num">${money(day.amount.normal_amount)}</td>
+          <td>${hours(day.hours.overtime_hours)}</td><td class="num">${money(day.amount.overtime_amount)}</td>
+          <td></td></tr>`).join("");
+        return `<div class="invoice-page">
+          <h1>三通工程行　堆高機出租請款計價表</h1>
+          <div class="inv-meta"><span>工地：${escapeHtml(item.label)}　${escapeHtml(item.worksite_name || "")}</span><span>中華民國 ${rocYear} 年 ${data.month} 月</span></div>
+          <table class="inv-table">
+            <thead><tr><th style="width:18%;">日期</th><th style="width:13%;">正常時數</th><th style="width:20%;">正常金額</th><th style="width:13%;">加班時數</th><th style="width:20%;">加班金額</th><th>備註</th></tr></thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="inv-sum"><td colspan="2">小計（未稅）</td><td class="num">${money(normalSum)}</td><td></td><td class="num">${money(overtimeSum)}</td><td></td></tr>
+              <tr class="inv-sum"><td colspan="4">總計未稅（正常＋加班）</td><td class="num" colspan="2">${money(item.summary.invoice_untaxed)}</td></tr>
+              <tr><td colspan="4">營業稅 5%</td><td class="num" colspan="2">${money(item.summary.invoice_tax)}</td></tr>
+              <tr class="inv-total"><td colspan="4">含稅請款金額（新臺幣）</td><td class="num" colspan="2">${money(item.summary.invoice_taxed)}</td></tr>
+            </tbody>
+          </table>
+          <div class="inv-sign"><span>承辦人：　　　　　　</span><span>審核：　　　　　　</span><span>請款日期：　　年　　月　　日</span></div>
+        </div>`;
+      }).join("");
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        document.getElementById("costMonthFeedback").textContent = "瀏覽器封鎖了請款單視窗，請允許此網站開啟彈出式視窗後再試。";
+        return;
+      }
+      printWindow.opener = null;
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${rocYear}年${data.month}月 三通工程行請款單</title><style>
+        *{box-sizing:border-box}body{margin:0;background:#e8e6df;color:#111;font-family:"Microsoft JhengHei","DFKai-SB",sans-serif;font-size:14px}
+        .toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;gap:12px;padding:12px;background:#243f35;color:#fff}
+        .toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:16px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:#fff}
+        .invoice-page{width:210mm;min-height:297mm;margin:16px auto;background:#fff;padding:16mm 15mm;page-break-after:always;box-shadow:0 8px 30px #0002}
+        .invoice-page:last-child{page-break-after:auto}h1{text-align:center;font-size:24px;letter-spacing:.12em;margin:0 0 10px}
+        .inv-meta{display:flex;justify-content:space-between;font-size:16px;font-weight:700;margin:6px 0 12px}
+        .inv-table{width:100%;border-collapse:collapse;table-layout:fixed}.inv-table th,.inv-table td{border:1px solid #111;padding:6px 8px;text-align:center}
+        .inv-table td.num,.inv-table th{text-align:right}.inv-table thead th{text-align:center;background:#f1efe9}
+        .inv-sum td,.inv-total td{font-weight:700}.inv-total td{font-size:17px;background:#faf6ee}
+        .inv-sign{display:flex;justify-content:space-between;margin-top:26mm;font-size:16px;font-weight:700}
+        @page{size:A4 portrait;margin:0}@media print{body{background:#fff}.toolbar{display:none}.invoice-page{margin:0;box-shadow:none}}
+      </style></head><body><div class="toolbar"><span>每個工地一張 A4，金額依整月預覽（僅正常＋加班）</span><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
+      printWindow.document.close();
+    }
+
+    async function previewCostMonthImport() {
+      const feedback = document.getElementById("costMonthFeedback");
+      const submitButton = document.getElementById("costMonthSubmit");
+      const payload = currentCostMonthPayload();
+      if (!payload.document_id || !payload.year || !payload.month) {
+        feedback.textContent = "請先選擇推高機計價表與作業月份。";
+        return;
+      }
+      feedback.textContent = "正在彙整整月工作日誌、比對已填日期並計算金額，請稍候...";
+      try {
+        const data = await api("/api/cost-hour-imports/month-preview", { method: "POST", body: JSON.stringify(payload) });
+        state.costMonthPreview = { payload, data };
+        renderCostMonthPreview(data);
+        submitButton.disabled = false;
+        feedback.textContent = `第 1 步完成：預計寫入 ${data.counts.write} 日，略過已填 ${data.counts.skipped_exists} 日，無作業 ${data.counts.empty} 日。確認無誤後按第 2 步。`;
+      } catch (error) {
+        state.costMonthPreview = null;
+        submitButton.disabled = true;
+        document.getElementById("costMonthPreview").hidden = true;
         feedback.textContent = error.message;
       }
     }
@@ -2117,6 +2465,37 @@
         feedback.textContent = error.message;
       } finally {
         submitButton.disabled = !state.costHourPreview;
+      }
+    });
+
+    document.getElementById("costMonthImportForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const feedback = document.getElementById("costMonthFeedback");
+      const submitButton = document.getElementById("costMonthSubmit");
+      const payload = currentCostMonthPayload();
+      if (!state.costMonthPreview || JSON.stringify(state.costMonthPreview.payload) !== JSON.stringify(payload)) {
+        submitButton.disabled = true;
+        feedback.textContent = "月份、計價表或覆寫選項已變更，請重新執行第 1 步整月預覽。";
+        return;
+      }
+      submitButton.disabled = true;
+      payload.overrides = collectCostMonthOverrides();
+      feedback.textContent = payload.overrides.length
+        ? `含 ${payload.overrides.length} 個人工調整日期，正在整月寫入 Google Drive 計價檔，請稍候...`
+        : "正在整月寫入 Google Drive 計價檔（同一活頁簿只回寫一次），請稍候...";
+      try {
+        const data = await api("/api/cost-hour-imports/month", { method: "POST", body: JSON.stringify(payload) });
+        document.getElementById("costMonthPreview").hidden = true;
+        state.costMonthPreview = null;
+        window.__costMonthData = null;
+        document.getElementById("costMonthInvoiceBtn").disabled = true;
+        const warningText = (data.warnings || []).length ? ` 注意：${data.warnings.join("；")}` : "";
+        feedback.textContent = `${data.message} 略過已填 ${data.skipped_exists} 日、無作業 ${data.empty} 日。${warningText}`;
+        await Promise.all([loadCostHourImports(), loadAuditLogs(), loadManagedDocuments()]);
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        submitButton.disabled = !state.costMonthPreview;
       }
     });
 
