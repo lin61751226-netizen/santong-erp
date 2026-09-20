@@ -256,6 +256,22 @@ class PhotoUploadLog(SQLModel, table=True):
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
+class ManagedDocument(SQLModel, table=True):
+    """公司管理文件的版本索引；原檔保留在 Google Drive，不覆蓋舊版本。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    category: str = Field(index=True)
+    title: str = Field(index=True)
+    original_file_name: str
+    stored_file_name: str
+    drive_file_id: str = Field(index=True, unique=True)
+    drive_folder_id: str
+    drive_url: str
+    content_type: Optional[str] = None
+    size_bytes: int = 0
+    uploaded_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class GroupTextLog(SQLModel, table=True):
     """LINE 群組原始文字，先完整保留，後續再由人工判斷是否納入正式日誌。"""
     id: Optional[int] = Field(default=None, primary_key=True)

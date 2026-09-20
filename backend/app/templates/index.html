@@ -95,6 +95,7 @@
       <button type="button" class="workspace-tab" data-workspace-tab="operations" onclick="setWorkspace('operations')">派工與審核</button>
       <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機管理</button>
       <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
+      <button type="button" class="workspace-tab" data-workspace-tab="documents" onclick="setWorkspace('documents')">文件與計價</button>
       <button type="button" class="workspace-tab" data-workspace-tab="settings" onclick="setWorkspace('settings')">LINE 與系統</button>
     </nav>
 
@@ -275,6 +276,33 @@
       </table></div>
     </section>
 
+
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header">
+        <div>
+          <h2>公司 Excel 文件庫</h2>
+          <p class="muted">上傳後自動保存原始檔至 Google Drive、建立版本紀錄；不覆蓋舊檔。推高機計價表會保留作為後續依標別匯入工時的指定檔案。</p>
+        </div>
+      </div>
+      <form id="managedDocumentUploadForm" class="form-grid">
+        <div class="full">
+          <label for="managedDocumentFiles">選擇 Excel 檔案</label>
+          <input id="managedDocumentFiles" type="file" accept=".xls,.xlsx,.xlsm,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" multiple required>
+          <p class="muted">可一次選取多份檔案，單一檔案上限 30 MB。系統會自動辨識推高機計價、收支明細、通訊錄／全年管理。</p>
+        </div>
+        <div class="full button-row">
+          <button type="submit">上傳並保存到文件庫</button>
+          <button type="button" class="button-secondary" onclick="loadManagedDocuments()">重新整理</button>
+        </div>
+      </form>
+      <p id="managedDocumentFeedback" class="notice" role="status" aria-live="polite">尚未上傳文件。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>分類</th><th>原始檔名</th><th>大小</th><th>上傳人</th><th>保存時間</th><th>操作</th></tr></thead>
+          <tbody id="managedDocumentRows"></tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="panel span-12" data-workspace="settings">
       <div class="panel-header">
@@ -829,7 +857,7 @@
 
     function api(path, options = {}) {
       const headers = new Headers(options.headers || {});
-      if (!headers.has("Content-Type") && options.body) {
+      if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
         headers.set("Content-Type", "application/json");
       }
       // 登入後身分以同源 session cookie（santong_session）驗證，不再使用 X-Actor-Code
@@ -1378,6 +1406,7 @@
         loadPhotoUploads(),
         loadLoginLogs(),
         loadMasterOptions(),
+        loadManagedDocuments(),
       ]);
       setWorkspace("overview", false);
     }
@@ -1404,6 +1433,32 @@
     async function loadDashboard() {
       const data = await api("/api/dashboard");
       renderStats(data);
+    }
+
+    function formatFileSize(bytes) {
+      const value = Number(bytes || 0);
+      if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+      return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    async function loadManagedDocuments() {
+      const rows = document.getElementById("managedDocumentRows");
+      if (!rows) return;
+      try {
+        const data = await api("/api/documents");
+        rows.innerHTML = data.length ? data.map((item) => `
+          <tr>
+            <td>${escapeHtml(item.category)}</td>
+            <td>${escapeHtml(item.original_file_name)}</td>
+            <td>${formatFileSize(item.size_bytes)}</td>
+            <td>${escapeHtml(item.uploaded_by_name)}</td>
+            <td>${formatTW(item.created_at)}</td>
+            <td><a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟 Google Drive</a></td>
+          </tr>
+        `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未保存公司 Excel 文件</td></tr>';
+      } catch (error) {
+        rows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
+      }
     }
 
     async function loadLineStatus() {
@@ -1847,6 +1902,34 @@
         `).join("") : '<tr><td colspan="4">目前沒有管理操作紀錄</td></tr>';
       } catch (error) { rows.innerHTML = `<tr><td colspan="4">${escapeHtml(error.message)}</td></tr>`; }
     }
+
+    document.getElementById("managedDocumentUploadForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const input = document.getElementById("managedDocumentFiles");
+      const feedback = document.getElementById("managedDocumentFeedback");
+      const submitButton = event.submitter || event.target.querySelector('button[type="submit"]');
+      if (!input.files.length) {
+        feedback.textContent = "請先選擇要保存的 Excel 檔案。";
+        return;
+      }
+      const formData = new FormData();
+      [...input.files].forEach(file => formData.append("files", file, file.name));
+      submitButton.disabled = true;
+      feedback.textContent = `正在上傳 ${input.files.length} 份文件到 Google Drive，請稍候...`;
+      try {
+        const data = await api("/api/documents/upload", { method: "POST", body: formData });
+        const failed = data.failed || [];
+        feedback.textContent = failed.length
+          ? `${data.message}；${failed.length} 份未完成：${failed.map(item => item.file_name).join("、")}`
+          : `${data.message}，已建立版本紀錄。`;
+        event.target.reset();
+        await Promise.all([loadManagedDocuments(), loadAuditLogs()]);
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        submitButton.disabled = false;
+      }
+    });
 
     document.getElementById("createWorksiteForm").addEventListener("submit", async (event) => {
       event.preventDefault();

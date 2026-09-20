@@ -6,12 +6,13 @@ import re
 import secrets
 from datetime import date, datetime, time, timedelta, timezone
 from io import StringIO
+from pathlib import Path
 from typing import Optional
 from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
@@ -33,6 +34,7 @@ from app.models import (
     LoginLog,
     LoginStatus,
     MasterOption,
+    ManagedDocument,
     MeetingRecord,
     NotificationCategory,
     NotificationBatch,
@@ -98,6 +100,21 @@ SITE_ALIASES = {
     "新竹寶山2": "新竹寶山2",
     "新竹寶山3": "新竹寶山3",
 }
+
+MANAGEMENT_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024
+SPREADSHEET_EXTENSIONS = {".xls", ".xlsx", ".xlsm"}
+
+
+def _management_document_category(file_name: str) -> tuple[str, str]:
+    """依既有公司表單名稱預先分類，其他檔案仍可安全納入文件庫。"""
+    title = file_name.rsplit(".", 1)[0]
+    if "計價" in file_name and ("推高機" in file_name or "堆高機" in file_name):
+        return "推高機計價", title
+    if "收支" in file_name:
+        return "收支明細", title
+    if "通訊錄" in file_name or "全年管理" in file_name:
+        return "通訊錄與年度管理", title
+    return "公司文件", title
 
 
 def _employees_for_actor(session: Session, actor: Employee) -> list[Employee]:
@@ -483,6 +500,22 @@ def get_options(
         "roles": [role.value for role in Role],
         "leave_statuses": [status_item.value for status_item in LeaveStatus],
         "leave_types": ["事假", "病假", "特休", "公假", "排休", "其他"],
+    }
+
+
+def _serialize_managed_document(session: Session, item: ManagedDocument) -> dict:
+    uploader = session.get(Employee, item.uploaded_by_id) if item.uploaded_by_id else None
+    return {
+        "id": item.id,
+        "category": item.category,
+        "title": item.title,
+        "original_file_name": item.original_file_name,
+        "stored_file_name": item.stored_file_name,
+        "drive_url": item.drive_url,
+        "content_type": item.content_type,
+        "size_bytes": item.size_bytes,
+        "uploaded_by_name": uploader.name if uploader else "-",
+        "created_at": item.created_at.isoformat(),
     }
 
 
@@ -1488,6 +1521,84 @@ def list_photo_uploads(
             "note": log.note,
         })
     return result
+
+
+@router.get("/documents")
+def list_managed_documents(
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    documents = session.exec(
+        select(ManagedDocument).order_by(ManagedDocument.created_at.desc(), ManagedDocument.id.desc())
+    ).all()
+    return [_serialize_managed_document(session, item) for item in documents]
+
+
+@router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
+async def upload_managed_documents(
+    files: list[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """上傳公司 Excel 原檔，建立可追溯版本，不覆蓋既有 Drive 檔案。"""
+    if not files:
+        raise HTTPException(status_code=400, detail="請至少選擇一個 Excel 檔案")
+
+    uploaded: list[dict] = []
+    failed: list[dict] = []
+    for upload in files:
+        original_name = Path(upload.filename or "").name.strip()
+        extension = Path(original_name).suffix.lower()
+        if not original_name or extension not in SPREADSHEET_EXTENSIONS:
+            failed.append({"file_name": upload.filename or "未命名檔案", "reason": "只接受 .xls、.xlsx 或 .xlsm Excel 檔案"})
+            continue
+        content = await upload.read()
+        if not content:
+            failed.append({"file_name": original_name, "reason": "檔案內容為空白"})
+            continue
+        if len(content) > MANAGEMENT_DOCUMENT_MAX_BYTES:
+            failed.append({"file_name": original_name, "reason": "檔案超過 30 MB 上傳上限"})
+            continue
+
+        try:
+            drive_file = await google_drive_worklog_service.upload_management_document(
+                file_name=original_name,
+                content=content,
+                content_type=upload.content_type,
+            )
+        except Exception as exc:
+            failed.append({"file_name": original_name, "reason": str(exc)})
+            continue
+
+        category, title = _management_document_category(original_name)
+        document = ManagedDocument(
+            category=category,
+            title=title,
+            original_file_name=original_name,
+            stored_file_name=drive_file.file_name,
+            drive_file_id=drive_file.file_id,
+            drive_folder_id=drive_file.folder_id,
+            drive_url=drive_file.file_url,
+            content_type=upload.content_type,
+            size_bytes=len(content),
+            uploaded_by_id=actor.id,
+        )
+        session.add(document)
+        session.commit()
+        session.refresh(document)
+        _write_admin_audit(
+            session,
+            actor,
+            action="upload",
+            entity_type="managed_document",
+            entity_id=document.id,
+            summary=f"上傳公司文件：{category}｜{original_name}",
+        )
+        uploaded.append(_serialize_managed_document(session, document))
+
+    if not uploaded and failed:
+        raise HTTPException(status_code=502, detail={"message": "文件未能上傳", "failed": failed})
+    return {"message": f"已保存 {len(uploaded)} 份文件", "uploaded": uploaded, "failed": failed}
 
 
 def _local_date_utc_bounds(target_date: date) -> tuple[datetime, datetime]:

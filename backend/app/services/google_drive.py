@@ -35,6 +35,7 @@ FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
 LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
 DATABASE_BACKUP_FILE_NAME = "三通資料庫最新快照.sqlite3"
+MANAGEMENT_DOCUMENTS_FOLDER_NAME = "管理系統文件"
 OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 # These tables are append-only or use disable/restore semantics. A lower row
@@ -59,6 +60,7 @@ PRESERVED_DATABASE_TABLES = (
     "masteroption",
     "forklift",
     "forkliftinspection",
+    "manageddocument",
 )
 
 logger = logging.getLogger(__name__)
@@ -692,5 +694,28 @@ class GoogleDriveWorklogService:
         )
         logger.info(f"LINE 相片上傳完成: {file_name} -> {result.file_url}")
         return result
+
+    async def upload_management_document(
+        self,
+        *,
+        file_name: str,
+        content: bytes,
+        content_type: str | None,
+    ) -> DriveUploadResult:
+        """保存後台匯入的公司檔案，與工作照片資料夾分開管理。"""
+        if not self.is_configured():
+            raise GoogleDriveWorklogError("Google Drive 文件庫尚未完成設定")
+        safe_name = Path(file_name).name.strip().replace("/", "-").replace("\\", "-")
+        if not safe_name:
+            raise GoogleDriveWorklogError("文件名稱不可空白")
+        timestamp = datetime.now(ZoneInfo(settings.timezone)).strftime("%Y%m%d_%H%M%S")
+        stored_name = f"{timestamp}_{safe_name}"
+        return await asyncio.to_thread(
+            self._upload_bytes,
+            file_name=stored_name,
+            content=content,
+            content_type=content_type or "application/octet-stream",
+            folder_name=MANAGEMENT_DOCUMENTS_FOLDER_NAME,
+        )
 google_drive_worklog_service = GoogleDriveWorklogService()
 

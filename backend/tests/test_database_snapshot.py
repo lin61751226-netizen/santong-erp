@@ -100,6 +100,23 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(second, oauth_credentials)
         oauth_credentials.refresh.assert_called_once()
 
+    async def test_management_document_upload_uses_separate_document_folder(self) -> None:
+        service = GoogleDriveWorklogService()
+        result = Mock()
+        with (
+            patch.object(service, "is_configured", return_value=True),
+            patch.object(service, "_upload_bytes", return_value=result) as upload_bytes,
+        ):
+            uploaded = await service.upload_management_document(
+                file_name="三通工程行115年推高機計價0730.xlsm",
+                content=b"excel-content",
+                content_type="application/vnd.ms-excel.sheet.macroEnabled.12",
+            )
+
+        self.assertIs(uploaded, result)
+        self.assertEqual(upload_bytes.call_args.kwargs["folder_name"], "管理系統文件")
+        self.assertTrue(upload_bytes.call_args.kwargs["file_name"].endswith("_三通工程行115年推高機計價0730.xlsm"))
+
     async def test_production_restore_replaces_existing_local_database(self) -> None:
         service = GoogleDriveWorklogService()
         with tempfile.TemporaryDirectory() as temp_dir:
