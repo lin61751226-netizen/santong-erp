@@ -22,7 +22,7 @@ from app.routes import admin as admin_routes
 def _normal_formula(column: str, row: int) -> str:
     return (
         f'=IF(B{row}="","",IF(B{row}<8,B{row}*參數!${column}$22,'
-        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$24))'
+        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$22))'
     )
 
 

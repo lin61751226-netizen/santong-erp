@@ -306,7 +306,7 @@ def normalize_normal_formula(formula: Optional[str]) -> Optional[str]:
     prefix = "=" if formula.startswith("=") else ""
     return (
         f'{prefix}IF(B{row}="","",IF(B{row}<8,B{row}*參數!${rate_columns[22]}$22,'
-        f'INT(B{row}/8)*參數!${rate_columns[23]}$23+MOD(B{row},8)*參數!${rate_columns[24]}$24))'
+        f'INT(B{row}/8)*參數!${rate_columns[23]}$23+MOD(B{row},8)*參數!${rate_columns[22]}$22))'
     )
 
 
@@ -390,14 +390,14 @@ def read_pricing_parameters(content: bytes, file_name: str) -> PricingParameters
 # ---------------------------------------------------------------------------
 
 def normal_day_amount(rates: LabelRates, hours: Optional[float]) -> float:
-    """計算 C 欄：每滿 8H 算一個日薪，剩餘時數再用超時費率。"""
+    """計算 C 欄：每滿 8H 算一個日薪，剩餘時數用正常時薪。"""
     if hours is None:
         return 0.0
     if hours < 8:
         return hours * rates.normal_hourly
     full_days = int(hours // 8)
     remainder = hours - full_days * 8
-    return full_days * rates.daily + remainder * rates.ot_rate
+    return full_days * rates.daily + remainder * rates.normal_hourly
 
 
 def overtime_day_amount(rates: LabelRates, hours: Optional[float], is_holiday: bool) -> float:

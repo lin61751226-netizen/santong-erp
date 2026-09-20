@@ -22,7 +22,7 @@ LABEL_COLUMNS = {"45": "B", "新竹寶山1": "I"}
 def _normal_formula(column: str, row: int) -> str:
     return (
         f'=IF(B{row}="","",IF(B{row}<8,B{row}*參數!${column}$22,'
-        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$24))'
+        f'INT(B{row}/8)*參數!${column}$23+MOD(B{row},8)*參數!${column}$22))'
     )
 
 
@@ -91,9 +91,10 @@ def test_day_pricing_rules():
     rates = parameters.rates_for("45")
     assert day_cost(rates, 7, 0, 0, False).normal_amount == 5600      # 未滿 8 以時薪計
     assert day_cost(rates, 8, 0, 0, False).normal_amount == 6000      # 剛好 8 計日薪
-    assert day_cost(rates, 10, 0, 0, False).normal_amount == 8000     # 超過 8：日薪 + 超時
+    assert day_cost(rates, 10, 0, 0, False).normal_amount == 7600     # 8H 日薪 + 2H 正常時薪
     assert day_cost(rates, 16, 0, 0, False).normal_amount == 12000    # 2 台各 8H
     assert day_cost(rates, 24, 0, 0, False).normal_amount == 18000    # 3 台各 8H
+    assert day_cost(rates, 22, 0, 0, False).normal_amount == 16800    # 2 日薪 + 6H 正常時薪
     assert day_cost(rates, 8, 2, 0, False).overtime_amount == 2000    # 平日超時費
     assert day_cost(rates, 8, 2, 0, True).overtime_amount == 2400     # 假日加班費
     assert day_cost(rates, 8, 0, 2, False).support_amount == 1600    # 司機支援
@@ -110,10 +111,10 @@ def test_formula_evaluation_matches_rules():
         c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
         is_holiday=False,
     )
-    assert cost.normal_amount == 8000   # 1 個日薪 + 2 小時超時
+    assert cost.normal_amount == 7600   # 1 個日薪 + 2 小時正常時薪
     assert cost.overtime_amount == 2000
     assert cost.support_amount == 800
-    assert cost.total == 10800
+    assert cost.total == 10400
 
 
 def test_legacy_normal_formula_is_upgraded_for_multiple_daily_rates():
@@ -149,7 +150,7 @@ def test_month_import_writes_multiple_days_and_labels_once():
     assert [result.action for result in results] == ["written", "written", "written"]
     by_key = {(result.label, result.day): result for result in results}
     assert by_key[("45", date(2026, 9, 1))].cost.normal_amount == 6000
-    assert by_key[("45", date(2026, 9, 2))].cost.normal_amount == 7000       # 1 個日薪 + 1 小時超時
+    assert by_key[("45", date(2026, 9, 2))].cost.normal_amount == 6800       # 1 個日薪 + 1 小時正常時薪
     assert by_key[("新竹寶山1", date(2026, 9, 1))].cost.normal_amount == 8000
 
     workbook = openpyxl.load_workbook(BytesIO(updated), data_only=False)

@@ -1667,7 +1667,7 @@
       if (h < 8) return h * Number(rates.normal_hourly);
       const fullDays = Math.floor(h / 8);
       const remainder = h - fullDays * 8;
-      return fullDays * Number(rates.daily) + remainder * Number(rates.ot_rate);
+      return fullDays * Number(rates.daily) + remainder * Number(rates.normal_hourly);
     }
     function costOvertimeAmount(rates, hours, isHoliday) {
       const h = (hours === "" || hours === null || hours === undefined) ? 0 : Number(hours);
