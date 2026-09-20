@@ -87,6 +87,7 @@ from app.services.cost_workbook import (
     evaluate_day_amounts,
     _excel_round as excel_round,
     find_cost_sheet_target,
+    holiday_reason,
     import_cost_hours,
     import_month_hours,
     list_cost_sheet_targets,
@@ -1746,6 +1747,7 @@ async def preview_cost_hour_import(
         )
         pricing = {
             "is_holiday": target.is_holiday,
+            "holiday_reason": holiday_reason(payload.work_date),
             "tax_rate": parameters.tax_rate,
             "safety_rate": parameters.safety_rate,
             "rates": {
@@ -2072,6 +2074,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                 "date": row.day.isoformat(),
                 "weekday": row.day.weekday(),
                 "is_holiday": row.is_holiday,
+                "holiday_reason": holiday_reason(row.day),
                 "units": {key: units[key] for key in ("twoPointFive", "threePointZero", "fourPointFive")},
                 "forklift_count": forklift_count,
                 "existing": {

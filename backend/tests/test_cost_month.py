@@ -187,8 +187,8 @@ def test_match_label_for_site():
     assert match_label_for_site("X123", "X123", labels) is None
 
 
-def _weekend_workbook_bytes() -> bytes:
-    """9/5（週六）、9/6（週日），E 欄皆寫死第 25 列（模擬舊活頁簿週六週日都算假日）。"""
+def _holiday_rule_workbook_bytes() -> bytes:
+    """一般週六先寫第 25 列，週日先寫第 25 列，國定假日先寫第 24 列。"""
     workbook = openpyxl.Workbook()
     workbook.remove(workbook.active)
     params = workbook.create_sheet("參數")
@@ -197,39 +197,45 @@ def _weekend_workbook_bytes() -> bytes:
     params["B22"], params["B23"], params["B24"], params["B25"], params["B26"] = 800, 6000, 1000, 1200, 800
     params["B27"], params["B28"] = 0, 1
     sheet = workbook.create_sheet("11509-45")
-    for index, day in enumerate([date(2026, 9, 5), date(2026, 9, 6)], start=5):
+    for index, day in enumerate([date(2026, 9, 5), date(2026, 9, 6), date(2026, 9, 28)], start=5):
         sheet.cell(row=index, column=1, value=day)
         sheet.cell(row=index, column=3, value=_normal_formula("B", index))
-        sheet.cell(row=index, column=5, value=_overtime_formula("B", index, holiday=True))
+        sheet.cell(row=index, column=5, value=_overtime_formula("B", index, holiday=day == date(2026, 9, 6)))
         sheet.cell(row=index, column=7, value=_support_formula("B", index))
     output = BytesIO()
     workbook.save(output)
     return output.getvalue()
 
 
-def test_saturday_uses_weekday_rate_but_sunday_keeps_holiday_rate():
+def test_saturday_uses_weekday_rate_sunday_and_national_holiday_use_holiday_rate():
     updated, results = import_month_hours(
-        _weekend_workbook_bytes(), "計價表.xlsx", "11509",
+        _holiday_rule_workbook_bytes(), "計價表.xlsx", "11509",
         [
             MonthHourUpdate(label="45", day=date(2026, 9, 5), normal_hours=8, overtime_hours=2),
             MonthHourUpdate(label="45", day=date(2026, 9, 6), normal_hours=8, overtime_hours=2),
+            MonthHourUpdate(label="45", day=date(2026, 9, 28), normal_hours=8, overtime_hours=2),
         ],
     )
     saturday = next(item for item in results if item.day == date(2026, 9, 5))
     sunday = next(item for item in results if item.day == date(2026, 9, 6))
+    national_holiday = next(item for item in results if item.day == date(2026, 9, 28))
     assert saturday.cost.normal_amount == 6000
-    assert saturday.cost.overtime_amount == 2000   # 週六改用平日超時費 1000*2
+    assert saturday.cost.overtime_amount == 2000   # 一般週六用平日超時費 1000*2
     assert sunday.cost.normal_amount == 6000
     assert sunday.cost.overtime_amount == 2400      # 週日維持假日費 1200*2
+    assert national_holiday.is_holiday is True
+    assert national_holiday.cost.overtime_amount == 2400  # 國定假日用假日費 1200*2
 
     workbook = openpyxl.load_workbook(BytesIO(updated), data_only=False)
-    assert "$24" in workbook["11509-45"]["E5"].value   # 週六 E 公式由 25 校正為 24
+    assert "$24" in workbook["11509-45"]["E5"].value   # 一般週六 E 公式由 25 校正為 24
     assert "$25" in workbook["11509-45"]["E6"].value   # 週日保留 25
+    assert "$25" in workbook["11509-45"]["E7"].value   # 9/28 國定假日保留 25
 
     cached = openpyxl.load_workbook(BytesIO(updated), data_only=True)
     assert cached["11509-45"]["C5"].value == 6000
     assert cached["11509-45"]["E5"].value == 2000
     assert cached["11509-45"]["E6"].value == 2400
+    assert cached["11509-45"]["E7"].value == 2400
 
 
 def test_formula_caches_are_filled_after_month_import():

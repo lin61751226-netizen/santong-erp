@@ -15,7 +15,7 @@ from __future__ import annotations
 import io
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -222,21 +222,56 @@ def _openpyxl_column_letter(index: int) -> str:
 
 _PARAM_REF = re.compile(r"參數!\$?[A-Z]{1,3}\$?(\d+)")
 
-# 加班假日費率的規則：只認「週日」為假日；週六與平日皆用平日超時費（第 24 列）。
+# 加班假日費率的規則：週日或當年度國定假日使用第 25 列，
+# 其餘週一至週六使用第 24 列。國定假日表採政府公告放假日，包含補假與連假中的放假日；
+# 民間企業若有不同勞資約定，日後只需調整這份表，不必改計價引擎。
 # Python date.weekday()：週一 0 … 週六 5、週日 6。
 HOLIDAY_WEEKDAYS = {6}
 
 
+def _date_span(start: date, end: date) -> frozenset[date]:
+    return frozenset(start + timedelta(days=offset) for offset in range((end - start).days + 1))
+
+
+# 2026（民國 115）政府行政機關辦公日曆表公告放假日。
+# 這裡保留日期表而不是把「週六」視為假日，避免一般週六誤用第 25 列。
+NATIONAL_HOLIDAYS_BY_YEAR: dict[int, frozenset[date]] = {
+    2026: frozenset({date(2026, 1, 1)})
+    | _date_span(date(2026, 2, 14), date(2026, 2, 22))
+    | _date_span(date(2026, 2, 27), date(2026, 3, 1))
+    | _date_span(date(2026, 4, 3), date(2026, 4, 6))
+    | _date_span(date(2026, 5, 1), date(2026, 5, 3))
+    | _date_span(date(2026, 6, 19), date(2026, 6, 21))
+    | _date_span(date(2026, 9, 25), date(2026, 9, 28))
+    | _date_span(date(2026, 10, 9), date(2026, 10, 11))
+    | _date_span(date(2026, 10, 24), date(2026, 10, 26))
+    | _date_span(date(2026, 12, 25), date(2026, 12, 27)),
+}
+
+
+def national_holidays_for_year(year: int) -> frozenset[date]:
+    return NATIONAL_HOLIDAYS_BY_YEAR.get(year, frozenset())
+
+
+def holiday_reason(target_date: date) -> str:
+    reasons: list[str] = []
+    if target_date.weekday() in HOLIDAY_WEEKDAYS:
+        reasons.append("週日")
+    if target_date in national_holidays_for_year(target_date.year):
+        reasons.append("國定假日")
+    return "、".join(reasons)
+
+
 def is_canonical_holiday(target_date: date) -> bool:
-    """系統計價規則：僅週日適用假日加班費率。"""
-    return target_date.weekday() in HOLIDAY_WEEKDAYS
+    """系統計價規則：週日或國定假日適用假日加班費率。"""
+    return bool(holiday_reason(target_date))
 
 
 def normalize_overtime_formula(formula: Optional[str], is_holiday: bool) -> Optional[str]:
-    """把 E 欄加班公式引用的參數列（24 平日／25 假日）統一到「僅週日」規則。
+    """把 E 欄加班公式引用的參數列（24 平日／25 假日）統一到假日規則。
 
-    活頁簿舊公式在週六也寫死引用第 25 列；預覽試算時以此函式對齊規則，
-    寫入時另會實際把週六貯存格的公式由 25 改為 24。
+    活頁簿舊公式可能把一般週六寫死引用第 25 列；預覽試算時以此函式對齊規則，
+    寫入時另會實際把非假日儲存格的公式由 25 改為 24。
     """
     if not formula:
         return formula
@@ -564,7 +599,7 @@ def evaluate_day_amounts(
     is_holiday: bool,
 ) -> DayCost:
     """以活頁簿每日公式計算金額；缺公式時退回分段規則。"""
-    # 加班假日規則以「僅週日」為準，活頁簿週六寫死的第 25 列先對齊為第 24 列。
+    # 加班假日規則由呼叫端傳入，活頁簿既有 E 欄公式先依第 24／25 列規則正規化。
     normalized_e_formula = normalize_overtime_formula(e_formula, is_holiday)
     values = {"B": normal_hours, "D": overtime_hours, "F": support_hours}
 
@@ -1276,13 +1311,12 @@ class _WorkbookFormulaCalculator(_WorkbookCalculator):
 
 
 def align_overtime_holiday_rules(workbook, period: str) -> int:
-    """把加班 E 欄公式統一到「僅週日為假日」規則。
+    """把加班 E 欄公式統一到「週日或國定假日」規則。
 
-    凡是非週日（含週六與平日）卻引用假日費率（參數第 25 列）的儲存格，一律改回平日
-    超時費（第 24 列）；週日的第 25 列保留。如此活頁簿公式、Excel 重算與回填快取
-    會完全一致，不會在 Excel 開啟後金額跳動。回傳校正的儲存格數。
+    凡是非假日卻引用假日費率（參數第 25 列）的儲存格，一律改回平日超時費（第 24 列）；
+    週日與國定假日的第 25 列保留。如此活頁簿公式、Excel 重算與回填快取會完全一致，
+    不會在 Excel 開啟後金額跳動。回傳校正的儲存格數。
     """
-    holiday_ref = re.compile(r"(參數!\$?[A-Z]{1,3}\$?)25\b")
     changed = 0
     for worksheet in workbook.worksheets:
         match = SHEET_PATTERN.match(worksheet.title)
@@ -1290,13 +1324,15 @@ def align_overtime_holiday_rules(workbook, period: str) -> int:
             continue
         for row_number in range(5, worksheet.max_row + 1):
             day = _as_date(worksheet.cell(row=row_number, column=1).value)
-            if day is None or day.weekday() == 6:  # 週日保留假日費率
+            if day is None:
                 continue
             cell = worksheet.cell(row=row_number, column=5)
             formula = cell.value
-            if isinstance(formula, str) and "參數!" in formula and holiday_ref.search(formula):
-                cell.value = holiday_ref.sub(r"\g<1>24", formula)
-                changed += 1
+            if isinstance(formula, str) and "參數!" in formula:
+                normalized = normalize_overtime_formula(formula, is_canonical_holiday(day))
+                if normalized != formula:
+                    cell.value = normalized
+                    changed += 1
     return changed
 
 

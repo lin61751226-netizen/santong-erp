@@ -319,7 +319,7 @@
       </div>
       <div class="action-callout">
         <strong>計價與安全規則</strong>
-        <span>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率「只認週日」，週六與平日皆用平日超時費。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</span>
+        <span>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率：週日與國定假日使用第 25 列，週一至週六其餘日期使用第 24 列。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</span>
       </div>
       <form id="costMonthImportForm" class="form-grid">
         <div><label for="costMonthDocument">推高機計價表</label><select id="costMonthDocument" required></select></div>
@@ -1705,7 +1705,9 @@
             data-label="${escapeAttr(item.label)}" data-date="${day.date}"
             data-init-n="${nInit}" data-init-o="${oInit}" data-init-s="${sInit}"
             oninput="recalcCostMonth(${labelIndex})"`;
-          const dayLabel = day.is_holiday ? " 假日（週日）" : (day.weekday === 5 ? "（週六）" : "");
+          const dayLabel = day.is_holiday
+            ? ` 假日（${day.holiday_reason || (day.weekday === 6 ? "週日" : "國定假日")}）`
+            : (day.weekday === 5 ? "（週六）" : "");
           return `<tr data-row-date="${day.date}"${day.is_holiday ? ' class="cost-holiday-row"' : ""}>
             <td>${escapeHtml(day.date.slice(5))} 週${COST_WEEKDAYS[day.weekday]}${dayLabel}</td>
             <td>${escapeHtml(unitText)}</td>
@@ -1721,7 +1723,7 @@
           </tr>`;
         }).join("");
         const rateText = rate
-          ? `時薪 ${fmtCostAmount(rate.normal_hourly)}｜日薪8H ${fmtCostAmount(rate.daily)}｜超時 ${fmtCostAmount(rate.ot_rate)}｜假日(週日) ${fmtCostAmount(rate.holiday_rate)}｜支援 ${fmtCostAmount(rate.support_rate)}`
+          ? `時薪 ${fmtCostAmount(rate.normal_hourly)}｜日薪8H ${fmtCostAmount(rate.daily)}｜超時 ${fmtCostAmount(rate.ot_rate)}｜假日(週日／國定假日) ${fmtCostAmount(rate.holiday_rate)}｜支援 ${fmtCostAmount(rate.support_rate)}`
           : "";
         return `<details class="cost-month-label" ${summary.write ? "open" : ""}>${head}
           <p class="muted">${rateText}　可直接修改下方工時，金額會自動重算；調整過的日期即使原本已填也會寫入。</p>
