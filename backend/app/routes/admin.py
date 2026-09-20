@@ -1524,13 +1524,47 @@ def list_photo_uploads(
 
 
 @router.get("/documents")
-def list_managed_documents(
+async def list_managed_documents(
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
     documents = session.exec(
         select(ManagedDocument).order_by(ManagedDocument.created_at.desc(), ManagedDocument.id.desc())
     ).all()
+    # Render 使用暫存磁碟時，部署可能只取回較早的 SQLite 快照；以 Drive 原檔補齊缺少索引。
+    try:
+        drive_documents = await google_drive_worklog_service.list_management_documents()
+    except Exception:
+        drive_documents = []
+    known_drive_file_ids = {document.drive_file_id for document in documents}
+    restored = False
+    for drive_document in drive_documents:
+        if drive_document["drive_file_id"] in known_drive_file_ids:
+            continue
+        original_name = drive_document["original_file_name"]
+        category, title = _management_document_category(original_name)
+        created_at_text = drive_document.get("created_at")
+        created_at = datetime.utcnow()
+        if created_at_text:
+            created_at = datetime.fromisoformat(created_at_text.replace("Z", "+00:00")).replace(tzinfo=None)
+        session.add(ManagedDocument(
+            category=category,
+            title=title,
+            original_file_name=original_name,
+            stored_file_name=drive_document["stored_file_name"],
+            drive_file_id=drive_document["drive_file_id"],
+            drive_folder_id=drive_document["drive_folder_id"],
+            drive_url=drive_document["drive_url"],
+            content_type=drive_document.get("content_type"),
+            size_bytes=drive_document["size_bytes"],
+            created_at=created_at,
+        ))
+        restored = True
+    if restored:
+        session.commit()
+        documents = session.exec(
+            select(ManagedDocument).order_by(ManagedDocument.created_at.desc(), ManagedDocument.id.desc())
+        ).all()
     # 修正舊版分類順序造成「通訊錄／全年管理」被歸入收支明細的既有紀錄。
     corrected = False
     for document in documents:
@@ -1608,6 +1642,8 @@ async def upload_managed_documents(
 
     if not uploaded and failed:
         raise HTTPException(status_code=502, detail={"message": "文件未能上傳", "failed": failed})
+    if uploaded:
+        await google_drive_worklog_service.backup_database()
     return {"message": f"已保存 {len(uploaded)} 份文件", "uploaded": uploaded, "failed": failed}
 
 

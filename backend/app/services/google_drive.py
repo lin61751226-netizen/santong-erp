@@ -717,5 +717,62 @@ class GoogleDriveWorklogService:
             content_type=content_type or "application/octet-stream",
             folder_name=MANAGEMENT_DOCUMENTS_FOLDER_NAME,
         )
+
+    def _list_management_documents_sync(self) -> list[dict]:
+        """讀取文件庫資料夾的原始檔中繼資料，用於部署後復原索引。"""
+        client = self._build_client()
+        root_folder_id = settings.google_drive_worklog_folder_id.strip()
+        if not root_folder_id:
+            raise GoogleDriveWorklogError("GOOGLE_DRIVE_WORKLOG_FOLDER_ID 尚未設定")
+        folder = self._find_child(
+            client,
+            parent_id=root_folder_id,
+            name=MANAGEMENT_DOCUMENTS_FOLDER_NAME,
+            mime_type=FOLDER_MIME_TYPE,
+        )
+        if not folder:
+            return []
+
+        records: list[dict] = []
+        page_token = None
+        while True:
+            response = (
+                client.files()
+                .list(
+                    q=f"'{folder['id']}' in parents and trashed = false",
+                    spaces="drive",
+                    fields="nextPageToken,files(id,name,mimeType,size,createdTime,webViewLink)",
+                    pageSize=100,
+                    orderBy="createdTime desc",
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
+                .execute()
+            )
+            for file in response.get("files", []):
+                name = str(file.get("name") or "")
+                if Path(name).suffix.lower() not in {".xls", ".xlsx", ".xlsm"}:
+                    continue
+                records.append({
+                    "drive_file_id": file["id"],
+                    "drive_folder_id": folder["id"],
+                    "stored_file_name": name,
+                    "original_file_name": name.split("_", 2)[-1] if name.count("_") >= 2 else name,
+                    "drive_url": file.get("webViewLink") or f"https://drive.google.com/file/d/{file['id']}/view",
+                    "content_type": file.get("mimeType") or mimetypes.guess_type(name)[0],
+                    "size_bytes": int(file.get("size") or 0),
+                    "created_at": file.get("createdTime"),
+                })
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+        return records
+
+    async def list_management_documents(self) -> list[dict]:
+        """列出已在 Google Drive 保存的公司 Excel 原始檔。"""
+        if not self.is_configured():
+            return []
+        return await asyncio.to_thread(self._list_management_documents_sync)
 google_drive_worklog_service = GoogleDriveWorklogService()
 
