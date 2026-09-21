@@ -208,6 +208,17 @@ class CostMonthImportRequest(BaseModel):
     overrides: list[CostMonthHourOverride] = []
 
 
+class FinanceImportPreviewRequest(BaseModel):
+    document_id: int
+
+
+class FinanceImportCommitRequest(BaseModel):
+    document_id: int
+    expected_content_sha256: str = Field(min_length=64, max_length=64)
+    import_contacts: bool = True
+    import_finance: bool = True
+
+
 # ---- 堆高機出租管理 ----
 
 class ForkliftCareUpdate(BaseModel):

@@ -395,6 +395,64 @@ class FinanceEntry(SQLModel, table=True):
     handled_by: Optional[str] = None
     attachment_urls: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
+    # Excel 匯入保留收入與支出原值，避免「同列含手續費」被淨額覆蓋。
+    summary: Optional[str] = Field(default=None, sa_column=Column(Text))
+    income_amount: float = Field(default=0)
+    expense_amount: float = Field(default=0)
+    account_name: Optional[str] = None
+    transaction_status: Optional[str] = None
+    voucher_type: Optional[str] = None
+    tag: Optional[str] = None
+    project_name: Optional[str] = Field(default=None, index=True)
+    source_document_id: Optional[int] = Field(default=None, foreign_key="manageddocument.id", index=True)
+    source_sheet: Optional[str] = None
+    source_row: Optional[int] = None
+    source_key: Optional[str] = Field(default=None, index=True)
+    dedupe_key: Optional[str] = Field(default=None, index=True)
+    import_batch_id: Optional[int] = Field(default=None, foreign_key="financeimportbatch.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class BusinessContact(SQLModel, table=True):
+    """客戶、業主與供應商共用的公司通訊錄，不混用堆高機出租客戶。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    normalized_key: str = Field(index=True, unique=True)
+    name: str = Field(index=True)
+    tax_id: Optional[str] = Field(default=None, index=True)
+    category: str = Field(default="未分類", index=True)
+    department: Optional[str] = None
+    title: Optional[str] = None
+    contact_person: Optional[str] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = Field(default=None, sa_column=Column(Text))
+    note: Optional[str] = Field(default=None, sa_column=Column(Text))
+    source_document_id: Optional[int] = Field(default=None, foreign_key="manageddocument.id", index=True)
+    source_sheet: Optional[str] = None
+    source_row: Optional[int] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class FinanceImportBatch(SQLModel, table=True):
+    """每次 Excel 寫入的批次稽核；原始檔仍以 ManagedDocument 保存於 Drive。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    managed_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    source_file_name: str
+    content_sha256: str = Field(index=True)
+    status: str = Field(default="completed", index=True)
+    finance_imported: int = 0
+    finance_skipped_duplicate: int = 0
+    finance_pending_review: int = 0
+    contact_created: int = 0
+    contact_updated: int = 0
+    contact_skipped: int = 0
+    warning_rows: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
+    imported_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class LineLinkStatus(str, Enum):

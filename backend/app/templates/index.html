@@ -460,6 +460,47 @@
       </div>
     </section>
 
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header">
+        <div>
+          <h2>收支與通訊錄資料匯入</h2>
+          <p class="muted">先從上方文件庫保存 Excel，再在這裡預覽。系統只匯入可辨識的通訊錄與逐筆收支，年度總表、月報、薪資、排休及行事曆原檔會完整保留但不會自動寫入。</p>
+        </div>
+      </div>
+      <div class="action-callout">
+        <strong>匯入保護</strong>
+        <span>同一 Excel 版本不能重複匯入；收入與支出同列、缺少類別、轉帳帳戶不完整或無金額的資料會列為待確認，不會寫入正式帳。</span>
+      </div>
+      <form id="financeImportForm" class="form-grid">
+        <div class="full">
+          <label for="financeImportDocument">公司 Excel 文件</label>
+          <select id="financeImportDocument" required></select>
+        </div>
+        <div><label><input id="financeImportContacts" type="checkbox" checked> 匯入／補齊公司通訊錄</label></div>
+        <div><label><input id="financeImportLedger" type="checkbox" checked> 匯入可確認的收支明細</label></div>
+        <div class="full button-row">
+          <button type="button" class="button-secondary" onclick="previewFinanceImport()">第 1 步：預覽資料</button>
+          <button id="financeImportSubmit" type="submit" disabled>第 2 步：確認寫入系統</button>
+          <button type="button" class="button-secondary" onclick="loadFinanceImportBatches()">重新整理紀錄</button>
+        </div>
+      </form>
+      <p id="financeImportFeedback" class="notice" role="status" aria-live="polite">請先選擇上方已保存到 Google Drive 的收支或全年管理 Excel。</p>
+      <div id="financeImportPreview" class="console" hidden style="white-space:normal;max-height:55vh;overflow:auto;"></div>
+      <div class="table-wrap" style="margin-top:16px;">
+        <table>
+          <thead><tr><th>匯入時間</th><th>Excel 檔案</th><th>收支新增</th><th>重複略過</th><th>待確認</th><th>通訊錄新增／補齊</th></tr></thead>
+          <tbody id="financeImportBatchRows"></tbody>
+        </table>
+      </div>
+      <h3 style="margin-top:20px;">已匯入收支明細</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>類型／類別</th><th>摘要</th><th>對象</th><th>收入</th><th>支出</th><th>來源</th></tr></thead>
+          <tbody id="financeEntryRows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel span-12" data-workspace="settings">
       <div class="panel-header">
         <div>
@@ -997,6 +1038,7 @@
       worksiteJournals: null,
       selectedJournalSiteKey: null,
       managedDocuments: [],
+      financeImportPreview: null,
       costHourPreview: null,
       costMonthPreview: null,
       calendarData: null,
@@ -1850,6 +1892,8 @@
         loadLoginLogs(),
         loadMasterOptions(),
         loadManagedDocuments(),
+        loadFinanceImportBatches(),
+        loadFinanceEntries(),
         loadCostHourImports(),
         loadCalendar(),
         loadContracts(),
@@ -1898,6 +1942,7 @@
         const data = await api("/api/documents");
         state.managedDocuments = data;
         renderCostHourImportOptions();
+        renderFinanceImportOptions();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>
@@ -1937,6 +1982,91 @@
         if ([...monthDocumentSelect.options].some(option => option.value === previousMonthDocument)) monthDocumentSelect.value = previousMonthDocument;
         const monthInput = document.getElementById("costMonthMonth");
         if (monthInput && !monthInput.value) monthInput.value = todayString().slice(0, 7);
+      }
+    }
+
+    function renderFinanceImportOptions() {
+      const select = document.getElementById("financeImportDocument");
+      if (!select) return;
+      const selected = select.value;
+      const documents = state.managedDocuments.filter(item => ["通訊錄與年度管理", "收支明細"].includes(item.category));
+      select.innerHTML = documents.length
+        ? '<option value="">請選擇 Excel</option>' + documents.map(item =>
+          `<option value="${item.id}">${escapeHtml(item.category)}｜${escapeHtml(item.original_file_name)}</option>`
+        ).join("")
+        : '<option value="">尚未保存可匯入的收支／全年管理 Excel</option>';
+      if ([...select.options].some(option => option.value === selected)) select.value = selected;
+    }
+
+    function renderFinanceImportPreview(data) {
+      const panel = document.getElementById("financeImportPreview");
+      const financeRows = data.finance_rows || [];
+      const warnings = data.warnings || [];
+      const contacts = data.contacts || [];
+      panel.innerHTML = `
+        <div class="import-preview-summary">
+          <strong>${escapeHtml(data.document.file_name)}</strong>
+          <span class="pill">通訊錄候選 ${data.summary.contact_candidates}</span>
+          <span class="pill">可寫入收支 ${data.summary.finance_candidates}</span>
+          <span class="pill warning-pill">待確認 ${data.summary.warning_rows}</span>
+        </div>
+        <h3>可寫入收支（前 ${financeRows.length} 筆）</h3>
+        <div class="table-wrap"><table><thead><tr><th>來源</th><th>日期</th><th>類型</th><th>類別</th><th>對象</th><th>收入</th><th>支出</th><th>專案</th></tr></thead><tbody>
+          ${financeRows.length ? financeRows.map(row => `<tr><td>${escapeHtml(row.sheet)} #${row.row}</td><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.type)}</td><td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.counterparty || "-")}</td><td>${Number(row.income || 0).toLocaleString()}</td><td>${Number(row.expense || 0).toLocaleString()}</td><td>${escapeHtml(row.project_name || "-")}</td></tr>`).join("") : '<tr><td colspan="8">沒有可直接寫入的收支資料</td></tr>'}
+        </tbody></table></div>
+        <h3>通訊錄候選（前 ${contacts.length} 筆）</h3>
+        <p>${contacts.length ? contacts.map(row => `${escapeHtml(row.name)}${row.tax_id ? `（${escapeHtml(row.tax_id)}）` : ""}`).join("、") : "沒有可匯入的通訊錄"}</p>
+        <h3>待確認資料</h3>
+        <ul class="import-warning-list">${warnings.length ? warnings.map(item => `<li>${escapeHtml(item.scope)}｜${escapeHtml(item.sheet)} 第 ${item.row} 列：${escapeHtml(item.reason)}</li>`).join("") : "<li>無待確認資料</li>"}</ul>
+      `;
+      panel.hidden = false;
+    }
+
+    async function previewFinanceImport() {
+      const documentId = Number(document.getElementById("financeImportDocument").value || 0);
+      const feedback = document.getElementById("financeImportFeedback");
+      const submit = document.getElementById("financeImportSubmit");
+      state.financeImportPreview = null;
+      submit.disabled = true;
+      if (!documentId) {
+        feedback.textContent = "請先從文件庫選擇一份收支或全年管理 Excel。";
+        return;
+      }
+      feedback.textContent = "正在從 Google Drive 讀取 Excel 並檢查重複與異常資料...";
+      try {
+        const data = await api("/api/finance-imports/preview", { method: "POST", body: JSON.stringify({ document_id: documentId }) });
+        state.financeImportPreview = data;
+        renderFinanceImportPreview(data);
+        submit.disabled = false;
+        feedback.textContent = `預覽完成：可寫入收支 ${data.summary.finance_candidates} 筆、通訊錄 ${data.summary.contact_candidates} 筆、待確認 ${data.summary.warning_rows} 筆。`;
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    }
+
+    async function loadFinanceImportBatches() {
+      const rows = document.getElementById("financeImportBatchRows");
+      if (!rows) return;
+      try {
+        const data = await api("/api/finance-imports/batches");
+        rows.innerHTML = data.length ? data.map(item => `
+          <tr><td>${formatTW(item.created_at)}</td><td>${escapeHtml(item.file_name)}</td><td>${item.finance_imported}</td><td>${item.finance_skipped_duplicate}</td><td>${item.finance_pending_review}</td><td>${item.contact_created}／${item.contact_updated}</td></tr>
+        `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未執行資料匯入</td></tr>';
+      } catch (error) {
+        rows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
+      }
+    }
+
+    async function loadFinanceEntries() {
+      const rows = document.getElementById("financeEntryRows");
+      if (!rows) return;
+      try {
+        const data = await api("/api/finance-imports/entries?limit=100");
+        rows.innerHTML = data.length ? data.map(item => `
+          <tr><td>${escapeHtml(item.entry_date)}</td><td>${escapeHtml(item.entry_type)}／${escapeHtml(item.category)}</td><td>${escapeHtml(item.summary || "-")}</td><td>${escapeHtml(item.counterparty || "-")}</td><td>${Number(item.income_amount || 0).toLocaleString()}</td><td>${Number(item.expense_amount || 0).toLocaleString()}</td><td>${escapeHtml(item.source || "-")}<br><span class="muted">${escapeHtml(item.source_sheet || "")} #${item.source_row || ""}</span></td></tr>
+        `).join("") : '<tr><td colspan="7" style="text-align:center;color:#888;">尚未匯入收支資料</td></tr>';
+      } catch (error) {
+        rows.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message)}</td></tr>`;
       }
     }
 
@@ -2850,11 +2980,51 @@
           ? `${data.message}；${failed.length} 份未完成：${failed.map(item => item.file_name).join("、")}`
           : `${data.message}，已建立版本紀錄。`;
         event.target.reset();
-        await Promise.all([loadManagedDocuments(), loadAuditLogs()]);
+        await Promise.all([loadManagedDocuments(), loadAuditLogs(), loadFinanceImportBatches()]);
       } catch (error) {
         feedback.textContent = error.message;
       } finally {
         submitButton.disabled = false;
+      }
+    });
+
+    document.getElementById("financeImportDocument").addEventListener("change", () => {
+      state.financeImportPreview = null;
+      document.getElementById("financeImportSubmit").disabled = true;
+      document.getElementById("financeImportPreview").hidden = true;
+      document.getElementById("financeImportFeedback").textContent = "檔案已變更，請重新執行第 1 步預覽。";
+    });
+
+    document.getElementById("financeImportForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const feedback = document.getElementById("financeImportFeedback");
+      const submit = document.getElementById("financeImportSubmit");
+      const preview = state.financeImportPreview;
+      const documentId = Number(document.getElementById("financeImportDocument").value || 0);
+      if (!preview || preview.document.id !== documentId) {
+        feedback.textContent = "請先完成目前檔案的第 1 步預覽。";
+        submit.disabled = true;
+        return;
+      }
+      submit.disabled = true;
+      feedback.textContent = "正在寫入可確認資料、建立稽核紀錄並備份資料庫...";
+      try {
+        const data = await api("/api/finance-imports/commit", { method: "POST", body: JSON.stringify({
+          document_id: documentId,
+          expected_content_sha256: preview.content_sha256,
+          import_contacts: document.getElementById("financeImportContacts").checked,
+          import_finance: document.getElementById("financeImportLedger").checked,
+        }) });
+        const batch = data.batch;
+        const backupText = data.backup?.status === "saved" ? "資料庫已備份到 Google Drive。" : "資料已寫入；請確認 Google Drive 備份狀態。";
+        feedback.textContent = `${data.message} 收支新增 ${batch.finance_imported} 筆、重複略過 ${batch.finance_skipped_duplicate} 筆、通訊錄新增 ${batch.contact_created} 筆／補齊 ${batch.contact_updated} 筆。${backupText}`;
+        state.financeImportPreview = null;
+        document.getElementById("financeImportPreview").hidden = true;
+        await Promise.all([loadFinanceImportBatches(), loadFinanceEntries(), loadAuditLogs()]);
+      } catch (error) {
+        feedback.textContent = error.message;
+      } finally {
+        submit.disabled = false;
       }
     });
 

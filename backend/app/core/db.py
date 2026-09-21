@@ -90,6 +90,37 @@ def _apply_lightweight_migrations() -> None:
                 for statement in statements:
                     connection.execute(text(statement))
 
+    if "financeentry" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("financeentry")}
+        statements = []
+        additions = {
+            "summary": "VARCHAR",
+            "income_amount": "FLOAT DEFAULT 0",
+            "expense_amount": "FLOAT DEFAULT 0",
+            "account_name": "VARCHAR",
+            "transaction_status": "VARCHAR",
+            "voucher_type": "VARCHAR",
+            "tag": "VARCHAR",
+            "project_name": "VARCHAR",
+            "source_document_id": "INTEGER",
+            "source_sheet": "VARCHAR",
+            "source_row": "INTEGER",
+            "source_key": "VARCHAR",
+            "dedupe_key": "VARCHAR",
+            "import_batch_id": "INTEGER",
+            "created_at": "TIMESTAMP",
+        }
+        for column_name, column_type in additions.items():
+            if column_name not in columns:
+                statements.append(f"ALTER TABLE financeentry ADD COLUMN {column_name} {column_type}")
+        if statements:
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.execute(text(statement))
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_financeentry_dedupe_key ON financeentry (dedupe_key)"
+                ))
+
     # photo_upload_log.employee_id 改為可空：未綁定員工的 LINE 帳號上傳也要留下記錄。
     # PostgreSQL 需 DROP NOT NULL；SQLite 不強制既有 NOT NULL 且重建表成本高，故略過。
     if "photouploadlog" in table_names:
