@@ -272,6 +272,43 @@ class ManagedDocument(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class ContractRecord(SQLModel, table=True):
+    """合約索引；原始檔案仍保存於 Google Drive，資料庫只保存可查詢欄位。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    contract_type: str = Field(default="其他", index=True)
+    party_name: Optional[str] = Field(default=None, index=True)
+    employee_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    site_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    start_date: Optional[date] = None
+    expiry_date: Optional[date] = Field(default=None, index=True)
+    amount: Optional[float] = None
+    drive_url: Optional[str] = None
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_active: bool = Field(default=True, index=True)
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CertificateRecord(SQLModel, table=True):
+    """員工證照與訓練證明索引，保留有效期限與 Drive 連結。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    employee_id: int = Field(foreign_key="employee.id", index=True)
+    name: str = Field(index=True)
+    certificate_no: Optional[str] = None
+    issued_date: Optional[date] = None
+    expiry_date: Optional[date] = Field(default=None, index=True)
+    drive_url: Optional[str] = None
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_active: bool = Field(default=True, index=True)
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class WorkHourImportLog(SQLModel, table=True):
     """工作日誌寫入推高機計價表的不可覆蓋稽核紀錄。"""
     id: Optional[int] = Field(default=None, primary_key=True)

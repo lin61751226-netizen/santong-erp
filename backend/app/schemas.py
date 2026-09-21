@@ -62,6 +62,31 @@ class WorksiteLocationUpdate(BaseModel):
     geofence_radius_m: Optional[int] = Field(default=None, ge=10, le=10000)
 
 
+class ContractCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    contract_type: str = Field(default="其他", max_length=50)
+    party_name: Optional[str] = Field(default=None, max_length=200)
+    employee_code: Optional[str] = None
+    site_id: Optional[int] = None
+    start_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    amount: Optional[float] = Field(default=None, ge=0)
+    drive_url: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class CertificateCreate(BaseModel):
+    employee_code: str = Field(min_length=1, max_length=50)
+    name: str = Field(min_length=1, max_length=200)
+    certificate_no: Optional[str] = Field(default=None, max_length=100)
+    issued_date: Optional[date] = None
+    expiry_date: Optional[date] = None
+    drive_url: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
 class MasterOptionCreate(BaseModel):
     # option_type: work_item（工作內容）/ equipment（機具設備）
     option_type: str

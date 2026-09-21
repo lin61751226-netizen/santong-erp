@@ -29,6 +29,8 @@ from app.models import (
     ForkliftStatus,
     GroupTextLog,
     AttendanceEvent,
+    CertificateRecord,
+    ContractRecord,
     LeaveRequest,
     LeaveStatus,
     LoginLog,
@@ -65,6 +67,8 @@ from app.schemas import (
     WorksiteLocationUpdate,
     CostHourImportRequest,
     CostMonthImportRequest,
+    CertificateCreate,
+    ContractCreate,
 )
 from app.services.hr import (
     apply_reassignment_to_assignment,
@@ -266,6 +270,61 @@ def _serialize_employee(worksites: dict[int, Worksite], item: Employee) -> dict:
         "assigned_sites": item.assigned_sites,
         "line_bound": bool(item.line_user_id),
         "bind_token": item.bind_token,
+    }
+
+
+def _expiry_status(expiry_date: Optional[date], is_active: bool = True) -> dict:
+    """統一合約與證照的期限標籤，讓前端不必自行推算日期。"""
+    if not is_active:
+        return {"code": "inactive", "label": "已停用", "days": None}
+    if expiry_date is None:
+        return {"code": "no_expiry", "label": "未設定期限", "days": None}
+    days = (expiry_date - date.today()).days
+    if days < 0:
+        return {"code": "expired", "label": "已到期", "days": days}
+    if days <= 30:
+        return {"code": "expiring", "label": f"{days} 天內到期", "days": days}
+    return {"code": "active", "label": "有效", "days": days}
+
+
+def _serialize_contract(session: Session, item: ContractRecord) -> dict:
+    employee = session.get(Employee, item.employee_id) if item.employee_id else None
+    site = session.get(Worksite, item.site_id) if item.site_id else None
+    return {
+        "id": item.id,
+        "title": item.title,
+        "contract_type": item.contract_type,
+        "party_name": item.party_name,
+        "employee_code": employee.employee_code if employee else None,
+        "employee_name": employee.name if employee else None,
+        "site_id": item.site_id,
+        "site_name": site.name if site else None,
+        "start_date": item.start_date.isoformat() if item.start_date else None,
+        "expiry_date": item.expiry_date.isoformat() if item.expiry_date else None,
+        "amount": item.amount,
+        "drive_url": item.drive_url,
+        "notes": item.notes,
+        "is_active": item.is_active,
+        "status": _expiry_status(item.expiry_date, item.is_active),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _serialize_certificate(session: Session, item: CertificateRecord) -> dict:
+    employee = session.get(Employee, item.employee_id)
+    return {
+        "id": item.id,
+        "employee_code": employee.employee_code if employee else None,
+        "employee_name": employee.name if employee else None,
+        "name": item.name,
+        "certificate_no": item.certificate_no,
+        "issued_date": item.issued_date.isoformat() if item.issued_date else None,
+        "expiry_date": item.expiry_date.isoformat() if item.expiry_date else None,
+        "drive_url": item.drive_url,
+        "notes": item.notes,
+        "is_active": item.is_active,
+        "status": _expiry_status(item.expiry_date, item.is_active),
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 
@@ -834,6 +893,189 @@ def list_employees(
     return [_serialize_employee(worksites, item) for item in employees]
 
 
+# ---- 合約與證照管理 ----
+
+@router.get("/contracts")
+def list_contracts(
+    keyword: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(ContractRecord).order_by(ContractRecord.expiry_date, ContractRecord.id.desc())
+    if not include_inactive:
+        statement = statement.where(ContractRecord.is_active.is_(True))
+    if actor.role == Role.site_manager:
+        statement = statement.where(ContractRecord.site_id == actor.home_site_id)
+    elif actor.role == Role.employee:
+        statement = statement.where(ContractRecord.employee_id == actor.id)
+    rows = session.exec(statement).all()
+    term = (keyword or "").strip().lower()
+    if term:
+        rows = [
+            item for item in rows
+            if term in " ".join([
+                item.title or "", item.contract_type or "", item.party_name or "", item.notes or "",
+            ]).lower()
+        ]
+    return [_serialize_contract(session, item) for item in rows]
+
+
+@router.post("/contracts", status_code=status.HTTP_201_CREATED)
+def create_contract(
+    payload: ContractCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    if payload.expiry_date and payload.start_date and payload.expiry_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="合約到期日不可早於起始日")
+    employee = None
+    if payload.employee_code:
+        employee = session.exec(
+            select(Employee).where(Employee.employee_code == payload.employee_code.strip())
+        ).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="找不到合約對應員工")
+        ensure_employee_scope(actor, employee)
+    if payload.site_id is not None:
+        if not session.get(Worksite, payload.site_id):
+            raise HTTPException(status_code=404, detail="找不到合約對應工地")
+        ensure_site_scope(actor, payload.site_id)
+    item = ContractRecord(
+        title=payload.title.strip(),
+        contract_type=payload.contract_type.strip() or "其他",
+        party_name=(payload.party_name or "").strip() or None,
+        employee_id=employee.id if employee else None,
+        site_id=payload.site_id,
+        start_date=payload.start_date,
+        expiry_date=payload.expiry_date,
+        amount=payload.amount,
+        drive_url=(payload.drive_url or "").strip() or None,
+        notes=(payload.notes or "").strip() or None,
+        is_active=payload.is_active,
+        created_by_id=actor.id,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="contract", entity_id=item.id,
+        summary=f"新增合約：{item.title}",
+    )
+    return {"message": "合約已新增", "contract": _serialize_contract(session, item)}
+
+
+@router.put("/contracts/{contract_id}/status")
+def update_contract_status(
+    contract_id: int,
+    is_active: bool = Query(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    item = session.get(ContractRecord, contract_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到合約")
+    if item.site_id is not None:
+        ensure_site_scope(actor, item.site_id)
+    item.is_active = is_active
+    item.updated_at = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="status", entity_type="contract", entity_id=item.id,
+        summary=f"{'啟用' if is_active else '停用'}合約：{item.title}",
+    )
+    return {"message": "合約狀態已更新", "contract": _serialize_contract(session, item)}
+
+
+@router.get("/certificates")
+def list_certificates(
+    employee_code: Optional[str] = Query(default=None),
+    keyword: Optional[str] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(CertificateRecord).order_by(CertificateRecord.expiry_date, CertificateRecord.id.desc())
+    if not include_inactive:
+        statement = statement.where(CertificateRecord.is_active.is_(True))
+    if actor.role == Role.site_manager:
+        scoped_ids = [item.id for item in _employees_for_actor(session, actor) if item.id is not None]
+        statement = statement.where(CertificateRecord.employee_id.in_(scoped_ids or [-1]))
+    elif actor.role == Role.employee:
+        statement = statement.where(CertificateRecord.employee_id == actor.id)
+    if employee_code:
+        employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+        statement = statement.where(CertificateRecord.employee_id == (employee.id if employee else -1))
+    rows = session.exec(statement).all()
+    term = (keyword or "").strip().lower()
+    if term:
+        rows = [
+            item for item in rows
+            if term in " ".join([item.name or "", item.certificate_no or "", item.notes or ""]).lower()
+        ]
+    return [_serialize_certificate(session, item) for item in rows]
+
+
+@router.post("/certificates", status_code=status.HTTP_201_CREATED)
+def create_certificate(
+    payload: CertificateCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    employee = session.exec(
+        select(Employee).where(Employee.employee_code == payload.employee_code.strip())
+    ).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到證照對應員工")
+    ensure_employee_scope(actor, employee)
+    if payload.expiry_date and payload.issued_date and payload.expiry_date < payload.issued_date:
+        raise HTTPException(status_code=400, detail="證照到期日不可早於發證日")
+    item = CertificateRecord(
+        employee_id=employee.id,
+        name=payload.name.strip(),
+        certificate_no=(payload.certificate_no or "").strip() or None,
+        issued_date=payload.issued_date,
+        expiry_date=payload.expiry_date,
+        drive_url=(payload.drive_url or "").strip() or None,
+        notes=(payload.notes or "").strip() or None,
+        is_active=payload.is_active,
+        created_by_id=actor.id,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="certificate", entity_id=item.id,
+        summary=f"新增證照：{employee.name}｜{item.name}",
+    )
+    return {"message": "證照已新增", "certificate": _serialize_certificate(session, item)}
+
+
+@router.put("/certificates/{certificate_id}/status")
+def update_certificate_status(
+    certificate_id: int,
+    is_active: bool = Query(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    item = session.get(CertificateRecord, certificate_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到證照")
+    employee = session.get(Employee, item.employee_id)
+    if employee:
+        ensure_employee_scope(actor, employee)
+    item.is_active = is_active
+    item.updated_at = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="status", entity_type="certificate", entity_id=item.id,
+        summary=f"{'啟用' if is_active else '停用'}證照：{item.name}",
+    )
+    return {"message": "證照狀態已更新", "certificate": _serialize_certificate(session, item)}
+
+
 @router.post("/employees", status_code=status.HTTP_201_CREATED)
 def create_employee(
     payload: EmployeeCreate,
@@ -1191,6 +1433,140 @@ async def apply_reassignment(
         )
 
     return {"message": "候補人員已套用到工作安排", **result}
+
+
+@router.get("/calendar")
+def list_calendar_events(
+    start_date: Optional[date] = Query(default=None),
+    end_date: Optional[date] = Query(default=None),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    """提供後台月曆所需的統一事件，不改寫任何原始派工或考勤資料。"""
+    first_day = start_date or date.today().replace(day=1)
+    last_day = end_date or (first_day.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    if last_day < first_day or (last_day - first_day).days > 62:
+        raise HTTPException(status_code=422, detail="行事曆查詢範圍最多 63 天")
+
+    employees = _employees_for_actor(session, actor)
+    employee_ids = {item.id for item in employees if item.id is not None}
+    worksite_ids = {item.id for item in _worksites_for_actor(session, actor) if item.id is not None}
+    events: list[dict] = []
+
+    assignments = session.exec(
+        select(WorkAssignment).where(
+            WorkAssignment.work_date >= first_day,
+            WorkAssignment.work_date <= last_day,
+        ).order_by(WorkAssignment.work_date, WorkAssignment.id)
+    ).all()
+    for assignment in assignments:
+        members = session.exec(
+            select(AssignmentMember).where(AssignmentMember.assignment_id == assignment.id)
+        ).all()
+        member_ids = {item.employee_id for item in members}
+        visible = (
+            actor.role in {Role.owner, Role.admin}
+            or assignment.site_id in worksite_ids
+            or bool(member_ids & employee_ids)
+        )
+        if not visible:
+            continue
+        site = session.get(Worksite, assignment.site_id)
+        supervisor = session.get(Employee, assignment.supervisor_id) if assignment.supervisor_id else None
+        events.append({
+            "id": f"assignment-{assignment.id}",
+            "type": "assignment",
+            "date": assignment.work_date.isoformat(),
+            "title": assignment.work_item,
+            "subtitle": site.name if site else "未指定工地",
+            "site_name": site.name if site else None,
+            "start_time": assignment.start_time.isoformat() if assignment.start_time else None,
+            "end_time": assignment.end_time.isoformat() if assignment.end_time else None,
+            "status": assignment.status.value if hasattr(assignment.status, "value") else assignment.status,
+            "detail": f"主管：{supervisor.name if supervisor else '-'}｜人員：{len(member_ids)} 人",
+        })
+
+    leaves = session.exec(
+        select(LeaveRequest).where(
+            LeaveRequest.start_date <= last_day,
+            LeaveRequest.end_date >= first_day,
+            LeaveRequest.employee_id.in_(employee_ids or [-1]),
+        ).order_by(LeaveRequest.start_date)
+    ).all()
+    for leave in leaves:
+        employee = session.get(Employee, leave.employee_id)
+        cursor = max(leave.start_date, first_day)
+        until = min(leave.end_date, last_day)
+        while cursor <= until:
+            events.append({
+                "id": f"leave-{leave.id}-{cursor.isoformat()}",
+                "type": "leave",
+                "date": cursor.isoformat(),
+                "title": f"{employee.name if employee else '員工'}｜{leave.leave_type}",
+                "subtitle": "請假",
+                "status": leave.status.value if hasattr(leave.status, "value") else leave.status,
+                "detail": leave.reason,
+            })
+            cursor += timedelta(days=1)
+
+    meetings = session.exec(
+        select(MeetingRecord).where(
+            MeetingRecord.meeting_at >= datetime.combine(first_day, time.min),
+            MeetingRecord.meeting_at < datetime.combine(last_day + timedelta(days=1), time.min),
+        ).order_by(MeetingRecord.meeting_at)
+    ).all()
+    for meeting in meetings:
+        owner = session.get(Employee, meeting.owner_id) if meeting.owner_id else None
+        if actor.role not in {Role.owner, Role.admin} and actor.id not in {
+            item.id for item in employees if item.employee_code in (meeting.attendee_codes or [])
+        }:
+            continue
+        events.append({
+            "id": f"meeting-{meeting.id}",
+            "type": "meeting",
+            "date": meeting.meeting_at.date().isoformat(),
+            "title": meeting.title,
+            "subtitle": meeting.location or "會議",
+            "start_time": meeting.meeting_at.strftime("%H:%M"),
+            "status": meeting.status.value if hasattr(meeting.status, "value") else meeting.status,
+            "detail": f"負責人：{owner.name if owner else '-'}｜出席：{len(meeting.attendee_codes or [])} 人",
+        })
+
+    inspections = session.exec(
+        select(ForkliftInspection).where(
+            ForkliftInspection.inspection_date >= first_day,
+            ForkliftInspection.inspection_date <= last_day,
+        ).order_by(ForkliftInspection.inspection_date)
+    ).all()
+    for inspection in inspections:
+        if actor.role == Role.site_manager and inspection.site_id != actor.home_site_id:
+            continue
+        if actor.role == Role.employee and inspection.operator_id != actor.id:
+            continue
+        forklift = session.get(Forklift, inspection.forklift_id)
+        site = session.get(Worksite, inspection.site_id) if inspection.site_id else None
+        operator = session.get(Employee, inspection.operator_id)
+        events.append({
+            "id": f"inspection-{inspection.id}",
+            "type": "inspection",
+            "date": inspection.inspection_date.isoformat(),
+            "title": f"點檢｜{forklift.forklift_code if forklift else '-'}",
+            "subtitle": site.name if site else "未指定工地",
+            "status": "正常" if inspection.all_passed else "異常",
+            "detail": f"操作員：{operator.name if operator else '-'}",
+        })
+
+    return {
+        "start_date": first_day.isoformat(),
+        "end_date": last_day.isoformat(),
+        "events": events,
+        "summary": {
+            "assignment": sum(item["type"] == "assignment" for item in events),
+            "leave": sum(item["type"] == "leave" for item in events),
+            "meeting": sum(item["type"] == "meeting" for item in events),
+            "inspection": sum(item["type"] == "inspection" for item in events),
+        },
+    }
 
 
 @router.get("/attendance")
@@ -2629,6 +3005,125 @@ def export_forklift_inspections_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/forklift-attendance/stats")
+def forklift_attendance_stats(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    site_id: Optional[int] = Query(default=None),
+    forklift_id: Optional[int] = Query(default=None),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    """依每日點檢、定位打卡與派工彙整堆高機出勤，原始紀錄完全保留。"""
+    first_day = date_from or date.today().replace(day=1)
+    last_day = date_to or date.today()
+    if last_day < first_day:
+        raise HTTPException(status_code=422, detail="起始日期不可晚於結束日期")
+    if (last_day - first_day).days > 366:
+        raise HTTPException(status_code=422, detail="統計區間最多 367 天")
+    if site_id is not None:
+        ensure_site_scope(actor, site_id)
+
+    statement = select(ForkliftInspection).where(
+        ForkliftInspection.inspection_date >= first_day,
+        ForkliftInspection.inspection_date <= last_day,
+    )
+    if site_id is not None:
+        statement = statement.where(ForkliftInspection.site_id == site_id)
+    if forklift_id is not None:
+        statement = statement.where(ForkliftInspection.forklift_id == forklift_id)
+    if actor.role == Role.site_manager:
+        statement = statement.where(ForkliftInspection.site_id == actor.home_site_id)
+    if actor.role == Role.employee:
+        statement = statement.where(ForkliftInspection.operator_id == actor.id)
+    inspections = session.exec(
+        statement.order_by(ForkliftInspection.inspection_date, ForkliftInspection.forklift_id)
+    ).all()
+
+    operator_ids = {item.operator_id for item in inspections}
+    attendance_events = session.exec(
+        select(AttendanceEvent).where(
+            AttendanceEvent.employee_id.in_(operator_ids or [-1]),
+            AttendanceEvent.happened_at >= datetime.combine(first_day, time.min),
+            AttendanceEvent.happened_at < datetime.combine(last_day + timedelta(days=1), time.min),
+        )
+    ).all()
+    event_groups: dict[tuple[int, date, Optional[int]], list[AttendanceEvent]] = {}
+    for event in attendance_events:
+        key = (event.employee_id, event.happened_at.date(), event.site_id)
+        event_groups.setdefault(key, []).append(event)
+
+    assignments = session.exec(
+        select(WorkAssignment).where(
+            WorkAssignment.work_date >= first_day,
+            WorkAssignment.work_date <= last_day,
+        )
+    ).all()
+    assignment_counts: dict[tuple[date, Optional[int]], int] = {}
+    for assignment in assignments:
+        equipment = (assignment.equipment or "") + " " + (assignment.vehicle or "")
+        if "堆高機" not in equipment and "叉車" not in equipment and "forklift" not in equipment.lower():
+            continue
+        key = (assignment.work_date, assignment.site_id)
+        assignment_counts[key] = assignment_counts.get(key, 0) + 1
+
+    rows = []
+    for inspection in inspections:
+        forklift = session.get(Forklift, inspection.forklift_id)
+        operator = session.get(Employee, inspection.operator_id)
+        site = session.get(Worksite, inspection.site_id) if inspection.site_id else None
+        group = event_groups.get((inspection.operator_id, inspection.inspection_date, inspection.site_id), [])
+        check_ins = [item for item in group if item.event_type in {"上班打卡", "到達工地"}]
+        check_outs = [item for item in group if item.event_type in {"下班打卡", "離開工地"}]
+        first_in = min((item.happened_at for item in check_ins), default=None)
+        last_out = max((item.happened_at for item in check_outs), default=None)
+        work_hours = None
+        if first_in and last_out and last_out >= first_in:
+            work_hours = round((last_out - first_in).total_seconds() / 3600, 2)
+        rows.append({
+            "date": inspection.inspection_date.isoformat(),
+            "forklift_id": inspection.forklift_id,
+            "forklift_code": forklift.forklift_code if forklift else "-",
+            "forklift_model": forklift.model if forklift else None,
+            "site_id": inspection.site_id,
+            "site_name": site.name if site else "未指定工地",
+            "operator_name": operator.name if operator else "-",
+            "inspection_status": "正常" if inspection.all_passed else "異常",
+            "check_in": first_in.isoformat() if first_in else None,
+            "check_out": last_out.isoformat() if last_out else None,
+            "work_hours": work_hours,
+            "assignment_count": assignment_counts.get((inspection.inspection_date, inspection.site_id), 0),
+        })
+
+    total_hours = round(sum(item["work_hours"] or 0 for item in rows), 2)
+    by_forklift: dict[str, dict] = {}
+    for row in rows:
+        summary = by_forklift.setdefault(row["forklift_code"], {
+            "forklift_code": row["forklift_code"],
+            "model": row["forklift_model"],
+            "days": 0,
+            "hours": 0,
+            "abnormal": 0,
+        })
+        summary["days"] += 1
+        summary["hours"] = round(summary["hours"] + (row["work_hours"] or 0), 2)
+        summary["abnormal"] += row["inspection_status"] == "異常"
+    return {
+        "date_from": first_day.isoformat(),
+        "date_to": last_day.isoformat(),
+        "rows": rows,
+        "summary": {
+            "records": len(rows),
+            "active_days": len({item["date"] for item in rows}),
+            "total_hours": total_hours,
+            "check_in_count": sum(bool(item["check_in"]) for item in rows),
+            "check_out_count": sum(bool(item["check_out"]) for item in rows),
+            "abnormal_count": sum(item["inspection_status"] == "異常" for item in rows),
+        },
+        "by_forklift": list(by_forklift.values()),
+    }
 
 
 @router.put("/forklifts/{forklift_id}/status")
