@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import JSON, Column, Text
+from sqlalchemy import JSON, Column, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -328,6 +328,23 @@ class WorkHourImportLog(SQLModel, table=True):
     drive_url: str
     imported_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class WorksiteJournalHours(SQLModel, table=True):
+    """每日各工地確認後的計價工時，供單日與整月計價匯入共用。"""
+
+    __table_args__ = (
+        UniqueConstraint("work_date", "worksite_id", name="uq_worksite_journal_hours_date_site"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_date: date = Field(index=True)
+    worksite_id: int = Field(foreign_key="worksite.id", index=True)
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    support_hours: float = 0
+    updated_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class GroupTextLog(SQLModel, table=True):

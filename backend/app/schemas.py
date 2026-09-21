@@ -176,6 +176,14 @@ class CostHourImportRequest(BaseModel):
     support_hours: float = Field(default=0, ge=0, le=10000)
 
 
+class WorksiteJournalHoursUpdate(BaseModel):
+    worksite_id: int
+    work_date: date
+    normal_hours: float = Field(ge=0, le=10000)
+    overtime_hours: float = Field(default=0, ge=0, le=10000)
+    support_hours: float = Field(default=0, ge=0, le=10000)
+
+
 class CostMonthHourOverride(BaseModel):
     """整月預覽後，使用者手動調整的單日工時（正常／加班／支援，小時）。"""
 

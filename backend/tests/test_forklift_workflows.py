@@ -21,6 +21,7 @@ from app.models import (
     AdminAuditLog, AssignmentMember, AttendanceEvent, DeliveryStatus, Employee, Forklift,
     ForkliftInspection, ForkliftStatus, GroupTextLog, NotificationBatch, NotificationDelivery,
     PhotoUploadLog, Role, WorkAssignment, WorkReportEvent, Worksite,
+    WorksiteJournalHours,
 )
 from app.services import forklift_service as fs
 from app.services.bootstrap import _ensure_forklifts
@@ -337,6 +338,42 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(journal["inspections"][0]["forklift_code"], self.vehicle.forklift_code)
         self.assertEqual(journal["inspections"][0]["forklift_model"], self.vehicle.model)
         self.assertEqual(journal["photos"][0]["file_name"], "work.jpg")
+        self.assertEqual(journal["pricing_hours"]["normal_hours"], 8)
+        self.assertEqual(journal["pricing_hours"]["forklift_count"], 1)
+        self.assertEqual(journal["pricing_hours"]["source"], "auto")
+
+    def test_worksite_journal_hours_save_and_reload_for_pricing(self):
+        client = self.api_client()
+        response = client.put("/api/worksite-journals/hours", json={
+            "worksite_id": self.site.id,
+            "work_date": "2026-09-08",
+            "normal_hours": 12,
+            "overtime_hours": 2.5,
+            "support_hours": 1,
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["pricing_hours"]["source"], "saved")
+
+        saved = self.session.exec(select(WorksiteJournalHours)).one()
+        self.assertEqual(saved.normal_hours, 12)
+        self.assertEqual(saved.overtime_hours, 2.5)
+        journal = client.get("/api/worksite-journals?target_date=2026-09-08").json()["sites"][0]
+        self.assertEqual(journal["pricing_hours"]["normal_hours"], 12)
+        self.assertEqual(journal["pricing_hours"]["overtime_hours"], 2.5)
+        self.assertEqual(journal["pricing_hours"]["support_hours"], 1)
+        self.assertEqual(journal["pricing_hours"]["source"], "saved")
+
+    def test_worksite_journal_ui_uses_dropdown_and_links_hours_to_cost_import(self):
+        template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="journalWorksite"', template)
+        self.assertIn('onchange="changeJournalWorksite()"', template)
+        self.assertIn('class="journal-hours-panel"', template)
+        self.assertIn('saveJournalHours(${siteIndex}, true)', template)
+        self.assertIn('function syncJournalHoursToCostImport', template)
+        self.assertIn('document.getElementById("costImportNormal").value = hours.normal_hours', template)
+        self.assertIn('document.getElementById("costImportOvertime").value = hours.overtime_hours', template)
+        self.assertIn('document.getElementById("costImportSupport").value = hours.support_hours', template)
+        self.assertIn('matchCostTargetForWorksite', template)
 
     def test_sign_slip_matches_editable_rental_form_without_private_event_details(self):
         template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text(encoding="utf-8")

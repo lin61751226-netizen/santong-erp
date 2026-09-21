@@ -38,6 +38,7 @@ from app.models import (
     MasterOption,
     ManagedDocument,
     WorkHourImportLog,
+    WorksiteJournalHours,
     MeetingRecord,
     NotificationCategory,
     NotificationBatch,
@@ -67,6 +68,7 @@ from app.schemas import (
     WorksiteLocationUpdate,
     CostHourImportRequest,
     CostMonthImportRequest,
+    WorksiteJournalHoursUpdate,
     CertificateCreate,
     ContractCreate,
 )
@@ -2297,7 +2299,7 @@ def _month_bounds(year: int, month: int):
 
 
 def _gather_month_journal(session: Session, first_day: date, last_day: date) -> dict:
-    """彙整整月每日每工地的派工車輛文字與點檢車型（邏輯同單日工作日誌）。"""
+    """彙整整月每日每工地的派工、點檢與已保存日誌工時。"""
     assignments = session.exec(
         select(WorkAssignment).where(
             WorkAssignment.work_date >= first_day,
@@ -2310,11 +2312,18 @@ def _gather_month_journal(session: Session, first_day: date, last_day: date) -> 
             ForkliftInspection.inspection_date <= last_day,
         )
     ).all()
+    saved_hours = session.exec(
+        select(WorksiteJournalHours).where(
+            WorksiteJournalHours.work_date >= first_day,
+            WorksiteJournalHours.work_date <= last_day,
+        )
+    ).all()
     forklifts = {row.id: row for row in session.exec(select(Forklift)).all() if row.id is not None}
     buckets: dict[tuple, dict] = {}
     for assignment in assignments:
         bucket = buckets.setdefault(
-            (assignment.site_id, assignment.work_date), {"assigned": [], "inspected": []}
+            (assignment.site_id, assignment.work_date),
+            {"assigned": [], "inspected": [], "saved_hours": None},
         )
         for text in (assignment.vehicle, assignment.equipment):
             if text:
@@ -2324,9 +2333,16 @@ def _gather_month_journal(session: Session, first_day: date, last_day: date) -> 
         model = getattr(forklift, "model", None) if forklift else None
         if model:
             bucket = buckets.setdefault(
-                (inspection.site_id, inspection.inspection_date), {"assigned": [], "inspected": []}
+                (inspection.site_id, inspection.inspection_date),
+                {"assigned": [], "inspected": [], "saved_hours": None},
             )
             bucket["inspected"].append(str(model))
+    for item in saved_hours:
+        bucket = buckets.setdefault(
+            (item.worksite_id, item.work_date),
+            {"assigned": [], "inspected": [], "saved_hours": None},
+        )
+        bucket["saved_hours"] = item
     return buckets
 
 
@@ -2397,7 +2413,30 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
             if bucket:
                 units = count_forklift_units(bucket["assigned"], bucket["inspected"])
             forklift_count = units["total"]
-            incoming_normal = normal_hours_from_units(units)
+            saved_hours = bucket.get("saved_hours") if bucket else None
+            incoming_normal = (
+                float(saved_hours.normal_hours)
+                if saved_hours is not None
+                else normal_hours_from_units(units)
+            )
+            incoming_overtime = (
+                float(saved_hours.overtime_hours)
+                if saved_hours is not None
+                else row.overtime_hours
+            )
+            incoming_support = (
+                float(saved_hours.support_hours)
+                if saved_hours is not None
+                else row.support_hours
+            )
+            has_saved_hours = saved_hours is not None and any(
+                value > 0
+                for value in (
+                    saved_hours.normal_hours,
+                    saved_hours.overtime_hours,
+                    saved_hours.support_hours,
+                )
+            )
             override = override_map.get((label, row.day))
             has_override = override is not None
 
@@ -2405,7 +2444,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                 action = "write"
             elif matched_site is None:
                 action = "no_worksite"
-            elif forklift_count == 0:
+            elif forklift_count == 0 and not has_saved_hours:
                 action = "empty"
             elif row.normal_hours is not None and not overwrite:
                 action = "skipped_exists"
@@ -2419,8 +2458,8 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
             else:
                 effective_n = row.normal_hours
 
-            effective_o = override['overtime_hours'] if has_override else row.overtime_hours
-            effective_s = override['support_hours'] if has_override else row.support_hours
+            effective_o = override['overtime_hours'] if has_override else incoming_overtime
+            effective_s = override['support_hours'] if has_override else incoming_support
 
             if action == "write":
                 counters["write"] += 1
@@ -2459,6 +2498,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                     "support_hours": row.support_hours,
                 },
                 "incoming_normal": incoming_normal,
+                "journal_hours_source": "saved" if saved_hours is not None else "auto",
                 "action": action,
                 "overridden": has_override,
                 "hours": {
@@ -2655,6 +2695,62 @@ async def apply_cost_month_imports(
     }
 
 
+@router.put("/worksite-journals/hours")
+async def save_worksite_journal_hours(
+    payload: WorksiteJournalHoursUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    worksite = session.get(Worksite, payload.worksite_id)
+    if not worksite or not worksite.is_active:
+        raise HTTPException(status_code=404, detail="找不到啟用中的工地")
+    ensure_site_scope(actor, payload.worksite_id)
+    item = session.exec(
+        select(WorksiteJournalHours).where(
+            WorksiteJournalHours.work_date == payload.work_date,
+            WorksiteJournalHours.worksite_id == payload.worksite_id,
+        )
+    ).first()
+    action = "update"
+    if item is None:
+        action = "create"
+        item = WorksiteJournalHours(
+            work_date=payload.work_date,
+            worksite_id=payload.worksite_id,
+        )
+    item.normal_hours = payload.normal_hours
+    item.overtime_hours = payload.overtime_hours
+    item.support_hours = payload.support_hours
+    item.updated_by_id = actor.id
+    item.updated_at = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    _write_admin_audit(
+        session,
+        actor,
+        action=action,
+        entity_type="worksite_journal_hours",
+        entity_id=item.id,
+        summary=(
+            f"{payload.work_date.isoformat()} {worksite.name} 日誌工時："
+            f"正常 {payload.normal_hours}、加班 {payload.overtime_hours}、支援 {payload.support_hours}"
+        ),
+    )
+    backup_result = await google_drive_worklog_service.backup_database()
+    return {
+        "message": "工作日誌工時已儲存並連動計價匯入",
+        "pricing_hours": {
+            "normal_hours": item.normal_hours,
+            "overtime_hours": item.overtime_hours,
+            "support_hours": item.support_hours,
+            "source": "saved",
+            "updated_at": item.updated_at.isoformat(),
+        },
+        "cloud_backup_status": backup_result.get("status"),
+    }
+
+
 @router.get("/worksite-journals")
 def list_worksite_journals(
     target_date: Optional[date] = Query(default=None),
@@ -2697,6 +2793,14 @@ def list_worksite_journals(
     photo_logs = session.exec(photo_statement.order_by(PhotoUploadLog.uploaded_at)).all()
     assignments = session.exec(assignment_statement.order_by(WorkAssignment.start_time, WorkAssignment.id)).all()
     inspections = session.exec(inspection_statement.order_by(ForkliftInspection.created_at)).all()
+    saved_hours_statement = select(WorksiteJournalHours).where(
+        WorksiteJournalHours.work_date == journal_date
+    )
+    if allowed_site_id:
+        saved_hours_statement = saved_hours_statement.where(
+            WorksiteJournalHours.worksite_id == allowed_site_id
+        )
+    saved_hours = session.exec(saved_hours_statement).all()
 
     employees = {row.id: row for row in session.exec(select(Employee)).all() if row.id is not None}
     worksites = {row.id: row for row in session.exec(select(Worksite)).all() if row.id is not None}
@@ -2793,6 +2897,10 @@ def list_worksite_journals(
             "note": photo.note,
         })
 
+    saved_hours_by_site = {item.worksite_id: item for item in saved_hours}
+    for site_id in saved_hours_by_site:
+        bucket_for(site_id)
+
     result = []
     for journal in buckets.values():
         journal["counts"] = {
@@ -2801,6 +2909,32 @@ def list_worksite_journals(
             "attendance": len(journal["attendance"]),
             "inspections": len(journal["inspections"]),
             "photos": len(journal["photos"]),
+        }
+        unit_counts = count_forklift_units(
+            [
+                str(value)
+                for assignment in journal["assignments"]
+                for value in (assignment.get("vehicle"), assignment.get("equipment"))
+                if value
+            ],
+            [
+                str(inspection["forklift_model"])
+                for inspection in journal["inspections"]
+                if inspection.get("forklift_model")
+            ],
+        )
+        saved = saved_hours_by_site.get(journal["site_id"])
+        journal["pricing_hours"] = {
+            "normal_hours": (
+                float(saved.normal_hours)
+                if saved is not None
+                else float(normal_hours_from_units(unit_counts))
+            ),
+            "overtime_hours": float(saved.overtime_hours) if saved is not None else 0.0,
+            "support_hours": float(saved.support_hours) if saved is not None else 0.0,
+            "forklift_count": unit_counts["total"],
+            "source": "saved" if saved is not None else "auto",
+            "updated_at": saved.updated_at.isoformat() if saved is not None else None,
         }
         result.append(journal)
     result.sort(key=lambda item: (item["site_id"] is None, item["site_name"]))

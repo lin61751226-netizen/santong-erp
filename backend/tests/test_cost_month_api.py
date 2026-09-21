@@ -14,7 +14,7 @@ from app.deps import get_current_actor
 from app.main import app
 from app.models import (
     AdminAuditLog, Employee, Forklift, ForkliftInspection, ManagedDocument,
-    Role, WorkAssignment, WorkHourImportLog, Worksite,
+    Role, WorkAssignment, WorkHourImportLog, Worksite, WorksiteJournalHours,
 )
 from app.routes import admin as admin_routes
 
@@ -209,6 +209,28 @@ class TestCostMonthApi:
         assert label_45["summary"]["invoice_tax"] == 1000
         assert label_45["summary"]["invoice_taxed"] == 21000
         assert plan["invoice"]["taxed"] == 21000
+
+    def test_saved_journal_hours_flow_into_month_pricing(self):
+        self.session.add(WorksiteJournalHours(
+            work_date=date(2026, 9, 1), worksite_id=self.site_45.id,
+            normal_hours=10, overtime_hours=3, support_hours=2,
+            updated_by_id=self.admin.id,
+        ))
+        self.session.commit()
+
+        response = self.client.post("/api/cost-hour-imports/month-preview", json={
+            "document_id": self.document.id, "year": 2026, "month": 9, "overwrite": False,
+        })
+        assert response.status_code == 200, response.text
+        label_45 = next(item for item in response.json()["labels"] if item["label"] == "45")
+        day1 = next(day for day in label_45["days"] if day["date"] == "2026-09-01")
+        assert day1["journal_hours_source"] == "saved"
+        assert day1["incoming_normal"] == 10
+        assert day1["hours"] == {
+            "normal_hours": 10,
+            "overtime_hours": 3,
+            "support_hours": 2,
+        }
 
     def test_month_apply_with_overrides_writes_overtime(self):
         response = self.client.post("/api/cost-hour-imports/month", json={

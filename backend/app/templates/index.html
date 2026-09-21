@@ -120,7 +120,11 @@
         </div>
         <div class="button-row">
           <input id="journalDate" type="date" aria-label="工作日誌日期">
+          <select id="journalWorksite" class="journal-site-select" aria-label="選擇工作日誌工地" onchange="changeJournalWorksite()" disabled>
+            <option value="">整理後選擇工地</option>
+          </select>
           <button type="button" onclick="loadWorksiteJournals()">整理工作日誌</button>
+          <button type="button" class="button-secondary" onclick="printSelectedJournalSignSlip()">製作選定工地簽單</button>
           <button type="button" class="button-secondary" onclick="printWorksiteSignSlips(-1)">製作全部工地簽單</button>
         </div>
       </div>
@@ -991,6 +995,7 @@
       equipmentOptions: [],
       forkliftOptions: [],
       worksiteJournals: null,
+      selectedJournalSiteKey: null,
       managedDocuments: [],
       costHourPreview: null,
       costMonthPreview: null,
@@ -1098,10 +1103,93 @@
       return !/^(好|好的|收到|了解|ok|okay|辛苦了|謝謝|早安|午安|晚安)[!！。.]?$/i.test(text);
     }
 
+    function journalSiteKey(site) {
+      return site?.site_id == null ? "__unknown__" : String(site.site_id);
+    }
+
+    function journalHoursFor(site) {
+      if (!site._pricingHours) {
+        const source = site.pricing_hours || {};
+        site._pricingHours = {
+          normal_hours: Number(source.normal_hours || 0),
+          overtime_hours: Number(source.overtime_hours || 0),
+          support_hours: Number(source.support_hours || 0),
+          forklift_count: Number(source.forklift_count || 0),
+          source: source.source || "auto",
+          updated_at: source.updated_at || null,
+        };
+      }
+      return site._pricingHours;
+    }
+
+    function selectedJournalSiteIndex() {
+      const sites = state.worksiteJournals?.sites || [];
+      return sites.findIndex(site => journalSiteKey(site) === state.selectedJournalSiteKey);
+    }
+
+    function renderSelectedWorksiteJournal() {
+      const cards = document.getElementById("journalCards");
+      const siteIndex = selectedJournalSiteIndex();
+      const site = state.worksiteJournals?.sites?.[siteIndex];
+      if (!site) {
+        cards.innerHTML = '<div class="journal-empty">請先從上方選擇工地。</div>';
+        return;
+      }
+      const assignmentRows = (site.assignments || []).map((item, itemIndex) => `
+        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected !== false ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'assignments', ${itemIndex}, this.checked)"><span>${escapeHtml(item.start_time || "全天")}</span></label></time><strong>${escapeHtml(item.supervisor_name || "未指定主管")}</strong><span>${escapeHtml(item.work_item)}｜人員：${escapeHtml((item.member_names || []).join("、") || "未指定")}${item.equipment ? `｜機具：${escapeHtml(item.equipment)}` : ""}</span></li>
+      `).join("") || '<li class="muted">尚無當日派工</li>';
+      const groupTexts = (site.group_texts || []).map((item, itemIndex) => `
+        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'group_texts', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.sent_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
+      `).join("") || '<li class="muted">尚無群組文字</li>';
+      const attendance = (site.attendance || []).map((item, itemIndex) => {
+        const mapLink = item.latitude != null && item.longitude != null
+          ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(item.latitude)},${encodeURIComponent(item.longitude)}" target="_blank" rel="noopener">查看定位</a>`
+          : "";
+        return `<li><time><label class="journal-choice"><input type="checkbox" ${item._selected !== false ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'attendance', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.happened_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.event_type)} ${mapLink}</span></li>`;
+      }).join("") || '<li class="muted">尚無打卡</li>';
+      const inspections = (site.inspections || []).map((item, itemIndex) => `
+        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected !== false ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'inspections', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.created_at))}</span></label></time><strong>${escapeHtml(item.operator_name)}</strong><span>${escapeHtml(item.forklift_code)}｜${item.all_passed ? "全部正常" : "有異常"}${item.notes ? `｜${escapeHtml(item.notes)}` : ""}</span></li>
+      `).join("") || '<li class="muted">尚無點檢</li>';
+      const photos = (site.photos || []).map((item, itemIndex) => `
+        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected !== false ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'photos', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.uploaded_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">${escapeHtml(item.file_name)}</a></li>
+      `).join("") || '<li class="muted">尚無工作照片</li>';
+      const hours = journalHoursFor(site);
+      const sourceText = hours.source === "saved" ? "已儲存工時" : `依 ${hours.forklift_count} 台堆高機 × 8 小時自動估算`;
+      const canSaveHours = site.site_id != null;
+      cards.innerHTML = `<article class="journal-card">
+        <div class="journal-card-heading">
+          <div><span class="eyebrow">工地日誌</span><h3>${escapeHtml(site.site_name)}</h3></div>
+          <div class="button-row"><div class="journal-count">${site.counts.assignments + site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div><button type="button" class="button-secondary button-compact" onclick="printWorksiteSignSlips(${siteIndex})">製作此工地簽單</button></div>
+        </div>
+        <div class="journal-hours-panel">
+          <div class="journal-hours-title"><strong>連動計價工時</strong><span id="journalHourState-${siteIndex}">${escapeHtml(sourceText)}</span></div>
+          <label>正常工時<input type="number" min="0" max="10000" step="0.5" value="${hours.normal_hours}" oninput="updateJournalHour(${siteIndex}, 'normal_hours', this.value)"></label>
+          <label>加班工時<input type="number" min="0" max="10000" step="0.5" value="${hours.overtime_hours}" oninput="updateJournalHour(${siteIndex}, 'overtime_hours', this.value)"></label>
+          <label>支援工時<input type="number" min="0" max="10000" step="0.5" value="${hours.support_hours}" oninput="updateJournalHour(${siteIndex}, 'support_hours', this.value)"></label>
+          <div class="button-row"><button type="button" class="button-secondary button-compact" onclick="saveJournalHours(${siteIndex}, false)" ${canSaveHours ? "" : "disabled"}>儲存工時</button><button type="button" class="button-compact" onclick="saveJournalHours(${siteIndex}, true)" ${canSaveHours ? "" : "disabled"}>儲存並匯入計價</button></div>
+        </div>
+        <details open><summary>當日派工 <span>${site.counts.assignments}</span></summary><ul class="journal-list">${assignmentRows}</ul></details>
+        <details open><summary>群組文字 <span>${site.counts.group_texts}</span></summary><ul class="journal-list">${groupTexts}</ul></details>
+        <details open><summary>打卡人員 <span>${site.counts.attendance}</span></summary><ul class="journal-list">${attendance}</ul></details>
+        <details open><summary>堆高機點檢 <span>${site.counts.inspections}</span></summary><ul class="journal-list">${inspections}</ul></details>
+        <details open><summary>工作照片 <span>${site.counts.photos}</span></summary><ul class="journal-list">${photos}</ul></details>
+      </article>`;
+    }
+
+    async function changeJournalWorksite(loadTargets = false) {
+      const select = document.getElementById("journalWorksite");
+      state.selectedJournalSiteKey = select.value || null;
+      renderSelectedWorksiteJournal();
+      const siteIndex = selectedJournalSiteIndex();
+      if (siteIndex >= 0) await syncJournalHoursToCostImport(siteIndex, loadTargets);
+    }
+
     async function loadWorksiteJournals() {
       const targetDate = document.getElementById("journalDate").value || todayString();
       const feedback = document.getElementById("journalFeedback");
       const cards = document.getElementById("journalCards");
+      const siteSelect = document.getElementById("journalWorksite");
+      const previousSiteKey = state.selectedJournalSiteKey;
       feedback.textContent = "正在合併群組文字、打卡、點檢與照片。";
       try {
         const data = await api(`/api/worksite-journals?target_date=${encodeURIComponent(targetDate)}`);
@@ -1113,6 +1201,7 @@
                 : true;
             });
           });
+          journalHoursFor(site);
         });
         state.worksiteJournals = data;
         const totals = data.sites.reduce((sum, site) => {
@@ -1123,46 +1212,76 @@
           sum.photos += site.counts.photos;
           return sum;
         }, {assignments: 0, texts: 0, attendance: 0, inspections: 0, photos: 0});
-        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜派工 ${totals.assignments} 筆｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張。取消勾選只影響簽單，原始資料不會刪除。`;
+        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜派工 ${totals.assignments} 筆｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張。請從下拉選單切換工地；取消勾選只影響簽單。`;
         if (!data.sites.length) {
+          siteSelect.disabled = true;
+          siteSelect.innerHTML = '<option value="">所選日期沒有工地日誌</option>';
+          state.selectedJournalSiteKey = null;
           cards.innerHTML = '<div class="journal-empty">所選日期尚無可整理的資料。</div>';
           return;
         }
-        cards.innerHTML = data.sites.map((site, siteIndex) => {
-          const assignmentRows = (site.assignments || []).map((item, itemIndex) => `
-            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'assignments', ${itemIndex}, this.checked)"><span>${escapeHtml(item.start_time || "全天")}</span></label></time><strong>${escapeHtml(item.supervisor_name || "未指定主管")}</strong><span>${escapeHtml(item.work_item)}｜人員：${escapeHtml((item.member_names || []).join("、") || "未指定")}${item.equipment ? `｜機具：${escapeHtml(item.equipment)}` : ""}</span></li>
-          `).join("") || '<li class="muted">尚無當日派工</li>';
-          const groupTexts = site.group_texts.map((item, itemIndex) => `
-            <li><time><label class="journal-choice"><input type="checkbox" ${item._selected ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'group_texts', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.sent_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
-          `).join("") || '<li class="muted">尚無群組文字</li>';
-          const attendance = site.attendance.map((item, itemIndex) => {
-            const mapLink = item.latitude != null && item.longitude != null
-              ? `<a href="https://www.google.com/maps?q=${encodeURIComponent(item.latitude)},${encodeURIComponent(item.longitude)}" target="_blank" rel="noopener">查看定位</a>`
-              : "";
-            return `<li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'attendance', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.happened_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.event_type)} ${mapLink}</span></li>`;
-          }).join("") || '<li class="muted">尚無打卡</li>';
-          const inspections = site.inspections.map((item, itemIndex) => `
-            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'inspections', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.created_at))}</span></label></time><strong>${escapeHtml(item.operator_name)}</strong><span>${escapeHtml(item.forklift_code)}｜${item.all_passed ? "全部正常" : "有異常"}${item.notes ? `｜${escapeHtml(item.notes)}` : ""}</span></li>
-          `).join("") || '<li class="muted">尚無點檢</li>';
-          const photos = site.photos.map((item, itemIndex) => `
-            <li><time><label class="journal-choice"><input type="checkbox" checked onchange="setJournalSelection(${siteIndex}, 'photos', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.uploaded_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><a href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">${escapeHtml(item.file_name)}</a></li>
-          `).join("") || '<li class="muted">尚無工作照片</li>';
-          return `<article class="journal-card">
-            <div class="journal-card-heading">
-              <div><span class="eyebrow">工地日誌</span><h3>${escapeHtml(site.site_name)}</h3></div>
-              <div class="button-row"><div class="journal-count">${site.counts.assignments + site.counts.group_texts + site.counts.attendance + site.counts.inspections + site.counts.photos} 筆</div><button type="button" class="button-secondary button-compact" onclick="openJournalHourImport(${siteIndex})">匯入工時</button><button type="button" class="button-secondary button-compact" onclick="printWorksiteSignSlips(${siteIndex})">製作此工地簽單</button></div>
-            </div>
-            <details open><summary>當日派工 <span>${site.counts.assignments}</span></summary><ul class="journal-list">${assignmentRows}</ul></details>
-            <details open><summary>群組文字 <span>${site.counts.group_texts}</span></summary><ul class="journal-list">${groupTexts}</ul></details>
-            <details open><summary>打卡人員 <span>${site.counts.attendance}</span></summary><ul class="journal-list">${attendance}</ul></details>
-            <details open><summary>堆高機點檢 <span>${site.counts.inspections}</span></summary><ul class="journal-list">${inspections}</ul></details>
-            <details open><summary>工作照片 <span>${site.counts.photos}</span></summary><ul class="journal-list">${photos}</ul></details>
-          </article>`;
+        siteSelect.disabled = false;
+        siteSelect.innerHTML = data.sites.map(site => {
+          const total = Object.values(site.counts).reduce((sum, value) => sum + Number(value || 0), 0);
+          return `<option value="${escapeAttr(journalSiteKey(site))}">${escapeHtml(site.site_name)}（${total} 筆）</option>`;
         }).join("");
+        state.selectedJournalSiteKey = data.sites.some(site => journalSiteKey(site) === previousSiteKey)
+          ? previousSiteKey
+          : journalSiteKey(data.sites[0]);
+        siteSelect.value = state.selectedJournalSiteKey;
+        await changeJournalWorksite(false);
       } catch (error) {
         feedback.textContent = error.message;
+        siteSelect.disabled = true;
+        siteSelect.innerHTML = '<option value="">讀取失敗</option>';
         cards.innerHTML = "";
       }
+    }
+
+    function updateJournalHour(siteIndex, field, value) {
+      const site = state.worksiteJournals?.sites?.[siteIndex];
+      if (!site) return;
+      const hours = journalHoursFor(site);
+      hours[field] = Math.max(0, Number(value) || 0);
+      hours.source = "edited";
+      const status = document.getElementById(`journalHourState-${siteIndex}`);
+      if (status) status.textContent = "尚未儲存；計價頁已同步目前數字";
+      syncJournalHoursToCostImport(siteIndex, false);
+    }
+
+    async function saveJournalHours(siteIndex, moveToPricing) {
+      const journal = state.worksiteJournals;
+      const site = journal?.sites?.[siteIndex];
+      if (!site?.site_id) return;
+      const hours = journalHoursFor(site);
+      const feedback = document.getElementById("journalFeedback");
+      feedback.textContent = `正在儲存 ${site.site_name} 的計價工時。`;
+      try {
+        const data = await api("/api/worksite-journals/hours", {
+          method: "PUT",
+          body: JSON.stringify({
+            worksite_id: site.site_id,
+            work_date: journal.date,
+            normal_hours: hours.normal_hours,
+            overtime_hours: hours.overtime_hours,
+            support_hours: hours.support_hours,
+          }),
+        });
+        site.pricing_hours = {...site.pricing_hours, ...data.pricing_hours};
+        site._pricingHours = {...hours, ...data.pricing_hours};
+        const status = document.getElementById(`journalHourState-${siteIndex}`);
+        if (status) status.textContent = "已儲存工時";
+        feedback.textContent = `${site.site_name}｜正常 ${hours.normal_hours}、加班 ${hours.overtime_hours}、支援 ${hours.support_hours} 小時已保存。`;
+        await syncJournalHoursToCostImport(siteIndex, true);
+        if (moveToPricing) setWorkspace("documents");
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    }
+
+    function printSelectedJournalSignSlip() {
+      const siteIndex = selectedJournalSiteIndex();
+      if (siteIndex >= 0) printWorksiteSignSlips(siteIndex);
     }
 
     function setJournalSelection(siteIndex, section, itemIndex, selected) {
@@ -1737,6 +1856,8 @@
         loadCertificates(),
         loadForkliftAttendanceStats(),
       ]);
+      const selectedJournalIndex = selectedJournalSiteIndex();
+      if (selectedJournalIndex >= 0) await syncJournalHoursToCostImport(selectedJournalIndex, true);
       setWorkspace("overview", false);
     }
 
@@ -1822,8 +1943,10 @@
     async function loadCostHourTargets() {
       const documentId = document.getElementById("costImportDocument").value;
       const workDate = document.getElementById("costImportDate").value;
+      const worksiteId = Number(document.getElementById("costImportWorksite").value || 0);
       const targetSelect = document.getElementById("costImportTarget");
       const feedback = document.getElementById("costHourImportFeedback");
+      const previousTarget = targetSelect.value;
       state.costHourPreview = null;
       document.getElementById("costHourImportSubmit").disabled = true;
       document.getElementById("costHourPreview").hidden = true;
@@ -1839,12 +1962,33 @@
         targetSelect.innerHTML = '<option value="">請選擇標別</option>' + data.targets.map(item =>
           `<option value="${escapeAttr(item.label)}">${escapeHtml(item.label)}｜${escapeHtml(item.worksheet_name)}｜原工時 ${item.existing.normal_hours ?? 0}/${item.existing.overtime_hours ?? 0}/${item.existing.support_hours ?? 0}</option>`
         ).join("");
-        feedback.textContent = `已讀取 ${data.targets.length} 個可匯入標別，請選擇後載入預覽。`;
+        const worksite = state.worksites.find(item => Number(item.id) === worksiteId);
+        const matchedLabel = worksite ? matchCostTargetForWorksite(worksite, data.targets.map(item => item.label)) : null;
+        if (matchedLabel) {
+          targetSelect.value = matchedLabel;
+        } else if (data.targets.some(item => item.label === previousTarget)) {
+          targetSelect.value = previousTarget;
+        }
+        feedback.textContent = matchedLabel
+          ? `已依工地自動選擇計價標別「${matchedLabel}」，請核對工時後執行第 1 步。`
+          : `已讀取 ${data.targets.length} 個可匯入標別，請選擇後載入預覽。`;
       } catch (error) {
         targetSelect.disabled = true;
         targetSelect.innerHTML = '<option value="">無法讀取標別</option>';
         feedback.textContent = error.message;
       }
+    }
+
+    function matchCostTargetForWorksite(worksite, labels) {
+      const haystack = `${worksite.code || ""}${worksite.name || ""}`.replace(/\s+/g, "");
+      return [...labels].sort((a, b) => b.length - a.length).find(label => {
+        const candidate = String(label || "").replace(/\s+/g, "");
+        if (!candidate) return false;
+        if (/^\d+$/.test(candidate)) {
+          return new RegExp(`(^|\\D)${candidate}(\\D|$)`).test(haystack);
+        }
+        return haystack.includes(candidate);
+      }) || null;
     }
 
     function currentCostHourPayload() {
@@ -2220,25 +2364,28 @@
       }
     }
 
-    async function openJournalHourImport(siteIndex) {
+    async function syncJournalHoursToCostImport(siteIndex, loadTargets = false) {
       const journal = state.worksiteJournals;
       const site = journal?.sites?.[siteIndex];
       if (!site) return;
-      setWorkspace("documents");
       document.getElementById("costImportDate").value = journal.date;
       renderCostHourImportOptions();
       const worksite = state.worksites.find(item => item.id === site.site_id);
       if (worksite) document.getElementById("costImportWorksite").value = String(worksite.id);
-      const assigned = getVehicleCounts((site.assignments || []).flatMap(item => [item.vehicle, item.equipment]).filter(Boolean));
-      const inspected = getVehicleCounts((site.inspections || []).map(item => item.forklift_model).filter(Boolean));
-      const forkliftCount = ["twoPointFive", "threePointZero", "fourPointFive"].reduce(
-        (total, key) => total + Math.max(assigned[key], inspected[key]), 0,
-      );
-      document.getElementById("costImportNormal").value = forkliftCount * 8;
-      document.getElementById("costImportOvertime").value = 0;
-      document.getElementById("costImportSupport").value = 0;
-      await loadCostHourTargets();
-      document.getElementById("costHourImportFeedback").textContent = `已帶入 ${site.site_name} 的工作日誌；正常工時先依 ${forkliftCount} 台堆高機 × 8 小時計算，可依實際支援或加班調整。`;
+      const hours = journalHoursFor(site);
+      document.getElementById("costImportNormal").value = hours.normal_hours;
+      document.getElementById("costImportOvertime").value = hours.overtime_hours;
+      document.getElementById("costImportSupport").value = hours.support_hours;
+      state.costHourPreview = null;
+      document.getElementById("costHourImportSubmit").disabled = true;
+      document.getElementById("costHourPreview").hidden = true;
+      if (loadTargets) await loadCostHourTargets();
+      document.getElementById("costHourImportFeedback").textContent = `已連動 ${site.site_name} 工作日誌工時：正常 ${hours.normal_hours}、加班 ${hours.overtime_hours}、支援 ${hours.support_hours} 小時。`;
+    }
+
+    async function openJournalHourImport(siteIndex) {
+      await syncJournalHoursToCostImport(siteIndex, true);
+      setWorkspace("documents");
     }
 
     async function loadLineStatus() {
@@ -2713,6 +2860,7 @@
 
     document.getElementById("costImportDocument").addEventListener("change", loadCostHourTargets);
     document.getElementById("costImportDate").addEventListener("change", loadCostHourTargets);
+    document.getElementById("costImportWorksite").addEventListener("change", loadCostHourTargets);
     document.getElementById("costHourImportForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const feedback = document.getElementById("costHourImportFeedback");
