@@ -78,6 +78,38 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
         oauth_credentials.refresh.assert_called_once()
         service_account_credentials.assert_called_once_with({}, scopes=["https://www.googleapis.com/auth/drive"])
 
+    def test_expired_oauth_never_uses_service_account_for_upload(self) -> None:
+        service = GoogleDriveWorklogService()
+        oauth_credentials = Mock()
+        oauth_credentials.refresh.side_effect = RefreshError("invalid_grant")
+
+        with (
+            patch.object(settings, "google_oauth_client_id", "oauth-client"),
+            patch.object(settings, "google_oauth_client_secret", "oauth-secret"),
+            patch.object(settings, "google_oauth_refresh_token", "expired-token"),
+            patch.object(settings, "google_service_account_json", "{}"),
+            patch("app.services.google_drive.OAuthCredentials", return_value=oauth_credentials),
+            patch.object(service, "_service_account_credentials") as fallback,
+        ):
+            with self.assertRaisesRegex(GoogleDriveWorklogError, "OAuth 授權已失效"):
+                service._credentials(for_upload=True)
+
+        fallback.assert_not_called()
+
+    def test_upload_without_oauth_explains_required_settings(self) -> None:
+        service = GoogleDriveWorklogService()
+        with (
+            patch.object(settings, "google_oauth_client_id", ""),
+            patch.object(settings, "google_oauth_client_secret", ""),
+            patch.object(settings, "google_oauth_refresh_token", ""),
+            patch.object(settings, "google_service_account_json", "{}"),
+            patch.object(service, "_service_account_credentials") as fallback,
+        ):
+            with self.assertRaisesRegex(GoogleDriveWorklogError, "缺少可上傳的 OAuth 授權"):
+                service._credentials(for_upload=True)
+
+        fallback.assert_not_called()
+
     def test_oauth_refresh_is_shared_for_concurrent_drive_operations(self) -> None:
         service = GoogleDriveWorklogService()
         oauth_credentials = Mock(valid=False)

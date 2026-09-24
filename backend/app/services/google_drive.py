@@ -170,13 +170,17 @@ class GoogleDriveWorklogService:
                 self._oauth_credentials = None
                 raise
 
-    def _credentials(self):
+    def _credentials(self, *, for_upload: bool = False):
         # 優先使用 OAuth 2.0；若 refresh token 已失效，使用既有 service account
         # 讀取同一個共享資料夾，避免 Render 重啟時遺失資料庫快照。
         if self._has_oauth():
             try:
                 return self._oauth_credentials_from_refresh_token()
             except RefreshError as exc:
+                if for_upload:
+                    raise GoogleDriveWorklogError(
+                        "Google Drive OAuth 授權已失效，檔案未上傳；請管理員重新授權並更新 Render 的 Refresh Token"
+                    ) from exc
                 if not self._has_service_account():
                     raise GoogleDriveWorklogError(
                         "Google Drive OAuth 授權已失效，請管理員重新授權後更新 Render 設定"
@@ -187,10 +191,14 @@ class GoogleDriveWorklogService:
                 )
                 return self._service_account_credentials()
 
+        if for_upload:
+            raise GoogleDriveWorklogError(
+                "Google Drive 缺少可上傳的 OAuth 授權；請管理員確認 Render 的三項 Google OAuth 設定"
+            )
         return self._service_account_credentials()
 
-    def _build_client(self):
-        return build("drive", "v3", credentials=self._credentials(), cache_discovery=False)
+    def _build_client(self, *, for_upload: bool = False):
+        return build("drive", "v3", credentials=self._credentials(for_upload=for_upload), cache_discovery=False)
 
     @staticmethod
     def _escape_drive_query(value: str) -> str:
@@ -533,12 +541,11 @@ class GoogleDriveWorklogService:
             logger.warning("Google Drive 資料庫快照備份失敗：%s", type(exc).__name__)
             return {"status": "failed", "error": type(exc).__name__}
 
-    def _find_or_create_date_folder(self, folder_name: str) -> str:
+    def _find_or_create_date_folder(self, folder_name: str, *, client) -> str:
         root_folder_id = settings.google_drive_worklog_folder_id.strip()
         if not root_folder_id:
             raise GoogleDriveWorklogError("GOOGLE_DRIVE_WORKLOG_FOLDER_ID 尚未設定")
 
-        client = self._build_client()
         query = (
             f"'{root_folder_id}' in parents and trashed = false and "
             f"mimeType = '{FOLDER_MIME_TYPE}' and name = '{self._escape_drive_query(folder_name)}'"
@@ -579,8 +586,8 @@ class GoogleDriveWorklogService:
         for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
             try:
                 logger.info(f"上傳嘗試 {attempt}/{MAX_UPLOAD_RETRIES}: {file_name} (大小: {len(content)} bytes)")
-                client = self._build_client()
-                folder_id = self._find_or_create_date_folder(folder_name)
+                client = self._build_client(for_upload=True)
+                folder_id = self._find_or_create_date_folder(folder_name, client=client)
                 stream = io.BytesIO(content)
                 media = MediaIoBaseUpload(stream, mimetype=content_type, resumable=False)
                 created = (
@@ -653,7 +660,7 @@ class GoogleDriveWorklogService:
         if isinstance(exc, HttpError):
             detail = str(exc)
             if "storageQuotaExceeded" in detail:
-                return "Google Drive 上傳帳號沒有可用儲存空間，請重新授權可寫入的公司帳號"
+                return "Google Drive 上傳帳號的儲存空間不足；請檢查帳號配額，或改用有空間的公司帳號"
             if exc.resp.status == 401:
                 return "Google Drive 授權已失效，請管理員重新授權"
             if exc.resp.status == 403:
