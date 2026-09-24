@@ -24,6 +24,7 @@ from app.models import (
 from app.services.line import _build_schedule_summary, line_service, notify_employees
 from app.services.forklift_notifications import deliver_forklift_notifications, process_forklift_alerts, queue_inspection_reminders
 from app.services.forklift_service import local_today
+from app.services.google_drive import google_drive_worklog_service
 
 
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -32,6 +33,8 @@ scheduler = AsyncIOScheduler(timezone=settings.timezone)
 # 僅以員工代碼指定，姓名調整或 LINE 重新綁定時不會影響每日通知對象。
 ATTENDANCE_SUMMARY_RECIPIENT_CODES = ("ADMIN002", "ADMIN001", "BOSS001")
 ATTENDANCE_SUMMARY_TARGET_SCOPE = "daily_attendance_summary"
+DRIVE_ALERT_TARGET_SCOPE = "google_drive_upload_access"
+DRIVE_ALERT_RECIPIENT_CODES = ATTENDANCE_SUMMARY_RECIPIENT_CODES
 
 
 def _local_day_bounds(target_date: date) -> tuple[datetime, datetime]:
@@ -193,8 +196,57 @@ async def push_forklift_inspection_reminder() -> None:
 
 
 async def backup_database_snapshot() -> None:
-    from app.services.google_drive import google_drive_worklog_service
     await google_drive_worklog_service.backup_database()
+
+
+async def check_google_drive_authorization() -> dict[str, object]:
+    """Alert managers about actionable Drive failures once per local day."""
+    status = await google_drive_worklog_service.check_upload_access()
+    if status in {"ok", "temporary_error"}:
+        return {"status": status}
+
+    today = datetime.now(ZoneInfo(settings.timezone)).date().isoformat()
+    with session_scope() as session:
+        already_sent = session.exec(
+            select(NotificationBatch).where(
+                NotificationBatch.category == NotificationCategory.ad_hoc,
+                NotificationBatch.target_scope == DRIVE_ALERT_TARGET_SCOPE,
+                NotificationBatch.target_value == today,
+            )
+        ).first()
+        if already_sent:
+            return {"status": "already_alerted", "batch_id": already_sent.id}
+
+        recipients = session.exec(
+            select(Employee).where(
+                Employee.employee_code.in_(DRIVE_ALERT_RECIPIENT_CODES),
+                Employee.status == EmployeeStatus.active,
+            )
+        ).all()
+        recipients.sort(key=lambda employee: DRIVE_ALERT_RECIPIENT_CODES.index(employee.employee_code))
+        if not recipients:
+            return {"status": "no_recipients"}
+        reason = {
+            "not_configured": "Google Drive 上傳授權設定不完整",
+            "authorization_failed": "Google Drive 授權已失效",
+            "folder_unavailable": "Google Drive 工作相片資料夾無法寫入",
+        }[status]
+        content = (
+            f"【三通工程行 Drive 異常】\n{reason}。\n"
+            "新工作照片可能無法保存，請管理員檢查 Google 授權及 Render 設定。"
+            "授權恢復前請保留 LINE 原照片，勿刪除。"
+        )
+        sender = next((employee for employee in recipients if employee.employee_code == "BOSS001"), None)
+        result = await notify_employees(
+            session=session,
+            sender=sender,
+            employees=recipients,
+            category=NotificationCategory.ad_hoc,
+            target_scope=DRIVE_ALERT_TARGET_SCOPE,
+            target_value=today,
+            content=content,
+        )
+        return {"status": "alerted", "reason": status, **result}
 
 
 async def push_forklift_alerts() -> None:
@@ -260,6 +312,16 @@ def start_scheduler() -> None:
         "interval",
         minutes=10,
         id="database-drive-backup",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        check_google_drive_authorization,
+        "interval",
+        hours=1,
+        next_run_time=datetime.now(ZoneInfo(settings.timezone)),
+        id="google-drive-authorization-check",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

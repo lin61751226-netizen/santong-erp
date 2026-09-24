@@ -200,6 +200,41 @@ class GoogleDriveWorklogService:
     def _build_client(self, *, for_upload: bool = False):
         return build("drive", "v3", credentials=self._credentials(for_upload=for_upload), cache_discovery=False)
 
+    def _check_upload_access_sync(self) -> str:
+        """Check the OAuth identity and destination folder without creating files."""
+        folder_id = settings.google_drive_worklog_folder_id.strip()
+        if not folder_id or not self._has_oauth():
+            return "not_configured"
+        try:
+            client = self._build_client(for_upload=True)
+            folder = client.files().get(
+                fileId=folder_id,
+                fields="id,mimeType,capabilities(canAddChildren)",
+                supportsAllDrives=True,
+            ).execute()
+        except GoogleDriveWorklogError:
+            return "authorization_failed"
+        except HttpError as exc:
+            if exc.resp.status == 401:
+                return "authorization_failed"
+            error_content = exc.content.decode("utf-8", errors="replace") if isinstance(exc.content, bytes) else str(exc.content)
+            if exc.resp.status == 403 and any(
+                reason in error_content
+                for reason in ("rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded")
+            ):
+                return "temporary_error"
+            if exc.resp.status in {403, 404}:
+                return "folder_unavailable"
+            return "temporary_error"
+        except Exception:
+            return "temporary_error"
+        if folder.get("mimeType") != FOLDER_MIME_TYPE or not folder.get("capabilities", {}).get("canAddChildren"):
+            return "folder_unavailable"
+        return "ok"
+
+    async def check_upload_access(self) -> str:
+        return await asyncio.to_thread(self._check_upload_access_sync)
+
     @staticmethod
     def _escape_drive_query(value: str) -> str:
         return value.replace("\\", "\\\\").replace("'", "\\'")

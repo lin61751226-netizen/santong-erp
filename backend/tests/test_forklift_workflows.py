@@ -31,10 +31,40 @@ from app.services.forklift_notifications import (
 )
 from app.services.line import line_service, process_webhook_event
 from app.services.line_platform import build_default_rich_menu_payloads, generate_default_rich_menu_images
-from app.services.scheduler import push_daily_attendance_summary
+from app.services.scheduler import check_google_drive_authorization, push_daily_attendance_summary
 
 
 class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_drive_authorization_alert_notifies_managers_once_per_day(self):
+        self.boss.employee_code = "BOSS001"
+        self.admin.employee_code = "ADMIN001"
+        clerk = Employee(
+            employee_code="ADMIN002", name="秀蓉", bind_token="clerk", role=Role.admin,
+            line_user_id="U-clerk",
+        )
+        self.session.add(clerk)
+        self.session.commit()
+
+        @contextmanager
+        def test_session_scope():
+            yield self.session
+
+        with (
+            patch("app.services.scheduler.session_scope", test_session_scope),
+            patch("app.services.scheduler.google_drive_worklog_service.check_upload_access",
+                  new=AsyncMock(return_value="authorization_failed")),
+        ):
+            first = await check_google_drive_authorization()
+            second = await check_google_drive_authorization()
+
+        self.assertEqual(first["status"], "alerted")
+        self.assertEqual(second["status"], "already_alerted")
+        self.assertEqual(self.push.await_count, 3)
+        batch = self.session.exec(select(NotificationBatch)).one()
+        self.assertEqual(batch.target_scope, "google_drive_upload_access")
+        self.assertIn("Google Drive 授權已失效", batch.content)
+        self.assertNotIn("refresh_token", batch.content)
+
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         SQLModel.metadata.create_all(self.engine)

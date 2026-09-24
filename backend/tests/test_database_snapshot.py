@@ -8,8 +8,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from google.auth.exceptions import RefreshError
+from googleapiclient.errors import HttpError
 from app.core.config import settings
-from app.services.google_drive import GoogleDriveWorklogError, GoogleDriveWorklogService
+from app.services.google_drive import FOLDER_MIME_TYPE, GoogleDriveWorklogError, GoogleDriveWorklogService
 
 
 def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 0) -> None:
@@ -31,6 +32,66 @@ def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 
 
 
 class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_upload_access_check_is_read_only(self) -> None:
+        service = GoogleDriveWorklogService()
+        client = Mock()
+        client.files.return_value.get.return_value.execute.return_value = {
+            "id": "work-photo-folder",
+            "mimeType": FOLDER_MIME_TYPE,
+            "capabilities": {"canAddChildren": True},
+        }
+        with (
+            patch.object(settings, "google_drive_worklog_folder_id", "work-photo-folder"),
+            patch.object(service, "_has_oauth", return_value=True),
+            patch.object(service, "_build_client", return_value=client) as build_client,
+        ):
+            status = await service.check_upload_access()
+
+        self.assertEqual(status, "ok")
+        build_client.assert_called_once_with(for_upload=True)
+        client.files.return_value.get.assert_called_once_with(
+            fileId="work-photo-folder",
+            fields="id,mimeType,capabilities(canAddChildren)",
+            supportsAllDrives=True,
+        )
+        client.files.return_value.create.assert_not_called()
+
+    async def test_upload_access_check_detects_expired_authorization(self) -> None:
+        service = GoogleDriveWorklogService()
+        with (
+            patch.object(settings, "google_drive_worklog_folder_id", "work-photo-folder"),
+            patch.object(service, "_has_oauth", return_value=True),
+            patch.object(service, "_build_client", side_effect=GoogleDriveWorklogError("expired")),
+        ):
+            self.assertEqual(await service.check_upload_access(), "authorization_failed")
+
+    async def test_upload_access_check_detects_unwritable_folder(self) -> None:
+        service = GoogleDriveWorklogService()
+        client = Mock()
+        client.files.return_value.get.return_value.execute.return_value = {
+            "mimeType": FOLDER_MIME_TYPE,
+            "capabilities": {"canAddChildren": False},
+        }
+        with (
+            patch.object(settings, "google_drive_worklog_folder_id", "work-photo-folder"),
+            patch.object(service, "_has_oauth", return_value=True),
+            patch.object(service, "_build_client", return_value=client),
+        ):
+            self.assertEqual(await service.check_upload_access(), "folder_unavailable")
+
+    async def test_upload_access_check_does_not_alert_on_rate_limit(self) -> None:
+        service = GoogleDriveWorklogService()
+        response = Mock(status=403, reason="Rate Limit Exceeded")
+        error = HttpError(response, b'{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}')
+        client = Mock()
+        client.files.return_value.get.return_value.execute.side_effect = error
+        with (
+            patch.object(settings, "google_drive_worklog_folder_id", "work-photo-folder"),
+            patch.object(service, "_has_oauth", return_value=True),
+            patch.object(service, "_build_client", return_value=client),
+        ):
+            self.assertEqual(await service.check_upload_access(), "temporary_error")
+
     def test_oauth_refresh_failure_kind_hides_sensitive_detail(self) -> None:
         service = GoogleDriveWorklogService()
 
