@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page == "privacy" %}隱私權說明{% else %}系統介紹{% endif %} | 三通工程行</title>
+  <style>
+    :root { color-scheme: light; --ink: #1d352b; --muted: #596961; --paper: #fffdf8; --line: #d8dfd8; --accent: #a94b29; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: radial-gradient(circle at 90% 0%, #e4e9d9, transparent 33%), #f3f1e9; font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; line-height: 1.8; }
+    header, main, footer { max-width: 890px; margin: auto; padding: 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .brand { font-family: "Noto Serif TC", "PMingLiU", serif; font-size: 1.35rem; font-weight: 800; letter-spacing: .12em; }
+    nav { display: flex; gap: 16px; flex-wrap: wrap; }
+    a { color: #315b48; }
+    main { padding-top: 44px; padding-bottom: 60px; }
+    .eyebrow { color: var(--accent); font-size: .78rem; font-weight: 800; letter-spacing: .22em; }
+    h1 { font-family: "Noto Serif TC", "PMingLiU", serif; font-size: clamp(2rem, 5vw, 3.35rem); line-height: 1.28; margin: 8px 0 16px; }
+    .lead { font-size: 1.12rem; color: var(--muted); max-width: 700px; }
+    section { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; margin-top: 18px; padding: 20px 25px; }
+    h2 { margin: 0 0 10px; font-size: 1.18rem; }
+    p, ul { margin: 0 0 10px; }
+    li + li { margin-top: 5px; }
+    footer { border-top: 1px solid var(--line); color: var(--muted); font-size: .85rem; }
+    @media (max-width: 600px) { header { align-items: flex-start; flex-direction: column; } main { padding-top: 22px; } section { padding: 18px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">三通工程行</div>
+    <nav aria-label="網站導覽"><a href="/about">系統介紹</a><a href="/privacy">隱私權說明</a><a href="/">管理後台</a></nav>
+  </header>
+  <main>
+    {% if page == "about" %}
+    <div class="eyebrow">SANTONG · INTERNAL OPERATIONS</div>
+    <h1>讓工地資訊，確實回到同一個地方。</h1>
+    <p class="lead">三通工程行自動化管理系統供公司員工與管理人員使用，以 LINE 接收工作安排、打卡、點檢及回報，並透過管理後台整理工地紀錄、簽單與文件。</p>
+    <section><h2>Google Drive 用途</h2><p>經指定帳號授權後，系統使用 Google Drive 儲存 LINE 工作照片、管理文件、資料庫快照與 LINE 綁定備份，並讀取這些檔案供復原或工作查詢。授權畫面可能要求完整 Drive 存取權，因為目前系統需存取指定資料夾內既有的檔案、更新備份及建立子資料夾；這項權限的技術範圍大於單一工作照片資料夾。</p></section>
+    <section><h2>使用對象</h2><p>本系統是公司內部工具。公開的介紹頁不提供任何員工、工地、照片或管理資料；使用後台及 LINE 個人功能仍須完成身分驗證與權限檢查。</p></section>
+    <section><h2>資料如何處理</h2><p>工作紀錄保存在系統資料庫及指定 Google Drive。詳細資料種類、分享方式及聯絡方式，請閱讀<a href="/privacy">隱私權說明</a>。</p></section>
+    {% else %}
+    <div class="eyebrow">PRIVACY NOTICE</div>
+    <h1>隱私權說明</h1>
+    <p class="lead">本頁說明三通工程行自動化管理系統如何處理員工及工地工作資料。適用於本系統的 LINE 互動、管理後台及 Google Drive 串接。</p>
+    <section><h2>蒐集與使用</h2><p>系統可能記錄員工姓名、職務、聯絡方式、LINE 識別碼與綁定資料、工地與工作安排、打卡時間及位置、請假、堆高機點檢、群組工作文字、工作照片、管理文件，以及管理後台登入與操作紀錄。用途限於工作安排、出勤與安全管理、文件保存、簽單及內部營運查詢。</p></section>
+    <section><h2>Google Drive 授權與檔案</h2><p>只有經公司指定的 Google 帳號授權後，系統才以 Google Drive API 在工作資料夾建立及讀取照片、文件與備份。系統目前要求完整 Drive 權限；Google 授權可在帳號設定中撤銷，但撤銷後照片上傳及備份可能停止。完整權限在技術上可能涵蓋授權帳號的其他 Drive 檔案，雖然目前業務流程以指定資料夾為主。</p></section>
+    <section><h2>存放、分享與保留</h2><p>資料庫及索引保存在管理系統，照片和文件保存在授權帳號的 Google Drive。管理設定可能讓新上傳的檔案取得「知道連結即可查看」權限；請勿將連結轉傳給未授權人員。工作及稽核紀錄目前沒有固定自動刪除期限，會依公司管理需求保留；若需查詢、更正、限制使用或提出刪除需求，請聯絡管理員個案處理，並確認法定或營運保存需求。</p></section>
+    <section><h2>第三方服務與權限</h2><p>系統使用 LINE 傳遞員工操作與通知，並使用 Google Drive 儲存檔案。後台依角色限制資料查詢。任何第三方服務仍受其自身的服務與隱私條款約束。</p></section>
+    <section><h2>聯絡方式</h2><p>關於本系統的資料處理或 Google 授權，請聯絡三通工程行系統管理者：<a href="mailto:lin61751226@gmail.com">lin61751226@gmail.com</a>。</p></section>
+    {% endif %}
+  </main>
+  <footer>三通工程行 · 工作系統公開說明頁。內部資料須登入後才能查看。</footer>
+</body>
+</html>

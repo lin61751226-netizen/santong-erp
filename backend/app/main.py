@@ -108,3 +108,13 @@ def forklift_home(request: Request):
 @app.get("/health")
 def health():
     return {"ok": True, "app": settings.app_name}
+
+
+@app.get("/about", response_class=HTMLResponse)
+def public_about(request: Request):
+    return templates.TemplateResponse("public_info.html", {"request": request, "page": "about"})
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def public_privacy(request: Request):
+    return templates.TemplateResponse("public_info.html", {"request": request, "page": "privacy"})
