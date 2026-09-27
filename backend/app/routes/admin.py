@@ -2,8 +2,10 @@
 
 import csv
 import calendar
+import io
 import re
 import secrets
+import zipfile
 from datetime import date, datetime, time, timedelta, timezone
 from io import StringIO
 from pathlib import Path
@@ -12,8 +14,9 @@ from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 from sqlmodel import Session, select
 
 from app.core.db import get_session
@@ -85,7 +88,7 @@ from app.services.hr import (
 )
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
-from app.services.google_drive import google_drive_worklog_service
+from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service
 from app.services.cost_workbook import (
     CostWorkbookError,
     MonthHourUpdate,
@@ -130,6 +133,15 @@ SITE_ALIASES = {
 
 MANAGEMENT_DOCUMENT_MAX_BYTES = 30 * 1024 * 1024
 SPREADSHEET_EXTENSIONS = {".xls", ".xlsx", ".xlsm"}
+BUSINESS_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+BUSINESS_ATTACHMENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 
 
 def _management_document_category(file_name: str) -> tuple[str, str]:
@@ -897,6 +909,81 @@ def list_employees(
 
 # ---- 合約與證照管理 ----
 
+def _parse_business_payload(raw: str, schema):
+    try:
+        return schema.model_validate_json(raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="表單欄位格式不正確") from exc
+
+
+async def _read_business_attachment(upload: UploadFile) -> tuple[str, bytes, str]:
+    file_name = (upload.filename or "").replace("\\", "/").split("/")[-1].strip()
+    content_type = BUSINESS_ATTACHMENT_TYPES.get(Path(file_name).suffix.lower())
+    if not content_type:
+        raise HTTPException(status_code=400, detail="只接受 PDF、JPG、PNG、WebP 或 DOCX 檔案")
+    content = await upload.read(BUSINESS_ATTACHMENT_MAX_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="上傳檔案不可空白")
+    if len(content) > BUSINESS_ATTACHMENT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="檔案不可超過 20 MB")
+    if content_type == "application/pdf" and not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="PDF 檔案格式不正確")
+    if content_type == "image/jpeg" and not content.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(status_code=400, detail="JPG 檔案格式不正確")
+    if content_type == "image/png" and not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise HTTPException(status_code=400, detail="PNG 檔案格式不正確")
+    if content_type == "image/webp" and not (content.startswith(b"RIFF") and content[8:12] == b"WEBP"):
+        raise HTTPException(status_code=400, detail="WebP 檔案格式不正確")
+    if content_type.endswith("wordprocessingml.document"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as document:
+                if "word/document.xml" not in document.namelist():
+                    raise ValueError("缺少 Word 文件內容")
+        except (zipfile.BadZipFile, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="DOCX 檔案格式不正確") from exc
+    return file_name, content, content_type
+
+
+async def _upload_business_attachment(upload: UploadFile, kind: str) -> str:
+    file_name, content, content_type = await _read_business_attachment(upload)
+    try:
+        result = await google_drive_worklog_service.upload_business_attachment(
+            kind=kind, file_name=file_name, content=content, content_type=content_type,
+        )
+    except GoogleDriveWorklogError as exc:
+        raise HTTPException(status_code=502, detail=f"Google Drive 上傳失敗：{exc}") from exc
+    return result.file_url
+
+
+def _validate_contract_create(payload: ContractCreate, session: Session, actor: Employee) -> Employee | None:
+    if payload.expiry_date and payload.start_date and payload.expiry_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="合約到期日不可早於起始日")
+    employee = None
+    if payload.employee_code:
+        employee = session.exec(
+            select(Employee).where(Employee.employee_code == payload.employee_code.strip())
+        ).first()
+        if not employee:
+            raise HTTPException(status_code=404, detail="找不到合約對應員工")
+        ensure_employee_scope(actor, employee)
+    if payload.site_id is not None:
+        if not session.get(Worksite, payload.site_id):
+            raise HTTPException(status_code=404, detail="找不到合約對應工地")
+        ensure_site_scope(actor, payload.site_id)
+    return employee
+
+
+def _validate_certificate_create(payload: CertificateCreate, session: Session, actor: Employee) -> Employee:
+    employee = session.exec(
+        select(Employee).where(Employee.employee_code == payload.employee_code.strip())
+    ).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到證照對應員工")
+    ensure_employee_scope(actor, employee)
+    if payload.expiry_date and payload.issued_date and payload.expiry_date < payload.issued_date:
+        raise HTTPException(status_code=400, detail="證照到期日不可早於發證日")
+    return employee
+
 @router.get("/contracts")
 def list_contracts(
     keyword: Optional[str] = Query(default=None),
@@ -929,20 +1016,7 @@ def create_contract(
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
 ):
-    if payload.expiry_date and payload.start_date and payload.expiry_date < payload.start_date:
-        raise HTTPException(status_code=400, detail="合約到期日不可早於起始日")
-    employee = None
-    if payload.employee_code:
-        employee = session.exec(
-            select(Employee).where(Employee.employee_code == payload.employee_code.strip())
-        ).first()
-        if not employee:
-            raise HTTPException(status_code=404, detail="找不到合約對應員工")
-        ensure_employee_scope(actor, employee)
-    if payload.site_id is not None:
-        if not session.get(Worksite, payload.site_id):
-            raise HTTPException(status_code=404, detail="找不到合約對應工地")
-        ensure_site_scope(actor, payload.site_id)
+    employee = _validate_contract_create(payload, session, actor)
     item = ContractRecord(
         title=payload.title.strip(),
         contract_type=payload.contract_type.strip() or "其他",
@@ -965,6 +1039,24 @@ def create_contract(
         summary=f"新增合約：{item.title}",
     )
     return {"message": "合約已新增", "contract": _serialize_contract(session, item)}
+
+
+@router.post("/contracts/with-file", status_code=status.HTTP_201_CREATED)
+async def create_contract_with_file(
+    payload: str = Form(...),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    contract = _parse_business_payload(payload, ContractCreate)
+    if contract.drive_url:
+        raise HTTPException(status_code=400, detail="選擇檔案後不需另外填寫 Drive 連結")
+    _validate_contract_create(contract, session, actor)
+    drive_url = await _upload_business_attachment(file, "contract")
+    result = create_contract(contract.model_copy(update={"drive_url": drive_url}), session, actor)
+    backup = await google_drive_worklog_service.backup_database()
+    result["backup_status"] = backup.get("status")
+    return result
 
 
 @router.put("/contracts/{contract_id}/status")
@@ -1025,14 +1117,7 @@ def create_certificate(
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
 ):
-    employee = session.exec(
-        select(Employee).where(Employee.employee_code == payload.employee_code.strip())
-    ).first()
-    if not employee:
-        raise HTTPException(status_code=404, detail="找不到證照對應員工")
-    ensure_employee_scope(actor, employee)
-    if payload.expiry_date and payload.issued_date and payload.expiry_date < payload.issued_date:
-        raise HTTPException(status_code=400, detail="證照到期日不可早於發證日")
+    employee = _validate_certificate_create(payload, session, actor)
     item = CertificateRecord(
         employee_id=employee.id,
         name=payload.name.strip(),
@@ -1052,6 +1137,24 @@ def create_certificate(
         summary=f"新增證照：{employee.name}｜{item.name}",
     )
     return {"message": "證照已新增", "certificate": _serialize_certificate(session, item)}
+
+
+@router.post("/certificates/with-file", status_code=status.HTTP_201_CREATED)
+async def create_certificate_with_file(
+    payload: str = Form(...),
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    certificate = _parse_business_payload(payload, CertificateCreate)
+    if certificate.drive_url:
+        raise HTTPException(status_code=400, detail="選擇檔案後不需另外填寫 Drive 連結")
+    _validate_certificate_create(certificate, session, actor)
+    drive_url = await _upload_business_attachment(file, "certificate")
+    result = create_certificate(certificate.model_copy(update={"drive_url": drive_url}), session, actor)
+    backup = await google_drive_worklog_service.backup_database()
+    result["backup_status"] = backup.get("status")
+    return result
 
 
 @router.put("/certificates/{certificate_id}/status")

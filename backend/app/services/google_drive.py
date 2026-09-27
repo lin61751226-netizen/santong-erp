@@ -36,6 +36,7 @@ SYSTEM_DATA_FOLDER_NAME = "_三通系統資料"
 LINE_BINDINGS_FILE_NAME = "LINE綁定資料.json"
 DATABASE_BACKUP_FILE_NAME = "三通資料庫最新快照.sqlite3"
 MANAGEMENT_DOCUMENTS_FOLDER_NAME = "管理系統文件"
+BUSINESS_ATTACHMENT_FOLDERS = {"contract": "合約文件", "certificate": "員工證照"}
 OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 # These tables are append-only or use disable/restore semantics. A lower row
@@ -61,6 +62,8 @@ PRESERVED_DATABASE_TABLES = (
     "forklift",
     "forkliftinspection",
     "manageddocument",
+    "contractrecord",
+    "certificaterecord",
     "workhourimportlog",
 )
 
@@ -616,6 +619,7 @@ class GoogleDriveWorklogService:
         content: bytes,
         content_type: str,
         folder_name: str,
+        public_share: bool | None = None,
     ) -> DriveUploadResult:
         last_exception = None
         for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
@@ -638,7 +642,8 @@ class GoogleDriveWorklogService:
                 file_id = created["id"]
                 logger.info(f"檔案上傳成功: {file_name} (ID: {file_id})")
 
-                if settings.google_drive_public_share:
+                should_share_publicly = settings.google_drive_public_share if public_share is None else public_share
+                if should_share_publicly:
                     try:
                         client.permissions().create(
                             fileId=file_id,
@@ -759,6 +764,33 @@ class GoogleDriveWorklogService:
             content=content,
             content_type=content_type or "application/octet-stream",
             folder_name=MANAGEMENT_DOCUMENTS_FOLDER_NAME,
+        )
+
+    async def upload_business_attachment(
+        self,
+        *,
+        kind: str,
+        file_name: str,
+        content: bytes,
+        content_type: str,
+    ) -> DriveUploadResult:
+        """合約與證照只能存為私人檔案，不沿用工作照片的公開分享設定。"""
+        if not self.is_configured():
+            raise GoogleDriveWorklogError("Google Drive 尚未完成設定")
+        folder_name = BUSINESS_ATTACHMENT_FOLDERS.get(kind)
+        if folder_name is None:
+            raise GoogleDriveWorklogError("不支援的附件類別")
+        safe_name = file_name.replace("\\", "/").split("/")[-1].strip()
+        if not safe_name:
+            raise GoogleDriveWorklogError("檔案名稱不可空白")
+        timestamp = datetime.now(ZoneInfo(settings.timezone)).strftime("%Y%m%d_%H%M%S")
+        return await asyncio.to_thread(
+            self._upload_bytes,
+            file_name=f"{timestamp}_{safe_name}",
+            content=content,
+            content_type=content_type,
+            folder_name=folder_name,
+            public_share=False,
         )
 
     def _list_management_documents_sync(self) -> list[dict]:

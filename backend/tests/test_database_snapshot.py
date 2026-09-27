@@ -10,7 +10,9 @@ from unittest.mock import Mock, patch
 from google.auth.exceptions import RefreshError
 from googleapiclient.errors import HttpError
 from app.core.config import settings
-from app.services.google_drive import FOLDER_MIME_TYPE, GoogleDriveWorklogError, GoogleDriveWorklogService
+from app.services.google_drive import (
+    FOLDER_MIME_TYPE, PRESERVED_DATABASE_TABLES, GoogleDriveWorklogError, GoogleDriveWorklogService,
+)
 
 
 def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 0) -> None:
@@ -32,6 +34,10 @@ def _create_database(path: Path, *, attendance_rows: int = 0, login_rows: int = 
 
 
 class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    def test_business_records_are_protected_from_older_snapshots(self) -> None:
+        self.assertIn("contractrecord", PRESERVED_DATABASE_TABLES)
+        self.assertIn("certificaterecord", PRESERVED_DATABASE_TABLES)
+
     async def test_upload_access_check_is_read_only(self) -> None:
         service = GoogleDriveWorklogService()
         client = Mock()
@@ -209,6 +215,27 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(uploaded, result)
         self.assertEqual(upload_bytes.call_args.kwargs["folder_name"], "管理系統文件")
         self.assertTrue(upload_bytes.call_args.kwargs["file_name"].endswith("_三通工程行115年推高機計價0730.xlsm"))
+
+    async def test_contract_attachment_never_creates_public_sharing_permission(self) -> None:
+        service = GoogleDriveWorklogService()
+        client = Mock()
+        client.files.return_value.create.return_value.execute.return_value = {"id": "private-file"}
+        client.files.return_value.get.return_value.execute.return_value = {
+            "id": "private-file", "webViewLink": "https://drive.google.com/file/d/private-file/view",
+        }
+        with (
+            patch.object(service, "is_configured", return_value=True),
+            patch.object(service, "_build_client", return_value=client),
+            patch.object(service, "_find_or_create_date_folder", return_value="private-folder"),
+            patch.object(settings, "google_drive_public_share", True),
+        ):
+            result = await service.upload_business_attachment(
+                kind="contract", file_name="合約.pdf", content=b"%PDF-1.4\nexample", content_type="application/pdf",
+            )
+
+        self.assertEqual(result.file_url, "https://drive.google.com/file/d/private-file/view")
+        client.permissions.assert_not_called()
+        self.assertEqual(client.files.return_value.create.call_args.kwargs["body"]["parents"], ["private-folder"])
 
     async def test_production_restore_replaces_existing_local_database(self) -> None:
         service = GoogleDriveWorklogService()

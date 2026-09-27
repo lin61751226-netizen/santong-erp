@@ -156,7 +156,7 @@
         <div>
           <span class="eyebrow">文件期限</span>
           <h2>合約與證照管理</h2>
-          <p class="muted">保存合約與證照的查詢欄位、期限與 Google Drive 位置；原始檔案不在系統中重複儲存。</p>
+          <p class="muted">可直接選檔上傳到 Google Drive，或貼上既有 Drive 連結；系統保存文件位置與期限，不重複儲存原始檔案。</p>
         </div>
         <div class="button-row">
           <input id="contractKeyword" placeholder="搜尋合約名稱／對象" aria-label="搜尋合約">
@@ -175,7 +175,8 @@
             <div><label for="contractAmount">金額</label><input id="contractAmount" type="number" min="0" step="1"></div>
             <div><label for="contractStart">起始日</label><input id="contractStart" type="date"></div>
             <div><label for="contractExpiry">到期日</label><input id="contractExpiry" type="date"></div>
-            <div class="full"><label for="contractDriveUrl">Google Drive 連結</label><input id="contractDriveUrl" type="url" placeholder="貼上文件連結"></div>
+            <div class="full"><label for="contractFile">上傳合約檔案到 Google Drive</label><input id="contractFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx"><small class="muted">PDF、照片或 DOCX，最多 20 MB；上傳檔案不會設定公開分享。</small></div>
+            <div class="full"><label for="contractDriveUrl">或貼上既有 Google Drive 連結</label><input id="contractDriveUrl" type="url" placeholder="已有雲端檔案時貼上連結"></div>
             <div class="full"><label for="contractNotes">備註</label><textarea id="contractNotes" rows="2"></textarea></div>
             <div class="full"><button type="submit">保存合約</button></div>
           </form>
@@ -189,7 +190,8 @@
             <div><label for="certificateNo">證號</label><input id="certificateNo"></div>
             <div><label for="certificateIssued">發證日</label><input id="certificateIssued" type="date"></div>
             <div><label for="certificateExpiry">到期日</label><input id="certificateExpiry" type="date"></div>
-            <div class="full"><label for="certificateDriveUrl">Google Drive 連結</label><input id="certificateDriveUrl" type="url"></div>
+            <div class="full"><label for="certificateFile">上傳證照檔案到 Google Drive</label><input id="certificateFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx"><small class="muted">PDF、照片或 DOCX，最多 20 MB；上傳檔案不會設定公開分享。</small></div>
+            <div class="full"><label for="certificateDriveUrl">或貼上既有 Google Drive 連結</label><input id="certificateDriveUrl" type="url" placeholder="已有雲端檔案時貼上連結"></div>
             <div class="full"><label for="certificateNotes">備註</label><textarea id="certificateNotes" rows="2"></textarea></div>
             <div class="full"><button type="submit">保存證照</button></div>
           </form>
@@ -3132,42 +3134,62 @@
     document.getElementById("contractForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const feedback = document.getElementById("contractFeedback");
+      const file = document.getElementById("contractFile").files[0];
+      const submitButton = event.target.querySelector('button[type="submit"]');
+      const driveUrl = document.getElementById("contractDriveUrl").value.trim();
+      if (file && driveUrl) { feedback.textContent = "請選擇上傳檔案或貼上連結其中一種方式。"; return; }
+      const payload = {
+        title: document.getElementById("contractTitle").value,
+        contract_type: document.getElementById("contractType").value,
+        party_name: document.getElementById("contractParty").value || null,
+        employee_code: document.getElementById("contractEmployee").value || null,
+        site_id: document.getElementById("contractSite").value ? Number(document.getElementById("contractSite").value) : null,
+        start_date: document.getElementById("contractStart").value || null,
+        expiry_date: document.getElementById("contractExpiry").value || null,
+        amount: document.getElementById("contractAmount").value ? Number(document.getElementById("contractAmount").value) : null,
+        drive_url: driveUrl || null,
+        notes: document.getElementById("contractNotes").value || null,
+      };
+      const formData = new FormData();
+      if (file) { formData.append("payload", JSON.stringify(payload)); formData.append("file", file, file.name); }
+      submitButton.disabled = true;
+      feedback.textContent = file ? "正在上傳合約並保存資料，請稍候..." : "正在保存合約...";
       try {
-        const data = await api("/api/contracts", { method: "POST", body: JSON.stringify({
-          title: document.getElementById("contractTitle").value,
-          contract_type: document.getElementById("contractType").value,
-          party_name: document.getElementById("contractParty").value || null,
-          employee_code: document.getElementById("contractEmployee").value || null,
-          site_id: document.getElementById("contractSite").value ? Number(document.getElementById("contractSite").value) : null,
-          start_date: document.getElementById("contractStart").value || null,
-          expiry_date: document.getElementById("contractExpiry").value || null,
-          amount: document.getElementById("contractAmount").value ? Number(document.getElementById("contractAmount").value) : null,
-          drive_url: document.getElementById("contractDriveUrl").value || null,
-          notes: document.getElementById("contractNotes").value || null,
-        })});
-        feedback.textContent = data.message;
+        const data = await api(file ? "/api/contracts/with-file" : "/api/contracts", { method: "POST", body: file ? formData : JSON.stringify(payload) });
+        feedback.textContent = `${data.message}${file ? "，檔案已存入 Google Drive" : ""}${["failed", "skipped_regression"].includes(data.backup_status) ? "；資料庫快照未完成，請管理員檢查" : ""}。`;
         event.target.reset();
         await loadContracts();
       } catch (error) { feedback.textContent = error.message; }
+      finally { submitButton.disabled = false; }
     });
 
     document.getElementById("certificateForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const feedback = document.getElementById("certificateFeedback");
+      const file = document.getElementById("certificateFile").files[0];
+      const submitButton = event.target.querySelector('button[type="submit"]');
+      const driveUrl = document.getElementById("certificateDriveUrl").value.trim();
+      if (file && driveUrl) { feedback.textContent = "請選擇上傳檔案或貼上連結其中一種方式。"; return; }
+      const payload = {
+        employee_code: document.getElementById("certificateEmployee").value,
+        name: document.getElementById("certificateName").value,
+        certificate_no: document.getElementById("certificateNo").value || null,
+        issued_date: document.getElementById("certificateIssued").value || null,
+        expiry_date: document.getElementById("certificateExpiry").value || null,
+        drive_url: driveUrl || null,
+        notes: document.getElementById("certificateNotes").value || null,
+      };
+      const formData = new FormData();
+      if (file) { formData.append("payload", JSON.stringify(payload)); formData.append("file", file, file.name); }
+      submitButton.disabled = true;
+      feedback.textContent = file ? "正在上傳證照並保存資料，請稍候..." : "正在保存證照...";
       try {
-        const data = await api("/api/certificates", { method: "POST", body: JSON.stringify({
-          employee_code: document.getElementById("certificateEmployee").value,
-          name: document.getElementById("certificateName").value,
-          certificate_no: document.getElementById("certificateNo").value || null,
-          issued_date: document.getElementById("certificateIssued").value || null,
-          expiry_date: document.getElementById("certificateExpiry").value || null,
-          drive_url: document.getElementById("certificateDriveUrl").value || null,
-          notes: document.getElementById("certificateNotes").value || null,
-        })});
-        feedback.textContent = data.message;
+        const data = await api(file ? "/api/certificates/with-file" : "/api/certificates", { method: "POST", body: file ? formData : JSON.stringify(payload) });
+        feedback.textContent = `${data.message}${file ? "，檔案已存入 Google Drive" : ""}${["failed", "skipped_regression"].includes(data.backup_status) ? "；資料庫快照未完成，請管理員檢查" : ""}。`;
         event.target.reset();
         await loadCertificates();
       } catch (error) { feedback.textContent = error.message; }
+      finally { submitButton.disabled = false; }
     });
 
     document.getElementById("simulateForm").addEventListener("submit", async (event) => {
