@@ -503,6 +503,57 @@
       </div>
     </section>
 
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header">
+        <div>
+          <h2>當日簽單紀錄</h2>
+          <p class="muted">把紙本「三通工程行當日簽單」鍵入系統保存，可查詢、修改，並一鍵列印成與紙本相同格式（每張 A4 上下兩聯）。</p>
+        </div>
+        <div class="button-row">
+          <input id="signSlipMonth" type="month" aria-label="簽單月份">
+          <button type="button" onclick="loadSignSlips()">查詢</button>
+          <button type="button" class="button-secondary" onclick="printSignSlips()">列印此月份簽單</button>
+          <button type="button" class="button-secondary" onclick="resetSignSlipForm()">新增簽單</button>
+        </div>
+      </div>
+
+      <form id="signSlipForm" class="form-grid">
+        <input id="signSlipId" type="hidden">
+        <div><label for="signSlipNo">單號</label><input id="signSlipNo" required placeholder="0002761"></div>
+        <div><label for="signSlipDate">日期</label><input id="signSlipDate" type="date" required></div>
+        <div><label for="signSlipCustomer">客戶</label><input id="signSlipCustomer" placeholder="齊裕營造"></div>
+        <div><label for="signSlipSiteCode">工地代號</label><input id="signSlipSiteCode" placeholder="53"></div>
+        <div class="full"><label for="signSlipLocation">工作地點</label><input id="signSlipLocation"></div>
+        <div><label>2.5噸</label><input id="signSlipV25" type="number" min="0" step="1" value="0"></div>
+        <div><label>3.0噸</label><input id="signSlipV30" type="number" min="0" step="1" value="0"></div>
+        <div><label>4.5噸</label><input id="signSlipV45" type="number" min="0" step="1" value="0"></div>
+        <div><label>貨車</label><input id="signSlipTruck" type="number" min="0" step="1" value="0"></div>
+        <div><label>正常工時</label><input id="signSlipNormal" type="number" min="0" step="0.5" value="0"></div>
+        <div><label>加班工時</label><input id="signSlipOvertime" type="number" min="0" step="0.5" value="0"></div>
+        <div><label>總時數</label><input id="signSlipTotal" type="number" min="0" step="0.5" value="0"></div>
+        <div><label>開始</label><input id="signSlipStart" placeholder="08:00"></div>
+        <div><label>結束</label><input id="signSlipEnd" placeholder="17:00"></div>
+        <div><label>金額（元）</label><input id="signSlipAmount" type="number" min="0" step="1"></div>
+        <div class="full"><label for="signSlipDrivers">司機</label><input id="signSlipDrivers" placeholder="可多位，以、分隔"></div>
+        <div class="full"><label for="signSlipSignature">廠商簽名</label><input id="signSlipSignature"></div>
+        <div class="full"><label for="signSlipContent">工作內容</label><textarea id="signSlipContent" rows="4"></textarea></div>
+        <div class="full"><label for="signSlipSource">原始照片網址</label><input id="signSlipSource" type="url"></div>
+        <div class="full"><label for="signSlipNotes">備註</label><textarea id="signSlipNotes" rows="2"></textarea></div>
+        <div class="full button-row">
+          <button type="submit">保存簽單</button>
+          <button type="button" class="button-secondary" onclick="resetSignSlipForm()">清空</button>
+        </div>
+      </form>
+      <p id="signSlipFeedback" class="notice" role="status" aria-live="polite"></p>
+
+      <div class="table-wrap" style="margin-top:16px;">
+        <table>
+          <thead><tr><th>日期</th><th>單號</th><th>客戶</th><th>地點／代號</th><th>台數</th><th>正常</th><th>加班</th><th>總時數</th><th>金額</th><th>司機</th><th>操作</th></tr></thead>
+          <tbody id="signSlipRows"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel span-12" data-workspace="settings">
       <div class="panel-header">
         <div>
@@ -1856,6 +1907,208 @@
       }
     }
 
+    let signSlipCache = [];
+
+    function signSlipMonthValue() {
+      return document.getElementById("signSlipMonth").value || todayString().slice(0, 7);
+    }
+
+    async function loadSignSlips() {
+      const [year, month] = signSlipMonthValue().split("-").map(Number);
+      const params = new URLSearchParams();
+      if (year) { params.set("year", year); params.set("month", month); }
+      signSlipCache = await api(`/api/sign-slips?${params}`);
+      renderSignSlipRows();
+    }
+
+    function renderSignSlipRows() {
+      const tbody = document.getElementById("signSlipRows");
+      tbody.innerHTML = signSlipCache.map(row => {
+        const v = row.vehicles || {};
+        const count = Number(row.forklift_count)
+          || (Number(v.twoPointFive || 0) + Number(v.threePointZero || 0) + Number(v.fourPointFive || 0));
+        const amount = row.amount == null ? "-" : Number(row.amount).toLocaleString("zh-TW");
+        const loc = [row.location, row.site_code ? `（代號${row.site_code}）` : ""].filter(Boolean).join(" ");
+        return `<tr>
+          <td>${row.slip_date}</td>
+          <td>${escapeHtml(row.slip_no)}</td>
+          <td>${escapeHtml(row.customer_name || "")}</td>
+          <td>${escapeHtml(loc)}</td>
+          <td>${count}</td>
+          <td>${row.normal_hours}</td>
+          <td>${row.overtime_hours}</td>
+          <td>${row.total_hours}</td>
+          <td>${amount}</td>
+          <td>${escapeHtml(row.driver_names || "")}</td>
+          <td class="table-actions">
+            <button type="button" class="button-secondary button-compact" onclick="editSignSlip(${row.id})">編輯</button>
+            <button type="button" class="button-secondary button-compact" onclick="deleteSignSlip(${row.id})">刪除</button>
+          </td>
+        </tr>`;
+      }).join("");
+    }
+
+    function signSlipField(id) { return document.getElementById(id).value; }
+    function signSlipNum(id) { const value = parseFloat(signSlipField(id)); return Number.isFinite(value) ? value : 0; }
+
+    function collectSignSlipPayload() {
+      const vehicles = {
+        twoPointFive: signSlipNum("signSlipV25"),
+        threePointZero: signSlipNum("signSlipV30"),
+        fourPointFive: signSlipNum("signSlipV45"),
+        truck: signSlipNum("signSlipTruck"),
+      };
+      return {
+        slip_no: signSlipField("signSlipNo").trim(),
+        slip_date: signSlipField("signSlipDate"),
+        customer_name: signSlipField("signSlipCustomer").trim() || null,
+        site_code: signSlipField("signSlipSiteCode").trim() || null,
+        location: signSlipField("signSlipLocation").trim() || null,
+        vehicles,
+        forklift_count: vehicles.twoPointFive + vehicles.threePointZero + vehicles.fourPointFive,
+        normal_hours: signSlipNum("signSlipNormal"),
+        overtime_hours: signSlipNum("signSlipOvertime"),
+        total_hours: signSlipNum("signSlipTotal"),
+        start_time: signSlipField("signSlipStart").trim() || null,
+        end_time: signSlipField("signSlipEnd").trim() || null,
+        amount: signSlipField("signSlipAmount") === "" ? null : signSlipNum("signSlipAmount"),
+        driver_names: signSlipField("signSlipDrivers").trim() || null,
+        customer_signature: signSlipField("signSlipSignature").trim() || null,
+        work_content: signSlipField("signSlipContent"),
+        source_image_url: signSlipField("signSlipSource").trim() || null,
+        notes: signSlipField("signSlipNotes"),
+      };
+    }
+
+    function resetSignSlipForm() {
+      document.getElementById("signSlipForm").reset();
+      document.getElementById("signSlipId").value = "";
+      ["signSlipV25","signSlipV30","signSlipV45","signSlipTruck","signSlipNormal","signSlipOvertime","signSlipTotal"]
+        .forEach(id => { document.getElementById(id).value = 0; });
+      document.getElementById("signSlipFeedback").textContent = "";
+    }
+
+    function fillSignSlipForm(row) {
+      const v = row.vehicles || {};
+      document.getElementById("signSlipId").value = row.id;
+      document.getElementById("signSlipNo").value = row.slip_no || "";
+      document.getElementById("signSlipDate").value = row.slip_date || "";
+      document.getElementById("signSlipCustomer").value = row.customer_name || "";
+      document.getElementById("signSlipSiteCode").value = row.site_code || "";
+      document.getElementById("signSlipLocation").value = row.location || "";
+      document.getElementById("signSlipV25").value = v.twoPointFive || 0;
+      document.getElementById("signSlipV30").value = v.threePointZero || 0;
+      document.getElementById("signSlipV45").value = v.fourPointFive || 0;
+      document.getElementById("signSlipTruck").value = v.truck || 0;
+      document.getElementById("signSlipNormal").value = row.normal_hours || 0;
+      document.getElementById("signSlipOvertime").value = row.overtime_hours || 0;
+      document.getElementById("signSlipTotal").value = row.total_hours || 0;
+      document.getElementById("signSlipStart").value = row.start_time || "";
+      document.getElementById("signSlipEnd").value = row.end_time || "";
+      document.getElementById("signSlipAmount").value = row.amount == null ? "" : row.amount;
+      document.getElementById("signSlipDrivers").value = row.driver_names || "";
+      document.getElementById("signSlipSignature").value = row.customer_signature || "";
+      document.getElementById("signSlipContent").value = row.work_content || "";
+      document.getElementById("signSlipSource").value = row.source_image_url || "";
+      document.getElementById("signSlipNotes").value = row.notes || "";
+    }
+
+    function editSignSlip(id) {
+      const row = signSlipCache.find(item => item.id === id);
+      if (row) {
+        fillSignSlipForm(row);
+        document.getElementById("signSlipForm").scrollIntoView({ behavior: "smooth" });
+      }
+    }
+
+    async function deleteSignSlip(id) {
+      const row = signSlipCache.find(item => item.id === id);
+      if (!row) return;
+      if (!confirm(`確定刪除簽單 ${row.slip_no}（${row.slip_date}）？`)) return;
+      await api(`/api/sign-slips/${id}`, { method: "DELETE" });
+      document.getElementById("signSlipFeedback").textContent = "簽單已刪除。";
+      await loadSignSlips();
+    }
+
+    function rocDateText(iso) {
+      const [year, month, day] = iso.split("-").map(Number);
+      return `${year - 1911} 年 ${month} 月 ${day} 日`;
+    }
+
+    function buildRecordSignSlip(row, copyLabel, isMaster) {
+      const v = row.vehicles || {};
+      const amountText = row.amount == null ? "" : `${Number(row.amount).toLocaleString("zh-TW")} 元整`;
+      const timeText = (row.start_time || row.end_time)
+        ? `${row.start_time || ""} 時　起至　${row.end_time || ""} 時止` : "";
+      const copyAttributes = isMaster
+        ? 'contenteditable="true" data-sign-slip-role="master"'
+        : 'contenteditable="false" data-sign-slip-role="copy" style="pointer-events:none;"';
+      return `<section class="sign-slip" ${copyAttributes} spellcheck="false">
+        <div class="slip-main">
+          <header class="slip-header">
+            <div class="slip-heading"><div class="company">三　通　工　程　行</div><h1>起重專業出租</h1></div>
+            <div class="doc-no"><span class="no-label">№</span> ${escapeHtml(row.slip_no)}</div>
+          </header>
+          <div class="slip-subhead"><div class="customer-field">客戶：<span class="fill-line">${escapeHtml(row.customer_name || "")}</span></div><div class="license-label">台照</div><div>${rocDateText(row.slip_date)}</div></div>
+          <table class="form-table">
+            <colgroup><col class="label-col"><col><col><col><col><col class="small-col"><col class="wide-col"></colgroup>
+            <tr class="location-row"><th>工作地點</th><td colspan="6">${escapeHtml([row.location, row.site_code ? `代號${row.site_code}` : ""].filter(Boolean).join(" "))}</td></tr>
+            <tr class="content-row"><th>工作內容</th><td colspan="6" style="white-space:pre-line">${escapeHtml(row.work_content || "")}</td></tr>
+            <tr class="vehicle-row"><th rowspan="2">配用車輛</th><th>2.5噸</th><th>3.0噸</th><th>4.5噸</th><th>貨車</th><th rowspan="2">總時數</th><td class="total-hours-cell" rowspan="2">${row.total_hours}小時</td></tr>
+            <tr class="vehicle-values"><td>${v.twoPointFive || ""}</td><td>${v.threePointZero || ""}</td><td>${v.fourPointFive || ""}</td><td>${v.truck || ""}</td></tr>
+            <tr class="time-row"><th>工作時間</th><td colspan="6">${escapeHtml(timeText)}</td></tr>
+            <tr class="amount-row"><th>金　額</th><td colspan="6">${escapeHtml(amountText)}</td></tr>
+            <tr class="signature-row"><th>司　機</th><td class="driver-name-cell" colspan="3">${escapeHtml(row.driver_names || "")}</td><th>廠商<br>簽名</th><td colspan="2">${escapeHtml(row.customer_signature || "")}</td></tr>
+          </table>
+          <div class="phone-row">電話：0978-909-078　　0937-028-972</div>
+        </div>
+        <aside class="copy-label"><span>${escapeHtml(copyLabel)}</span></aside>
+      </section>`;
+    }
+
+    function printSignSlips() {
+      const rows = signSlipCache;
+      if (!rows.length) {
+        document.getElementById("signSlipFeedback").textContent = "此月份沒有簽單可列印。";
+        return;
+      }
+      const pages = rows.map(row => `<div class="print-sheet">
+        ${buildRecordSignSlip(row, "第一聯：請款", true)}
+        ${buildRecordSignSlip(row, "第二聯：客戶", false)}
+      </div>`).join("");
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        document.getElementById("signSlipFeedback").textContent = "瀏覽器封鎖了預覽視窗，請允許彈出式視窗後再試。";
+        return;
+      }
+      printWindow.opener = null;
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>三通工程行當日簽單</title><style>
+        *{box-sizing:border-box}body{margin:0;background:#dedbd3;color:#111;font-family:"DFKai-SB","BiauKai","Microsoft JhengHei",sans-serif;font-size:14px}.toolbar{position:sticky;top:0;z-index:5;display:flex;justify-content:center;align-items:center;gap:12px;padding:12px;background:#243f35;color:white;font-family:"Microsoft JhengHei",sans-serif}.toolbar button{border:0;border-radius:8px;padding:10px 18px;font-size:17px;font-weight:700;cursor:pointer}.toolbar .primary{background:#d98043;color:white}.print-sheet{width:210mm;height:297mm;margin:16px auto;background:#fff;box-shadow:0 8px 30px #0002;page-break-after:always;overflow:hidden}.print-sheet:last-child{page-break-after:auto}.sign-slip{display:grid;grid-template-columns:minmax(0,1fr) 9mm;width:210mm;height:148.5mm;margin:0;padding:3mm 4mm 2.5mm 6mm;background:#fff;overflow:hidden}.sign-slip:first-child{border-bottom:1px dashed #777}.slip-main{display:flex;min-width:0;flex-direction:column}.slip-header{position:relative;min-height:18mm;text-align:center}.slip-heading{display:inline-block}.company{font-size:25px;font-weight:700;letter-spacing:.27em}.slip-header h1{margin:1px 0 0;font-size:22px;letter-spacing:.1em}.doc-no{position:absolute;right:1mm;bottom:2mm;color:#a8574d;font-family:Georgia,serif;font-size:19px;letter-spacing:.04em}.no-label{color:#222;font-size:16px}.slip-subhead{display:grid;grid-template-columns:1.35fr auto 1fr;align-items:end;gap:8px;margin-bottom:1mm;padding:0 2mm;font-size:15px;font-weight:700}.slip-subhead>div:last-child{text-align:right}.customer-field{display:flex;align-items:baseline;gap:2mm;white-space:nowrap}.fill-line{display:inline-block;min-width:30mm;border-bottom:1px solid #222;color:#111;text-align:left}.license-label{text-align:center}.form-table{width:100%;border:1.5px solid #111;border-collapse:collapse;table-layout:fixed;font-size:14px}.form-table th,.form-table td{border:1px solid #111;padding:2px 4px;text-align:center;vertical-align:middle}.form-table th{font-weight:500}.label-col{width:20mm}.small-col{width:18mm}.wide-col{width:25mm}.location-row{height:8mm}.location-row td{text-align:left;font-size:15px}.content-row{height:38mm}.content-row td{text-align:left;vertical-align:top;line-height:1.2;font-size:14px}.vehicle-row{height:6mm}.vehicle-values{height:6mm}.time-row,.amount-row{height:7mm}.time-row td,.amount-row td{font-size:14px;letter-spacing:.03em}.signature-row{height:16mm}.signature-row th:nth-of-type(2){line-height:1.1}.driver-name-cell{font-size:30px;line-height:1;font-weight:700}.phone-row{padding:1.5mm 8mm 0;text-align:right;font-family:"Microsoft JhengHei",sans-serif;font-size:13px;font-weight:700}.copy-label{display:flex;align-items:center;justify-content:center;padding:20mm 0 3mm;font-size:12px;font-weight:700}.copy-label span{writing-mode:vertical-rl;letter-spacing:.06em}@page{size:A4 portrait;margin:0}@media print{body{background:white}.toolbar{display:none}.print-sheet{margin:0;box-shadow:none}}
+      </style></head><body><div class="toolbar"><span>每張 A4 上下兩聯；第一聯可臨時修改，第二聯請以系統資料為準</span><button class="primary" onclick="window.print()">列印／另存 PDF</button><button onclick="window.close()">關閉</button></div>${pages}</body></html>`);
+      printWindow.document.close();
+    }
+
+    document.getElementById("signSlipForm").addEventListener("submit", async event => {
+      event.preventDefault();
+      const feedback = document.getElementById("signSlipFeedback");
+      const id = document.getElementById("signSlipId").value;
+      const payload = collectSignSlipPayload();
+      try {
+        if (id) {
+          await api(`/api/sign-slips/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+          feedback.textContent = `簽單 ${payload.slip_no} 已更新。`;
+        } else {
+          await api("/api/sign-slips", { method: "POST", body: JSON.stringify(payload) });
+          feedback.textContent = `簽單 ${payload.slip_no} 已新增。`;
+        }
+        resetSignSlipForm();
+        await loadSignSlips();
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    });
+
     async function bootstrap() {
       document.getElementById("workDate").value = todayString();
       document.getElementById("journalDate").value = todayString();
@@ -1869,6 +2122,7 @@
       document.getElementById("meetingAt").value = `${todayString()}T09:00`;
       const currentMonth = todayString().slice(0, 7);
       document.getElementById("calendarMonth").value = currentMonth;
+      document.getElementById("signSlipMonth").value = currentMonth;
       document.getElementById("forkliftAttendanceFrom").value = `${currentMonth}-01`;
       document.getElementById("forkliftAttendanceTo").value = todayString();
       await loadMeta();
@@ -1900,6 +2154,7 @@
         loadCalendar(),
         loadContracts(),
         loadCertificates(),
+        loadSignSlips(),
         loadForkliftAttendanceStats(),
       ]);
       const selectedJournalIndex = selectedJournalSiteIndex();

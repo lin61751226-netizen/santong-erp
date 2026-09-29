@@ -48,6 +48,7 @@ from app.models import (
     NotificationDelivery,
     PhotoUploadLog,
     Role,
+    SignSlipRecord,
     WorkAssignment,
     WorkReportEvent,
     Worksite,
@@ -74,6 +75,9 @@ from app.schemas import (
     WorksiteJournalHoursUpdate,
     CertificateCreate,
     ContractCreate,
+    SignSlipCreate,
+    SignSlipUpdate,
+    SignSlipBatch,
 )
 from app.services.hr import (
     apply_reassignment_to_assignment,
@@ -1080,6 +1084,204 @@ def update_contract_status(
         summary=f"{'啟用' if is_active else '停用'}合約：{item.title}",
     )
     return {"message": "合約狀態已更新", "contract": _serialize_contract(session, item)}
+
+
+def _serialize_sign_slip(item: SignSlipRecord) -> dict:
+    return {
+        "id": item.id,
+        "slip_no": item.slip_no,
+        "slip_date": item.slip_date.isoformat(),
+        "customer_name": item.customer_name,
+        "worksite_id": item.worksite_id,
+        "site_code": item.site_code,
+        "location": item.location,
+        "work_content": item.work_content,
+        "vehicles": item.vehicles or {},
+        "forklift_count": item.forklift_count,
+        "normal_hours": item.normal_hours,
+        "overtime_hours": item.overtime_hours,
+        "total_hours": item.total_hours,
+        "start_time": item.start_time,
+        "end_time": item.end_time,
+        "amount": item.amount,
+        "driver_names": item.driver_names,
+        "customer_signature": item.customer_signature,
+        "source_image_url": item.source_image_url,
+        "notes": item.notes,
+        "is_active": item.is_active,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+    }
+
+
+@router.get("/sign-slips")
+def list_sign_slips(
+    year: Optional[int] = Query(default=None),
+    month: Optional[int] = Query(default=None),
+    include_inactive: bool = Query(default=False),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(get_current_actor),
+):
+    statement = select(SignSlipRecord).order_by(SignSlipRecord.slip_date, SignSlipRecord.id)
+    if not include_inactive:
+        statement = statement.where(SignSlipRecord.is_active.is_(True))
+    rows = session.exec(statement).all()
+    if year is not None:
+        rows = [item for item in rows if item.slip_date.year == year]
+    if month is not None:
+        rows = [item for item in rows if item.slip_date.month == month]
+    if actor.role == Role.site_manager:
+        rows = [item for item in rows if item.worksite_id == actor.home_site_id]
+    return [_serialize_sign_slip(item) for item in rows]
+
+
+@router.post("/sign-slips", status_code=status.HTTP_201_CREATED)
+def create_sign_slip(
+    payload: SignSlipCreate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    slip_no = payload.slip_no.strip()
+    existing = session.exec(
+        select(SignSlipRecord).where(SignSlipRecord.slip_no == slip_no)
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"簽單單號 {slip_no} 已存在")
+    item = SignSlipRecord(
+        slip_no=slip_no,
+        slip_date=payload.slip_date,
+        customer_name=(payload.customer_name or "").strip() or None,
+        worksite_id=payload.worksite_id,
+        site_code=(payload.site_code or "").strip() or None,
+        location=(payload.location or "").strip() or None,
+        work_content=payload.work_content,
+        vehicles=payload.vehicles or {},
+        forklift_count=payload.forklift_count,
+        normal_hours=payload.normal_hours,
+        overtime_hours=payload.overtime_hours,
+        total_hours=payload.total_hours,
+        start_time=payload.start_time,
+        end_time=payload.end_time,
+        amount=payload.amount,
+        driver_names=(payload.driver_names or "").strip() or None,
+        customer_signature=(payload.customer_signature or "").strip() or None,
+        source_image_url=payload.source_image_url,
+        notes=payload.notes,
+        created_by_id=actor.id,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    _write_admin_audit(
+        session, actor, action="create", entity_type="sign_slip", entity_id=item.id,
+        summary=f"新增當日簽單 {item.slip_no}（{item.slip_date.isoformat()}）",
+    )
+    return {"message": "當日簽單已新增", "sign_slip": _serialize_sign_slip(item)}
+
+
+@router.post("/sign-slips/batch")
+def batch_create_sign_slips(
+    payload: SignSlipBatch,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    created, skipped, updated = [], [], []
+    for data in payload.items:
+        slip_no = data.slip_no.strip()
+        existing = session.exec(
+            select(SignSlipRecord).where(SignSlipRecord.slip_no == slip_no)
+        ).first()
+        fields = dict(
+            slip_date=data.slip_date,
+            customer_name=(data.customer_name or "").strip() or None,
+            worksite_id=data.worksite_id,
+            site_code=(data.site_code or "").strip() or None,
+            location=(data.location or "").strip() or None,
+            work_content=data.work_content,
+            vehicles=data.vehicles or {},
+            forklift_count=data.forklift_count,
+            normal_hours=data.normal_hours,
+            overtime_hours=data.overtime_hours,
+            total_hours=data.total_hours,
+            start_time=data.start_time,
+            end_time=data.end_time,
+            amount=data.amount,
+            driver_names=(data.driver_names or "").strip() or None,
+            customer_signature=(data.customer_signature or "").strip() or None,
+            source_image_url=data.source_image_url,
+            notes=data.notes,
+        )
+        if existing is None:
+            session.add(SignSlipRecord(slip_no=slip_no, created_by_id=actor.id, **fields))
+            created.append(slip_no)
+        elif payload.overwrite:
+            for key, value in fields.items():
+                setattr(existing, key, value)
+            existing.updated_at = datetime.utcnow()
+            session.add(existing)
+            updated.append(slip_no)
+        else:
+            skipped.append(slip_no)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="import", entity_type="sign_slip", entity_id=None,
+        summary=f"批次建立簽單：新增 {len(created)}、更新 {len(updated)}、略過 {len(skipped)}",
+    )
+    return {"created": created, "updated": updated, "skipped": skipped,
+            "count": len(created) + len(updated)}
+
+
+@router.patch("/sign-slips/{slip_id}")
+def update_sign_slip(
+    slip_id: int,
+    payload: SignSlipUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    item = session.get(SignSlipRecord, slip_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到簽單")
+    data = payload.model_dump(exclude_unset=True)
+    if "slip_no" in data:
+        new_no = (data["slip_no"] or "").strip()
+        clash = session.exec(
+            select(SignSlipRecord).where(SignSlipRecord.slip_no == new_no, SignSlipRecord.id != item.id)
+        ).first()
+        if clash:
+            raise HTTPException(status_code=400, detail=f"簽單單號 {new_no} 已存在")
+        data["slip_no"] = new_no
+    for key, value in data.items():
+        if isinstance(value, str):
+            value = value.strip() or None
+        setattr(item, key, value)
+    item.updated_at = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    _write_admin_audit(
+        session, actor, action="update", entity_type="sign_slip", entity_id=item.id,
+        summary=f"修改當日簽單 {item.slip_no}",
+    )
+    return {"message": "當日簽單已更新", "sign_slip": _serialize_sign_slip(item)}
+
+
+@router.delete("/sign-slips/{slip_id}")
+def delete_sign_slip(
+    slip_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    item = session.get(SignSlipRecord, slip_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="找不到簽單")
+    summary_no = item.slip_no
+    session.delete(item)
+    session.commit()
+    _write_admin_audit(
+        session, actor, action="delete", entity_type="sign_slip", entity_id=slip_id,
+        summary=f"刪除當日簽單 {summary_no}",
+    )
+    return {"message": "當日簽單已刪除"}
 
 
 @router.get("/certificates")

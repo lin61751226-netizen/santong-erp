@@ -364,6 +364,39 @@ class GroupTextLog(SQLModel, table=True):
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 
+class SignSlipRecord(SQLModel, table=True):
+    """紙本「當日簽單」結構化紀錄；原始紙本／照片另存，資料庫保存可查詢、可列印欄位。"""
+
+    __table_args__ = (
+        UniqueConstraint("slip_no", name="uq_sign_slip_record_no"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    slip_no: str = Field(index=True)                          # 紙本單號，如 0002761
+    slip_date: date = Field(index=True)
+    customer_name: Optional[str] = Field(default=None, index=True)
+    worksite_id: Optional[int] = Field(default=None, foreign_key="worksite.id", index=True)
+    site_code: Optional[str] = None                          # 如 53
+    location: Optional[str] = None                           # 工作地點文字
+    work_content: Optional[str] = Field(default=None, sa_column=Column(Text))
+    vehicles: dict = Field(default_factory=dict, sa_column=Column(JSON))  # twoPointFive/threePointZero/fourPointFive/truck
+    forklift_count: float = 0
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    total_hours: float = 0
+    start_time: Optional[str] = None                         # 如 08:00
+    end_time: Optional[str] = None                           # 如 17:00
+    amount: Optional[int] = None                             # 金額（整數元）
+    driver_names: Optional[str] = None                       # 司機，可多位
+    customer_signature: Optional[str] = None                 # 廠商簽名
+    source_image_url: Optional[str] = None                   # 原始紙本照片
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_active: bool = Field(default=True, index=True)
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class MeetingRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(index=True)

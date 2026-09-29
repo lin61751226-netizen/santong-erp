@@ -293,3 +293,54 @@ class ForkliftRentalUpdate(BaseModel):
     deposit: Optional[int] = None
     tax: Optional[int] = None
     status: Optional[str] = None
+
+
+# ---- 當日簽單紀錄 ----
+class SignSlipCreate(BaseModel):
+    slip_no: str
+    slip_date: date
+    customer_name: Optional[str] = None
+    worksite_id: Optional[int] = None
+    site_code: Optional[str] = None
+    location: Optional[str] = None
+    work_content: Optional[str] = None
+    vehicles: dict = Field(default_factory=dict)
+    forklift_count: float = 0
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    total_hours: float = 0
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    amount: Optional[int] = None
+    driver_names: Optional[str] = None
+    customer_signature: Optional[str] = None
+    source_image_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class SignSlipUpdate(BaseModel):
+    slip_no: Optional[str] = None
+    slip_date: Optional[date] = None
+    customer_name: Optional[str] = None
+    worksite_id: Optional[int] = None
+    site_code: Optional[str] = None
+    location: Optional[str] = None
+    work_content: Optional[str] = None
+    vehicles: Optional[dict] = None
+    forklift_count: Optional[float] = None
+    normal_hours: Optional[float] = None
+    overtime_hours: Optional[float] = None
+    total_hours: Optional[float] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    amount: Optional[int] = None
+    driver_names: Optional[str] = None
+    customer_signature: Optional[str] = None
+    source_image_url: Optional[str] = None
+    notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class SignSlipBatch(BaseModel):
+    items: list[SignSlipCreate]
+    overwrite: bool = False
