@@ -1114,6 +1114,16 @@ def _serialize_sign_slip(item: SignSlipRecord) -> dict:
     }
 
 
+def _sign_slip_worksite_id(session: Session, worksite_id: int | None, site_code: str | None) -> int | None:
+    if worksite_id is not None:
+        return worksite_id
+    code = (site_code or "").strip()
+    if not code:
+        return None
+    site = session.exec(select(Worksite).where(Worksite.code == code)).first()
+    return site.id if site else None
+
+
 @router.get("/sign-slips")
 def list_sign_slips(
     year: Optional[int] = Query(default=None),
@@ -1151,7 +1161,7 @@ async def create_sign_slip(
         slip_no=slip_no,
         slip_date=payload.slip_date,
         customer_name=(payload.customer_name or "").strip() or None,
-        worksite_id=payload.worksite_id,
+        worksite_id=_sign_slip_worksite_id(session, payload.worksite_id, payload.site_code),
         site_code=(payload.site_code or "").strip() or None,
         location=(payload.location or "").strip() or None,
         work_content=payload.work_content,
@@ -1196,7 +1206,7 @@ async def batch_create_sign_slips(
         fields = dict(
             slip_date=data.slip_date,
             customer_name=(data.customer_name or "").strip() or None,
-            worksite_id=data.worksite_id,
+            worksite_id=_sign_slip_worksite_id(session, data.worksite_id, data.site_code),
             site_code=(data.site_code or "").strip() or None,
             location=(data.location or "").strip() or None,
             work_content=data.work_content,
@@ -1256,6 +1266,8 @@ async def update_sign_slip(
         if clash:
             raise HTTPException(status_code=400, detail=f"簽單單號 {new_no} 已存在")
         data["slip_no"] = new_no
+    if "site_code" in data and "worksite_id" not in data:
+        data["worksite_id"] = _sign_slip_worksite_id(session, None, data["site_code"])
     for key, value in data.items():
         if isinstance(value, str):
             value = value.strip() or None
@@ -3097,18 +3109,24 @@ def list_worksite_journals(
     inspection_statement = select(ForkliftInspection).where(
         ForkliftInspection.inspection_date == journal_date
     )
+    sign_slip_statement = select(SignSlipRecord).where(
+        SignSlipRecord.slip_date == journal_date,
+        SignSlipRecord.is_active.is_(True),
+    )
     if allowed_site_id:
         group_statement = group_statement.where(GroupTextLog.site_id == allowed_site_id)
         attendance_statement = attendance_statement.where(AttendanceEvent.site_id == allowed_site_id)
         photo_statement = photo_statement.where(PhotoUploadLog.site_id == allowed_site_id)
         assignment_statement = assignment_statement.where(WorkAssignment.site_id == allowed_site_id)
         inspection_statement = inspection_statement.where(ForkliftInspection.site_id == allowed_site_id)
+        sign_slip_statement = sign_slip_statement.where(SignSlipRecord.worksite_id == allowed_site_id)
 
     group_logs = session.exec(group_statement.order_by(GroupTextLog.sent_at)).all()
     attendance_logs = session.exec(attendance_statement.order_by(AttendanceEvent.happened_at)).all()
     photo_logs = session.exec(photo_statement.order_by(PhotoUploadLog.uploaded_at)).all()
     assignments = session.exec(assignment_statement.order_by(WorkAssignment.start_time, WorkAssignment.id)).all()
     inspections = session.exec(inspection_statement.order_by(ForkliftInspection.created_at)).all()
+    sign_slips = session.exec(sign_slip_statement.order_by(SignSlipRecord.id)).all()
     saved_hours_statement = select(WorksiteJournalHours).where(
         WorksiteJournalHours.work_date == journal_date
     )
@@ -3135,6 +3153,7 @@ def list_worksite_journals(
                 "attendance": [],
                 "inspections": [],
                 "photos": [],
+                "sign_slips": [],
             }
         return buckets[site_id]
 
@@ -3212,6 +3231,10 @@ def list_worksite_journals(
             "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
             "note": photo.note,
         })
+
+    for slip in sign_slips:
+        if slip.worksite_id is not None and slip.worksite_id in worksites:
+            bucket_for(slip.worksite_id)["sign_slips"].append(_serialize_sign_slip(slip))
 
     saved_hours_by_site = {item.worksite_id: item for item in saved_hours}
     for site_id in saved_hours_by_site:

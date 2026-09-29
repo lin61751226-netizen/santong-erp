@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
-from app.models import Employee, Role, Worksite
+from app.models import Employee, Role, SignSlipRecord, Worksite
 from app.services.google_drive import google_drive_worklog_service
 
 
@@ -133,3 +135,51 @@ class TestSignSlips:
         app.dependency_overrides[get_current_actor] = lambda: self.worker
         response = self._batch([_item("0002761", "2026-09-01")])
         assert response.status_code == 403
+
+    def test_eight_saved_slips_appear_on_each_day_in_site_53_journal(self):
+        source = Path(__file__).parents[2] / "sign_slips_0901_0908.json"
+        items = json.loads(source.read_text(encoding="utf-8"))["items"]
+        imported = self._batch(items)
+        assert imported.status_code == 200, imported.text
+        assert len(imported.json()["created"]) == 8
+
+        for source_item in items:
+            day = source_item["slip_date"]
+            response = self.client.get(f"/api/worksite-journals?target_date={day}")
+            assert response.status_code == 200, response.text
+            sites = response.json()["sites"]
+            assert len(sites) == 1
+            assert sites[0]["site_id"] == self.site.id
+            assert sites[0]["site_code"] == "53"
+            slips = sites[0]["sign_slips"]
+            assert len(slips) == 1
+            assert slips[0]["slip_no"] == source_item["slip_no"]
+            assert slips[0]["work_content"] == source_item["work_content"]
+
+        saved = self.session.exec(select(SignSlipRecord)).all()
+        assert len(saved) == 8
+        changed = self.client.patch(f"/api/sign-slips/{saved[0].id}", json={"work_content": "人工修正後內容"})
+        assert changed.status_code == 200, changed.text
+        refreshed = self.client.get("/api/worksite-journals?target_date=2026-09-01").json()
+        assert refreshed["sites"][0]["sign_slips"][0]["work_content"] == "人工修正後內容"
+
+        manager = Employee(
+            employee_code="M001", name="53主管", bind_token="m1",
+            role=Role.site_manager, home_site_id=self.site.id,
+        )
+        self.session.add(manager)
+        self.session.commit()
+        app.dependency_overrides[get_current_actor] = lambda: manager
+        scoped = self.client.get("/api/worksite-journals?target_date=2026-09-01")
+        assert scoped.status_code == 200
+        assert scoped.json()["sites"][0]["sign_slips"][0]["slip_no"] == "0002761"
+
+    def test_journal_existing_slip_button_opens_saved_edit_form(self):
+        template = (Path(__file__).parents[1] / "app" / "templates" / "index.html").read_text(encoding="utf-8")
+        assert 'onclick="openJournalSignSlip(${siteIndex})"' in template
+        assert "const saved = site.sign_slips || [];" in template
+        assert 'const current = signSlipCache.find(item => item.id === selected.id);' in template
+        assert 'fillSignSlipForm(current);' in template
+        assert 'setWorkspace("documents");' in template
+        assert 'onclick="printSingleSignSlip(${row.id})"' in template
+        assert 'function printSignSlips(rows = signSlipCache)' in template
