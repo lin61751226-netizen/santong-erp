@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
@@ -8,6 +10,7 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
 from app.models import Employee, Role, Worksite
+from app.services.google_drive import google_drive_worklog_service
 
 
 def _item(slip_no: str, slip_date: str, **overrides):
@@ -98,6 +101,28 @@ class TestSignSlips:
         deleted = self.client.delete(f"/api/sign-slips/{slip_id}")
         assert deleted.status_code == 200
         assert self.client.get("/api/sign-slips?year=2026&month=9").json() == []
+        inactive = self.client.get("/api/sign-slips?year=2026&month=9&include_inactive=true").json()
+        assert len(inactive) == 1
+        assert inactive[0]["slip_no"] == "0002761"
+        assert inactive[0]["is_active"] is False
+
+    def test_writes_trigger_snapshot_backup(self):
+        with patch.object(google_drive_worklog_service, "backup_database", new_callable=AsyncMock) as backup:
+            backup.return_value = {"status": "saved"}
+            created = self.client.post("/api/sign-slips", json=_item("0002761", "2026-09-01"))
+            assert created.status_code == 201
+            slip_id = created.json()["sign_slip"]["id"]
+            assert created.json()["backup_status"] == "saved"
+
+            skipped = self._batch([_item("0002761", "2026-09-01")])
+            assert skipped.json()["backup_status"] == "no_change"
+
+            patched = self.client.patch(f"/api/sign-slips/{slip_id}", json={"notes": "待核"})
+            assert patched.json()["backup_status"] == "saved"
+
+            deleted = self.client.delete(f"/api/sign-slips/{slip_id}")
+            assert deleted.json()["backup_status"] == "saved"
+            assert backup.await_count == 3
 
     def test_duplicate_slip_no_rejected(self):
         self._batch([_item("0002761", "2026-09-01")])

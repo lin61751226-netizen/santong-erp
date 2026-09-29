@@ -1136,7 +1136,7 @@ def list_sign_slips(
 
 
 @router.post("/sign-slips", status_code=status.HTTP_201_CREATED)
-def create_sign_slip(
+async def create_sign_slip(
     payload: SignSlipCreate,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -1176,11 +1176,13 @@ def create_sign_slip(
         session, actor, action="create", entity_type="sign_slip", entity_id=item.id,
         summary=f"新增當日簽單 {item.slip_no}（{item.slip_date.isoformat()}）",
     )
-    return {"message": "當日簽單已新增", "sign_slip": _serialize_sign_slip(item)}
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "當日簽單已新增", "sign_slip": _serialize_sign_slip(item),
+            "backup_status": backup.get("status")}
 
 
 @router.post("/sign-slips/batch")
-def batch_create_sign_slips(
+async def batch_create_sign_slips(
     payload: SignSlipBatch,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -1227,12 +1229,16 @@ def batch_create_sign_slips(
         session, actor, action="import", entity_type="sign_slip", entity_id=None,
         summary=f"批次建立簽單：新增 {len(created)}、更新 {len(updated)}、略過 {len(skipped)}",
     )
+    backup_status = "no_change"
+    if created or updated:
+        backup = await google_drive_worklog_service.backup_database()
+        backup_status = backup.get("status")
     return {"created": created, "updated": updated, "skipped": skipped,
-            "count": len(created) + len(updated)}
+            "count": len(created) + len(updated), "backup_status": backup_status}
 
 
 @router.patch("/sign-slips/{slip_id}")
-def update_sign_slip(
+async def update_sign_slip(
     slip_id: int,
     payload: SignSlipUpdate,
     session: Session = Depends(get_session),
@@ -1262,11 +1268,13 @@ def update_sign_slip(
         session, actor, action="update", entity_type="sign_slip", entity_id=item.id,
         summary=f"修改當日簽單 {item.slip_no}",
     )
-    return {"message": "當日簽單已更新", "sign_slip": _serialize_sign_slip(item)}
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "當日簽單已更新", "sign_slip": _serialize_sign_slip(item),
+            "backup_status": backup.get("status")}
 
 
 @router.delete("/sign-slips/{slip_id}")
-def delete_sign_slip(
+async def delete_sign_slip(
     slip_id: int,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
@@ -1275,13 +1283,16 @@ def delete_sign_slip(
     if not item:
         raise HTTPException(status_code=404, detail="找不到簽單")
     summary_no = item.slip_no
-    session.delete(item)
+    item.is_active = False
+    item.updated_at = datetime.utcnow()
+    session.add(item)
     session.commit()
     _write_admin_audit(
         session, actor, action="delete", entity_type="sign_slip", entity_id=slip_id,
         summary=f"刪除當日簽單 {summary_no}",
     )
-    return {"message": "當日簽單已刪除"}
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "當日簽單已停用", "backup_status": backup.get("status")}
 
 
 @router.get("/certificates")

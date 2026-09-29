@@ -37,6 +37,7 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
     def test_business_records_are_protected_from_older_snapshots(self) -> None:
         self.assertIn("contractrecord", PRESERVED_DATABASE_TABLES)
         self.assertIn("certificaterecord", PRESERVED_DATABASE_TABLES)
+        self.assertIn("signsliprecord", PRESERVED_DATABASE_TABLES)
 
     async def test_upload_access_check_is_read_only(self) -> None:
         service = GoogleDriveWorklogService()

@@ -2095,12 +2095,16 @@
       const id = document.getElementById("signSlipId").value;
       const payload = collectSignSlipPayload();
       try {
+        let result;
         if (id) {
-          await api(`/api/sign-slips/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+          result = await api(`/api/sign-slips/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
           feedback.textContent = `簽單 ${payload.slip_no} 已更新。`;
         } else {
-          await api("/api/sign-slips", { method: "POST", body: JSON.stringify(payload) });
+          result = await api("/api/sign-slips", { method: "POST", body: JSON.stringify(payload) });
           feedback.textContent = `簽單 ${payload.slip_no} 已新增。`;
+        }
+        if (result.backup_status === "failed" || result.backup_status === "skipped_regression") {
+          feedback.textContent += " 注意：雲端備份未完成，重新部署前請先確認備份狀態。";
         }
         resetSignSlipForm();
         await loadSignSlips();

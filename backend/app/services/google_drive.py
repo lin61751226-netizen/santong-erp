@@ -64,6 +64,7 @@ PRESERVED_DATABASE_TABLES = (
     "manageddocument",
     "contractrecord",
     "certificaterecord",
+    "signsliprecord",
     "workhourimportlog",
 )
 
