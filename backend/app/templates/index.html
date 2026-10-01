@@ -66,10 +66,7 @@
       <div class="hero-card">
         <span class="eyebrow">Santong Internal Ops</span>
         <h1>{{ app_name }}</h1>
-        <p class="hero-copy">
-          這不是測試型 LINE Bot，而是以 LINE 為入口、資料庫為核心、後台為控制中心的第一版內部自動化系統。
-          目前已可處理身分綁定、每日工作安排、通知推播、請假審核、會議記錄與個人考勤查詢。
-        </p>
+        <p class="hero-copy">先選功能，再選操作；一次處理一件事，資料與紀錄完整保留。</p>
       </div>
       <aside class="hero-card hero-side">
         <div class="user-chip">
@@ -101,6 +98,21 @@
       <button type="button" class="workspace-tab" data-workspace-tab="documents" onclick="setWorkspace('documents')">文件與計價</button>
       <button type="button" class="workspace-tab" data-workspace-tab="settings" onclick="setWorkspace('settings')">LINE 與系統</button>
     </nav>
+    <div class="mobile-workspace-nav">
+      <label for="workspaceMain">功能區</label>
+      <select id="workspaceMain" onchange="setWorkspace(this.value)"></select>
+    </div>
+
+    <div id="workspaceTools" class="workspace-tools" hidden>
+      <label for="workspaceView">選擇操作</label>
+      <select id="workspaceView" onchange="setWorkspaceView(this.value)"></select>
+      <span id="workspaceViewHint" class="muted"></span>
+    </div>
+    <details id="actionResult" class="action-result" hidden>
+      <summary id="actionResultTitle">操作結果</summary>
+      <button type="button" class="button-secondary button-compact" onclick="document.getElementById('actionResult').hidden = true">關閉提示</button>
+      <pre id="actionResultBody" aria-live="polite"></pre>
+    </details>
 
     <section class="panel span-12" data-workspace="overview">
       <div class="panel-header">
@@ -417,10 +429,9 @@
           <p class="muted">選作業月份後，系統依每日工作日誌的派工／點檢堆高機台數×8 小時，自動彙整各標別整月正常工時；先整月預覽確認，再一次寫入 Google Drive 計價檔。</p>
         </div>
       </div>
-      <div class="action-callout">
-        <strong>計價與安全規則</strong>
-        <span>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率：週日與國定假日使用第 25 列，週一至週六其餘日期使用第 24 列。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</span>
-      </div>
+      <details class="pricing-rules"><summary>查看計價與安全規則</summary>
+        <p>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率：週日與國定假日使用第 25 列，週一至週六其餘日期使用第 24 列。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</p>
+      </details>
       <form id="costMonthImportForm" class="form-grid">
         <div><label for="costMonthDocument">推高機計價表</label><select id="costMonthDocument" required></select></div>
         <div><label for="costMonthMonth">作業月份</label><input id="costMonthMonth" type="month" required></div>
@@ -432,7 +443,7 @@
         </div>
       </form>
       <p id="costMonthFeedback" class="notice" role="status" aria-live="polite">請先選推高機計價表與作業月份，再按整月預覽。</p>
-      <div id="costMonthPreview" class="console" hidden style="white-space:normal;max-height:60vh;overflow:auto;"></div>
+      <div id="costMonthPreview" class="pricing-preview" hidden></div>
     </section>
 
     <section class="panel span-12" data-workspace="documents">
@@ -1080,6 +1091,27 @@
     </div>
   </div>
 
+  <dialog id="documentReader" class="document-reader" aria-labelledby="documentReaderTitle">
+    <div class="reader-header">
+      <div><span class="eyebrow">Excel 表格閱讀</span><h2 id="documentReaderTitle">文件預覽</h2></div>
+      <button type="button" class="button-secondary" onclick="closeDocumentReader()">關閉</button>
+    </div>
+    <div class="reader-toolbar">
+      <div><label for="readerSheet">工作表</label><select id="readerSheet" onchange="loadDocumentSheet(true)"></select></div>
+      <div><label for="readerFontSize">字體大小</label><select id="readerFontSize" onchange="setReaderFontSize(this.value)"><option value="16">標準 16</option><option value="20" selected>大字 20</option><option value="24">特大 24</option><option value="28">最大 28</option></select></div>
+      <a id="readerDriveLink" class="button-secondary" target="_blank" rel="noopener">開啟原始 Excel</a>
+    </div>
+    <p id="readerStatus" class="muted" role="status" aria-live="polite"></p>
+    <div id="readerGrid" class="reader-grid" tabindex="0" aria-label="文件表格，可捲動查看"></div>
+    <div class="reader-pagination">
+      <button id="readerPrevious" type="button" class="button-secondary" onclick="changeDocumentRange(-1,0)">上一頁</button>
+      <button id="readerNext" type="button" class="button-secondary" onclick="changeDocumentRange(1,0)">下一頁</button>
+      <button id="readerLeft" type="button" class="button-secondary" onclick="changeDocumentRange(0,-1)">前一組欄位</button>
+      <button id="readerRight" type="button" class="button-secondary" onclick="changeDocumentRange(0,1)">後一組欄位</button>
+    </div>
+    <small class="muted">唯讀顯示原檔數值，不重新計價、不執行巨集；合併儲存格與圖片請開啟原始 Excel。公式未有快取時會明確標示，不當作零。</small>
+  </dialog>
+
   <script>
     const state = {
       actor: null,
@@ -1095,12 +1127,31 @@
       costHourPreview: null,
       costMonthPreview: null,
       calendarData: null,
+      workspace: "overview",
+      workspaceViews: {},
+      documentReader: null,
     };
 
+    const workspaceDefaults = {overview: 1, documents: 2};
+
     function setWorkspace(workspace, shouldScroll = true) {
-      document.querySelectorAll("[data-workspace]").forEach((panel) => {
-        panel.hidden = panel.dataset.workspace !== workspace;
-      });
+      const panels = [...document.querySelectorAll(`[data-workspace="${workspace}"]`)];
+      if (!panels.length) return;
+      state.workspace = workspace;
+      document.getElementById("actionResult").hidden = true;
+      const mainSelect = document.getElementById("workspaceMain");
+      mainSelect.innerHTML = [...document.querySelectorAll("[data-workspace-tab]")].map(tab =>
+        `<option value="${escapeAttr(tab.dataset.workspaceTab)}">${escapeHtml(tab.textContent)}</option>`
+      ).join("");
+      mainSelect.value = workspace;
+      panels.forEach((panel, index) => { panel.dataset.workspaceView = String(index); });
+      const selector = document.getElementById("workspaceView");
+      selector.innerHTML = panels.map((panel, index) =>
+        `<option value="${index}">${escapeHtml(panel.querySelector("h2")?.textContent || `操作 ${index + 1}`)}</option>`
+      ).join("");
+      document.getElementById("workspaceTools").hidden = panels.length < 2;
+      document.getElementById("workspaceViewHint").textContent = `共 ${panels.length} 項功能；切換不會清除未儲存的表單`;
+      setWorkspaceView(state.workspaceViews[workspace] ?? workspaceDefaults[workspace] ?? 0);
       document.querySelectorAll("[data-workspace-tab]").forEach((tab) => {
         const isActive = tab.dataset.workspaceTab === workspace;
         tab.classList.toggle("is-active", isActive);
@@ -1109,6 +1160,31 @@
       if (shouldScroll) {
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
+    }
+
+    function setWorkspaceView(view) {
+      const panels = [...document.querySelectorAll(`[data-workspace="${state.workspace}"]`)];
+      const index = Math.max(0, Math.min(Number(view) || 0, panels.length - 1));
+      state.workspaceViews[state.workspace] = index;
+      document.getElementById("workspaceView").value = String(index);
+      document.querySelectorAll("[data-workspace]").forEach(panel => {
+        const visible = panel === panels[index];
+        panel.hidden = !visible;
+        panel.classList.toggle("workspace-panel-active", visible);
+      });
+    }
+
+    function openDocumentTask(view) {
+      setWorkspace("documents");
+      setWorkspaceView(view);
+    }
+
+    function openPanelFor(elementId) {
+      const panel = document.getElementById(elementId)?.closest("[data-workspace]");
+      if (!panel) return;
+      setWorkspace(panel.dataset.workspace);
+      const panels = [...document.querySelectorAll(`[data-workspace="${state.workspace}"]`)];
+      setWorkspaceView(panels.indexOf(panel));
     }
 
     function api(path, options = {}) {
@@ -1147,6 +1223,13 @@
 
     function setConsole(message) {
       document.getElementById("console").textContent = message;
+      const result = document.getElementById("actionResult");
+      const text = String(message ?? "");
+      document.getElementById("actionResultBody").textContent = text;
+      document.getElementById("actionResultTitle").textContent = /^[\[{]/.test(text.trim())
+        ? "操作結果已更新，展開查看" : text;
+      result.open = false;
+      result.hidden = !text;
     }
 
     function escapeHtml(value) {
@@ -1373,7 +1456,7 @@
         if (status) status.textContent = "已儲存工時";
         feedback.textContent = `${site.site_name}｜正常 ${hours.normal_hours}、加班 ${hours.overtime_hours}、支援 ${hours.support_hours} 小時已保存。`;
         await syncJournalHoursToCostImport(siteIndex, true);
-        if (moveToPricing) setWorkspace("documents");
+        if (moveToPricing) openDocumentTask(0);
       } catch (error) {
         feedback.textContent = error.message;
       }
@@ -1406,7 +1489,7 @@
         const current = signSlipCache.find(item => item.id === selected.id);
         if (!current) throw new Error("找不到已存簽單，請重新整理工作日誌。");
         fillSignSlipForm(current);
-        setWorkspace("documents");
+        openDocumentTask(4);
         document.getElementById("signSlipForm").scrollIntoView({ behavior: "smooth" });
         document.getElementById("signSlipFeedback").textContent = `正在編輯 ${journal.date}｜${site.site_name}｜單號 ${current.slip_no}。修改後請按「保存簽單」。`;
       } catch (error) {
@@ -2053,6 +2136,7 @@
       const row = signSlipCache.find(item => item.id === id);
       if (row) {
         fillSignSlipForm(row);
+        openDocumentTask(4);
         document.getElementById("signSlipForm").scrollIntoView({ behavior: "smooth" });
       }
     }
@@ -2251,13 +2335,93 @@
             <td>${formatFileSize(item.size_bytes)}</td>
             <td>${escapeHtml(item.uploaded_by_name)}</td>
             <td>${formatTW(item.created_at)}</td>
-            <td><a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟 Google Drive</a></td>
+            <td class="table-actions"><button type="button" class="button-compact" onclick="openManagedDocument(${item.id})">大字閱讀</button> <a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟原檔</a></td>
           </tr>
         `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未保存公司 Excel 文件</td></tr>';
       } catch (error) {
         rows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
       }
     }
+
+    let readerRequest = 0;
+
+    function closeDocumentReader() {
+      readerRequest += 1;
+      document.getElementById("documentReader").close();
+      state.documentReader = null;
+    }
+
+    function setReaderFontSize(value) {
+      const size = [16,20,24,28].includes(Number(value)) ? Number(value) : 20;
+      document.getElementById("readerGrid").style.setProperty("--reader-font-size", `${size}px`);
+    }
+
+    async function openManagedDocument(id) {
+      const item = state.managedDocuments.find(row => row.id === id);
+      if (!item) return;
+      state.documentReader = {id, row: 1, column: 1, sheet: ""};
+      document.getElementById("documentReaderTitle").textContent = item.original_file_name;
+      document.getElementById("readerDriveLink").href = item.drive_url;
+      document.getElementById("readerSheet").innerHTML = "";
+      document.getElementById("readerGrid").innerHTML = "";
+      const dialog = document.getElementById("documentReader");
+      if (!dialog.open) dialog.showModal();
+      await loadDocumentSheet();
+    }
+
+    async function loadDocumentSheet(reset = false) {
+      const reader = state.documentReader;
+      if (!reader) return;
+      if (reset) {
+        reader.row = 1;
+        reader.column = 1;
+        reader.sheet = document.getElementById("readerSheet").value;
+      }
+      const request = ++readerRequest;
+      const status = document.getElementById("readerStatus");
+      const grid = document.getElementById("readerGrid");
+      status.textContent = "正在讀取 Google Drive 原檔…";
+      grid.setAttribute("aria-busy", "true");
+      ["readerPrevious","readerNext","readerLeft","readerRight"].forEach(id => {document.getElementById(id).disabled = true;});
+      try {
+        const params = new URLSearchParams({row_start: reader.row, column_start: reader.column});
+        if (reader.sheet) params.set("sheet", reader.sheet);
+        const data = await api(`/api/documents/${reader.id}/preview?${params}`);
+        if (request !== readerRequest || state.documentReader !== reader) return;
+        reader.sheet = data.sheet;
+        reader.rows = data.total_rows;
+        reader.columns = data.total_columns;
+        const select = document.getElementById("readerSheet");
+        select.innerHTML = data.sheets.map(name => `<option value="${escapeAttr(name)}">${escapeHtml(name)}</option>`).join("");
+        select.value = data.sheet;
+        grid.innerHTML = `<table><thead><tr><th scope="col">列</th>${data.columns.map(c => `<th scope="col">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${data.rows.map(row => `<tr><th scope="row">${row.number}</th>${row.cells.map(cell => `<td class="${cell.numeric ? "reader-number" : ""}${cell.uncached_formula ? " reader-uncached" : ""}">${escapeHtml(cell.text)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+        grid.scrollTo(0,0);
+        status.textContent = `${data.sheet}｜第 ${reader.row}–${Math.min(reader.row + 39, data.total_rows)} 列，共 ${data.total_rows} 列｜${data.columns[0]}–${data.columns.at(-1)} 欄` + (data.has_uncached_formulas ? "；橘色格為未快取公式，請以 Excel 開啟核對" : "");
+        document.getElementById("readerPrevious").disabled = reader.row <= 1;
+        document.getElementById("readerNext").disabled = reader.row + 40 > data.total_rows;
+        document.getElementById("readerLeft").disabled = reader.column <= 1;
+        document.getElementById("readerRight").disabled = reader.column + 16 > data.total_columns;
+      } catch (error) {
+        if (request !== readerRequest || state.documentReader !== reader) return;
+        grid.innerHTML = "";
+        status.textContent = `${error.message}。可按「開啟原始 Excel」查看原檔。`;
+      } finally {
+        if (request === readerRequest) grid.setAttribute("aria-busy", "false");
+      }
+    }
+
+    function changeDocumentRange(rowPages, columnPages) {
+      const reader = state.documentReader;
+      if (!reader) return;
+      reader.row = Math.max(1, reader.row + rowPages * 40);
+      reader.column = Math.max(1, reader.column + columnPages * 16);
+      loadDocumentSheet();
+    }
+
+    document.getElementById("documentReader").addEventListener("cancel", () => {
+      readerRequest += 1;
+      state.documentReader = null;
+    });
 
     function renderCostHourImportOptions() {
       const documentSelect = document.getElementById("costImportDocument");
@@ -2529,9 +2693,16 @@
       const labelCards = data.labels.map((item, labelIndex) => {
         const summary = item.summary;
         const rate = item.rates;
-        const head = `<summary><strong>${escapeHtml(item.label)}</strong>｜${escapeHtml(item.worksite_name || "未對應工地")}｜寫入 <span id="cm-write-${labelIndex}">${summary.write}</span> 日、略過 ${summary.skipped_exists} 日｜請款未稅 <strong id="cm-inv-untaxed-${labelIndex}">${fmtCostAmount(summary.invoice_untaxed)}</strong>、含稅 <strong id="cm-inv-taxed-${labelIndex}">${fmtCostAmount(summary.invoice_taxed)}</strong>｜工時未稅 <span id="cm-untaxed-${labelIndex}">${fmtCostAmount(summary.untaxed)}</span>、含稅 <span id="cm-taxed-${labelIndex}">${fmtCostAmount(summary.taxed)}</span>、安衛 <span id="cm-safety-${labelIndex}">${fmtCostAmount(summary.safety)}</span>、租金 ${fmtCostAmount(summary.rent)}、月淨利 <span id="cm-net-${labelIndex}">${fmtCostAmount(summary.net_profit)}</span></summary>`;
+        const head = `<summary><strong>${escapeHtml(item.label)}｜${escapeHtml(item.worksite_name || "未對應工地")}</strong>｜寫入 <span id="cm-write-${labelIndex}">${summary.write}</span> 日、略過 ${summary.skipped_exists} 日</summary>
+          <div class="pricing-totals">
+            <div><span>請款未稅</span><strong id="cm-inv-untaxed-${labelIndex}">${fmtCostAmount(summary.invoice_untaxed)}</strong></div>
+            <div><span>請款含稅</span><strong id="cm-inv-taxed-${labelIndex}">${fmtCostAmount(summary.invoice_taxed)}</strong></div>
+            <div><span>工時未稅／含稅</span><span><b id="cm-untaxed-${labelIndex}">${fmtCostAmount(summary.untaxed)}</b>／<b id="cm-taxed-${labelIndex}">${fmtCostAmount(summary.taxed)}</b></span></div>
+            <div><span>安衛／租金</span><span><b id="cm-safety-${labelIndex}">${fmtCostAmount(summary.safety)}</b>／${fmtCostAmount(summary.rent)}</span></div>
+            <div><span>月淨利</span><strong id="cm-net-${labelIndex}">${fmtCostAmount(summary.net_profit)}</strong></div>
+          </div>`;
         if (!item.matched) {
-          return `<details class="cost-month-label">${head}<p class="muted">活頁簿有此標別但找不到對應工地，整月不會寫入；請確認工地代號／名稱是否包含「${escapeHtml(item.label)}」。</p></details>`;
+          return `<details class="cost-month-label" data-cost-label="${labelIndex}" open>${head}<p class="muted">活頁簿有此標別但找不到對應工地，整月不會寫入；請確認工地代號／名稱是否包含「${escapeHtml(item.label)}」。</p></details>`;
         }
         const visibleDays = item.days.filter(day => day.action !== "empty");
         const rows = visibleDays.map((day) => {
@@ -2544,7 +2715,7 @@
           const nInit = costInputValue(day.hours.normal_hours);
           const oInit = costInputValue(day.hours.overtime_hours);
           const sInit = costInputValue(day.hours.support_hours);
-          const common = `type="number" min="0" step="0.5" class="cost-month-input" style="width:62px;"
+          const common = `type="number" min="0" step="0.5" class="cost-month-input"
             data-label="${escapeAttr(item.label)}" data-date="${day.date}"
             data-init-n="${nInit}" data-init-o="${oInit}" data-init-s="${sInit}"
             oninput="recalcCostMonth(${labelIndex})"`;
@@ -2568,7 +2739,7 @@
         const rateText = rate
           ? `時薪 ${fmtCostAmount(rate.normal_hourly)}｜日薪8H ${fmtCostAmount(rate.daily)}｜超時 ${fmtCostAmount(rate.ot_rate)}｜假日(週日／國定假日) ${fmtCostAmount(rate.holiday_rate)}｜支援 ${fmtCostAmount(rate.support_rate)}`
           : "";
-        return `<details class="cost-month-label" ${summary.write ? "open" : ""}>${head}
+        return `<details class="cost-month-label" data-cost-label="${labelIndex}" open>${head}
           <p class="muted">${rateText}　可直接修改下方工時，金額會自動重算；調整過的日期即使原本已填也會寫入。</p>
           <div class="table-wrap"><table>
             <thead><tr><th>日期</th><th>噸位</th><th>台數</th><th>正常</th><th>加班</th><th>支援</th><th>動作</th><th>正常金額</th><th>加班金額</th><th>支援金額</th><th>合計</th></tr></thead>
@@ -2580,11 +2751,23 @@
         <p><strong>${escapeHtml(data.document_name || "")}｜${data.year} 年 ${data.month} 月（${data.period}）</strong>｜預計寫入 ${data.counts.write} 日、略過已填 ${data.counts.skipped_exists} 日、無作業 ${data.counts.empty} 日</p>
         <p>全標請款合計：未稅 <strong id="cm-inv-total-untaxed">0</strong>、營業稅 <span id="cm-inv-total-tax">0</span>、含稅 <strong id="cm-inv-total-taxed">0</strong>（僅計正常＋加班，不含支援）。可直接在表格調整工時，金額即時重算，並可用「列印當月請款單」輸出。</p>
         ${warnings ? `<ul style="color:#a33;">${warnings}</ul>` : ""}
+        <div class="pricing-toolbar">
+          <div><label for="costMonthLabel">檢視標別</label><select id="costMonthLabel" onchange="selectCostMonthLabel(this.value)">${data.labels.map((item,index)=>`<option value="${index}">${escapeHtml(item.label)}｜${escapeHtml(item.worksite_name || "未對應工地")}</option>`).join("")}</select></div>
+          <div><label for="pricingFontSize">表格字體</label><select id="pricingFontSize" onchange="document.getElementById('costMonthPreview').style.setProperty('--pricing-font-size', this.value + 'px')"><option value="18">大字 18</option><option value="20">特大 20</option><option value="24">最大 24</option></select></div>
+          <small class="muted">一次檢視一個標別；切換保留修改，整月寫入仍涵蓋全部預覽標別。</small>
+        </div>
         ${labelCards}`;
       box.hidden = false;
+      selectCostMonthLabel(0);
       data.labels.forEach((_, index) => recalcCostMonth(index));
       const invoiceButton = document.getElementById("costMonthInvoiceBtn");
       if (invoiceButton) invoiceButton.disabled = false;
+    }
+
+    function selectCostMonthLabel(index) {
+      document.querySelectorAll("[data-cost-label]").forEach(card => {
+        card.hidden = card.dataset.costLabel !== String(index);
+      });
     }
 
     function recalcCostMonth(labelIndex) {
@@ -2816,7 +2999,7 @@
 
     async function openJournalHourImport(siteIndex) {
       await syncJournalHoursToCostImport(siteIndex, true);
-      setWorkspace("documents");
+      openDocumentTask(0);
     }
 
     async function loadLineStatus() {
@@ -2914,6 +3097,7 @@
       try {
         const data = await api(`/api/leave-requests/${leaveId}/reassignment-suggestions`);
         renderReassignmentSuggestions(data);
+        openPanelFor("reassignmentRows");
         setConsole(JSON.stringify(data, null, 2));
       } catch (error) {
         setConsole(error.message);
@@ -3512,6 +3696,7 @@
 
     // ---- 登入 / 登出 / 改密碼 ----
     function showLogin() {
+      closeDocumentReader();
       document.getElementById("loginOverlay").classList.remove("hidden");
       document.getElementById("changePasswordOverlay").classList.add("hidden");
     }

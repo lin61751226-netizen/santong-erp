@@ -737,3 +737,83 @@ th {
   justify-content: space-between;
   gap: 12px;
 }
+
+/* Keep the active operation in view; hidden forms stay mounted and retain edits. */
+.shell { width: min(1480px, calc(100% - 32px)); padding-top: 18px; }
+.hero { margin-bottom: 14px; gap: 12px; }
+.hero-card { padding: 16px 20px; }
+.hero h1 { font-size: clamp(24px, 2.4vw, 32px); margin-top: 8px; }
+.hero .eyebrow { font-size: 11px; padding: 4px 9px; }
+.hero-copy { font-size: 14px; }
+.hero-side { padding: 16px 20px; gap: 8px; align-content: center; }
+.hero-side .badge-list, .hero-side > .muted { display: none; }
+.workspace-nav { margin-bottom: 10px; }
+.mobile-workspace-nav { display: none; }
+.workspace-tools { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; padding: 14px 18px; border-radius: 16px; background: var(--brand-soft); }
+.workspace-tools[hidden] { display: none; }
+.workspace-tools label { margin: 0; white-space: nowrap; color: var(--brand); }
+.workspace-tools select { width: min(420px, 100%); font-size: 17px; font-weight: 700; }
+.workspace-tools .muted { font-size: 13px; }
+.action-result { position: fixed; right: 18px; bottom: 18px; z-index: 40; width: min(480px, calc(100vw - 36px)); padding: 14px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
+.action-result[hidden] { display: none; }
+.action-result summary { cursor: pointer; font-weight: 700; overflow-wrap: anywhere; }
+.action-result pre { max-height: 28vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin-bottom: 0; }
+.action-result button { margin-top: 10px; }
+.workspace-panel-active { grid-column: 1 / -1; margin-bottom: 0; }
+.workspace-panel-active > .table-wrap { max-height: 58vh; overflow: auto; }
+.table-wrap thead th { position: sticky; top: 0; z-index: 2; }
+.pricing-rules { margin-bottom: 16px; padding: 12px 16px; background: var(--brand-soft); border-radius: 12px; }
+.pricing-rules summary { cursor: pointer; font-weight: 700; }
+.pricing-rules p { margin-top: 10px; }
+.pricing-preview { --pricing-font-size: 18px; margin-top: 18px; }
+.pricing-toolbar, .reader-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 16px 0; }
+.pricing-toolbar select { min-width: 160px; }
+.pricing-toolbar small { flex: 1; min-width: 220px; }
+.pricing-totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.pricing-totals > div { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.pricing-totals > div > span:first-child { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+.pricing-totals strong { font-size: 22px; color: var(--brand); font-variant-numeric: tabular-nums; }
+.pricing-preview [hidden] { display: none; }
+.pricing-preview .table-wrap { max-height: 52vh; overflow: auto; border: 1px solid var(--line); }
+.pricing-preview table { min-width: 1250px; }
+.pricing-preview th, .pricing-preview td { font-size: var(--pricing-font-size); padding: 12px; white-space: nowrap; }
+.pricing-preview .cost-month-input { width: 88px; font-size: var(--pricing-font-size); text-align: right; font-variant-numeric: tabular-nums; padding: 10px; }
+.pricing-preview tbody tr:nth-child(even) { background: #faf8f2; }
+.pricing-preview tbody tr:focus-within { background: #e5efe9; }
+.document-reader { width: min(1700px, 96vw); max-width: 96vw; height: 92vh; max-height: 92vh; padding: 24px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel); color: var(--ink); }
+.document-reader[open] { display: flex; flex-direction: column; }
+.document-reader::backdrop { background: rgba(25, 35, 30, 0.62); }
+.reader-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.reader-header h2 { margin: 8px 0 0; font-size: 21px; overflow-wrap: anywhere; }
+.reader-header > button { flex: 0 0 auto; }
+.reader-toolbar > div:first-child { flex: 1; min-width: 180px; }
+.reader-toolbar select { font-size: 17px; }
+.reader-grid { --reader-font-size: 20px; flex: 1; min-height: 120px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: white; margin: 10px 0; }
+.reader-grid table { width: max-content; min-width: 100%; }
+.reader-grid th, .reader-grid td { padding: 12px 16px; font-size: var(--reader-font-size); line-height: 1.5; }
+.reader-grid thead th { position: sticky; top: 0; z-index: 3; background: #e4ede7; }
+.reader-grid tbody th { position: sticky; left: 0; z-index: 2; background: #f4f2eb; color: var(--muted); }
+.reader-grid td { min-width: 130px; max-width: 380px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reader-grid .reader-number { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.reader-grid .reader-uncached { color: #8a4822; background: var(--accent-soft); }
+.reader-grid tr:nth-child(even) td:not(.reader-uncached) { background: #faf8f2; }
+.reader-pagination { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+@media (max-width: 980px) {
+  .workspace-nav { display: none; }
+  .mobile-workspace-nav { display: flex; align-items: center; gap: 12px; position: sticky; top: 8px; z-index: 20; padding: 10px 14px; margin-bottom: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+  .mobile-workspace-nav label { white-space: nowrap; margin: 0; }
+  .mobile-workspace-nav select { font-weight: 700; font-size: 17px; }
+}
+@media (max-width: 760px) {
+  .hero { grid-template-columns: 1fr; }
+  .hero-copy { display: none; }
+  .hero-side { padding: 10px 16px; }
+  .workspace-tools { flex-wrap: wrap; gap: 8px; padding: 12px; }
+  .workspace-tools select { flex: 1; min-width: 180px; }
+  .workspace-tools .muted { flex-basis: 100%; }
+  .pricing-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .document-reader { padding: 14px; width: 98vw; max-width: 98vw; height: 96vh; max-height: 96vh; }
+  .reader-header h2 { font-size: 17px; }
+  .reader-toolbar { gap: 10px; margin: 10px 0; }
+  .reader-pagination button { padding: 8px 10px; font-size: 14px; }
+}

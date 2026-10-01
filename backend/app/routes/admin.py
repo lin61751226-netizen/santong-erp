@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import csv
+import asyncio
 import calendar
 import io
 import re
@@ -112,6 +113,7 @@ from app.services.cost_workbook import (
     totals_from_day_costs,
 )
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
+from app.services.spreadsheet_preview import preview_spreadsheet
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
     deliver_forklift_notifications, queue_vehicle_warning,
@@ -2303,6 +2305,33 @@ async def list_managed_documents(
     if corrected:
         session.commit()
     return [_serialize_managed_document(session, item) for item in documents]
+
+
+@router.get("/documents/{document_id}/preview")
+async def preview_managed_document(
+    document_id: int,
+    sheet: Optional[str] = Query(default=None),
+    row_start: int = Query(default=1, ge=1, le=1048576),
+    column_start: int = Query(default=1, ge=1, le=16384),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = session.get(ManagedDocument, document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail="找不到文件紀錄")
+    if Path(document.original_file_name).suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise HTTPException(status_code=400, detail="此格式請開啟原始 Excel 閱讀")
+    try:
+        content = await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="無法讀取 Google Drive 文件，請稍後重試") from exc
+    if len(content) > MANAGEMENT_DOCUMENT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="文件超過預覽大小上限，請開啟原始 Excel")
+    try:
+        return await asyncio.to_thread(preview_spreadsheet, content, document.original_file_name,
+                                       sheet, row_start, column_start)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/documents/upload", status_code=status.HTTP_201_CREATED)
