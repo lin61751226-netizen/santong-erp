@@ -488,6 +488,31 @@ class FinanceImportBatch(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class DocumentDataRevision(SQLModel, table=True):
+    """線上資料修改的不可覆寫歷史，同時保護重送與後續 Excel 匯入。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    request_id: str = Field(unique=True, index=True)
+    payload_hash: str
+    source_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    data_kind: str = Field(index=True)
+    record_id: int = Field(index=True)
+    actor_id: int = Field(foreign_key="employee.id")
+    before_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    after_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class DocumentDataExport(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    data_kind: str
+    dataset_hash: str
+    exported_document_id: int = Field(foreign_key="manageddocument.id")
+    created_by_id: int = Field(foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class LineLinkStatus(str, Enum):
     issued = "issued"
     authorized = "authorized"

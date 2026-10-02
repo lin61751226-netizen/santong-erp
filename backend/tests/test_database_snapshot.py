@@ -38,6 +38,8 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("contractrecord", PRESERVED_DATABASE_TABLES)
         self.assertIn("certificaterecord", PRESERVED_DATABASE_TABLES)
         self.assertIn("signsliprecord", PRESERVED_DATABASE_TABLES)
+        for table in ("documentdatarevision", "documentdataexport", "businesscontact", "financeimportbatch"):
+            self.assertIn(table, PRESERVED_DATABASE_TABLES)
 
     async def test_upload_access_check_is_read_only(self) -> None:
         service = GoogleDriveWorklogService()

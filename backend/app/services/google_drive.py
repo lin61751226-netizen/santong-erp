@@ -42,6 +42,10 @@ OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 # These tables are append-only or use disable/restore semantics. A lower row
 # count means an older or empty database is about to overwrite newer history.
 PRESERVED_DATABASE_TABLES = (
+    "documentdatarevision",
+    "documentdataexport",
+    "businesscontact",
+    "financeimportbatch",
     "employee",
     "worksite",
     "adminauditlog",
@@ -750,6 +754,7 @@ class GoogleDriveWorklogService:
         file_name: str,
         content: bytes,
         content_type: str | None,
+        public_share: bool | None = None,
     ) -> DriveUploadResult:
         """保存後台匯入的公司檔案，與工作照片資料夾分開管理。"""
         if not self.is_configured():
@@ -765,6 +770,7 @@ class GoogleDriveWorklogService:
             content=content,
             content_type=content_type or "application/octet-stream",
             folder_name=MANAGEMENT_DOCUMENTS_FOLDER_NAME,
+            public_share=public_share,
         )
 
     async def upload_business_attachment(

@@ -7,7 +7,7 @@ const html = readFileSync(new URL('../app/templates/index.html', import.meta.url
 const navigation = html.slice(html.indexOf('    const workspaceDefaults'), html.indexOf('    function api('));
 
 function fixture() {
-  const groups = {overview: 2, documents: 5, operations: 7, fleet: 6, people: 2, calendar: 1};
+  const groups = {overview: 2, documents: 6, operations: 7, fleet: 6, people: 2, calendar: 1};
   const panels = Object.entries(groups).flatMap(([workspace, count]) =>
     Array.from({length: count}, (_, index) => ({
       dataset: {workspace}, hidden: true, classList: {toggle() {}},
@@ -66,7 +66,7 @@ test('journal links select pricing or saved sign slips, not library', () => {
   context.openDocumentTask(0);
   assert.equal(controls.get('workspaceView').value, '0');
   context.setWorkspaceView(999);
-  assert.equal(controls.get('workspaceView').value, '4');
+  assert.equal(controls.get('workspaceView').value, '5');
 });
 
 test('reassignment results reveal their own panel', () => {
@@ -75,6 +75,15 @@ test('reassignment results reveal their own panel', () => {
   assert.equal(controls.get('workspaceMain').value, 'operations');
   assert.equal(controls.get('workspaceView').value, '6');
   assert.equal(panels.filter(panel => !panel.hidden).length, 1);
+});
+
+test('the new editor is a separate panel without renumbering the existing slips', () => {
+  const {context, controls, panels} = fixture();
+  context.openDocumentTask(5);
+  assert.equal(controls.get('workspaceView').value, '5');
+  assert.equal(panels.filter(panel => !panel.hidden).length, 1);
+  context.openDocumentTask(4);
+  assert.equal(controls.get('workspaceView').value, '4');
 });
 
 test('operation feedback remains visible outside the overview', () => {

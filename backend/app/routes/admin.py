@@ -153,6 +153,8 @@ BUSINESS_ATTACHMENT_TYPES = {
 def _management_document_category(file_name: str) -> tuple[str, str]:
     """依既有公司表單名稱預先分類，其他檔案仍可安全納入文件庫。"""
     title = file_name.rsplit(".", 1)[0]
+    if "線上資料匯出" in file_name:
+        return "線上資料匯出", title
     if "計價" in file_name and ("推高機" in file_name or "堆高機" in file_name):
         return "推高機計價", title
     if "通訊錄" in file_name or "全年管理" in file_name:

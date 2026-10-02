@@ -13,6 +13,7 @@ from app.deps import require_roles
 from app.models import (
     AdminAuditLog,
     BusinessContact,
+    DocumentDataRevision,
     Employee,
     FinanceEntry,
     FinanceImportBatch,
@@ -119,6 +120,17 @@ def _import_contacts(
     existing = session.exec(select(BusinessContact)).all()
     by_key = {item.normalized_key: item for item in existing}
     by_tax_id = {item.tax_id: item for item in existing if item.tax_id}
+    manually_edited = set()
+    by_id = {item.id: item for item in existing}
+    for revision in session.exec(select(DocumentDataRevision).where(DocumentDataRevision.data_kind == "contacts")).all():
+        contact = by_id.get(revision.record_id)
+        if contact:
+            manually_edited.add(contact.id)
+            for data in (revision.before_data, revision.after_data):
+                if data.get("normalized_key"):
+                    by_key[data["normalized_key"]] = contact
+                if data.get("tax_id"):
+                    by_tax_id[data["tax_id"]] = contact
     created = updated = skipped = 0
     for item in contacts:
         contact = by_tax_id.get(item["tax_id"]) if item["tax_id"] else None
@@ -137,7 +149,7 @@ def _import_contacts(
                 by_tax_id[contact.tax_id] = contact
             created += 1
             continue
-        if _fill_missing(contact, item):
+        if contact.id not in manually_edited and _fill_missing(contact, item):
             contact.source_document_id = document.id
             contact.source_sheet = item["source_sheet"]
             contact.source_row = item["source_row"]
@@ -161,6 +173,8 @@ def _import_finance(
         for item in session.exec(select(FinanceEntry)).all()
         if item.dedupe_key
     }
+    for revision in session.exec(select(DocumentDataRevision).where(DocumentDataRevision.data_kind == "finance")).all():
+        known_keys.update(data["dedupe_key"] for data in (revision.before_data, revision.after_data) if data.get("dedupe_key"))
     for item in records:
         if item["dedupe_key"] in known_keys:
             skipped_duplicate += 1

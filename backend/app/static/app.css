@@ -798,6 +798,12 @@ th {
 .reader-grid .reader-uncached { color: #8a4822; background: var(--accent-soft); }
 .reader-grid tr:nth-child(even) td:not(.reader-uncached) { background: #faf8f2; }
 .reader-pagination { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.data-editor-table { margin: 18px 0; max-height: 48vh; }
+.data-editor-table td { font-size: 18px; min-width: 100px; max-width: 340px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.data-edit-dialog { width: min(880px, 95vw); max-height: 90vh; overflow: auto; border: 1px solid var(--line); border-radius: 20px; padding: 24px; background: var(--panel); color: var(--ink); }
+.data-edit-dialog::backdrop { background: rgba(25, 35, 30, 0.62); }
+.data-edit-dialog input, .data-edit-dialog select, .data-edit-dialog textarea { font-size: 18px; }
+.data-edit-dialog .reader-header { position: sticky; top: -24px; background: var(--panel); padding: 10px 0; z-index: 2; }
 @media (max-width: 980px) {
   .workspace-nav { display: none; }
   .mobile-workspace-nav { display: flex; align-items: center; gap: 12px; position: sticky; top: 8px; z-index: 20; padding: 10px 14px; margin-bottom: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }

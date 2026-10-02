@@ -565,6 +565,24 @@
       </div>
     </section>
 
+    <section class="panel span-12" data-workspace="documents">
+      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p></div></div>
+      <div class="form-grid">
+        <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
+        <div><label for="dataKind">處理資料</label><select id="dataKind" onchange="loadDocumentData(true)"><option value="finance">收支明細</option><option value="contacts">公司通訊錄</option></select></div>
+        <div><label for="dataSheet">來源工作表</label><select id="dataSheet" onchange="loadDocumentData(false,0)"><option value="">全部工作表</option></select></div>
+        <div><label for="dataKeyword">搜尋</label><input id="dataKeyword" placeholder="公司、摘要或工地"></div>
+        <div class="button-row"><button type="button" onclick="loadDocumentData(false,0)">查詢／重新載入</button><button type="button" class="button-secondary" onclick="editDocumentData()">新增資料</button></div>
+      </div>
+      <p id="dataStatus" class="muted" role="status">請選擇來源檔案並按查詢。尚未匯入的資料，請先至「收支與通訊錄 Excel 匯入」預覽匯入。</p>
+      <p id="dataFeedback" class="notice" role="status" aria-live="polite"></p>
+      <div class="table-wrap data-editor-table"><table><thead id="dataHeaders"></thead><tbody id="dataRows"></tbody></table></div>
+      <div class="reader-pagination"><button id="dataPrevious" type="button" class="button-secondary" onclick="changeDataPage(-1)" disabled>上一頁</button><button id="dataNext" type="button" class="button-secondary" onclick="changeDataPage(1)" disabled>下一頁</button></div>
+      <div class="button-row"><button id="dataExport" type="button" onclick="exportDocumentData()" disabled>匯出新的 Excel 到 Drive</button><button id="dataBackup" type="button" class="button-secondary" onclick="retryDataBackup()">重試雲端備份</button></div>
+      <p class="muted">匯出此來源檔、此類型的全部已存資料，不受目前篩選或分頁影響。產生新的標準資料表，不含原檔特殊排版、公式或巨集；不新增公開分享。</p>
+      <details class="pricing-rules"><summary>修改與匯出版本記錄</summary><div id="dataHistory">尚未載入</div></details>
+    </section>
+
     <section class="panel span-12" data-workspace="settings">
       <div class="panel-header">
         <div>
@@ -1112,6 +1130,13 @@
     <small class="muted">唯讀顯示原檔數值，不重新計價、不執行巨集；合併儲存格與圖片請開啟原始 Excel。公式未有快取時會明確標示，不當作零。</small>
   </dialog>
 
+  <dialog id="dataEditDialog" class="data-edit-dialog" aria-labelledby="dataEditTitle">
+    <div class="reader-header"><h2 id="dataEditTitle">修改資料</h2><button type="button" class="button-secondary" onclick="closeDataEdit()">取消</button></div>
+    <p id="dataEditSource" class="muted"></p>
+    <form id="dataEditForm" class="form-grid"><div id="dataEditFields" class="full form-grid"></div><p id="dataEditError" class="auth-error full" role="alert"></p><div class="full button-row"><button id="dataSave" type="submit">保存到資料庫</button><button type="button" class="button-secondary" onclick="closeDataEdit()">取消</button></div></form>
+  </dialog>
+
+  <script src="/static/document_data.js"></script>
   <script>
     const state = {
       actor: null,
@@ -2328,6 +2353,7 @@
         state.managedDocuments = data;
         renderCostHourImportOptions();
         renderFinanceImportOptions();
+        renderDataDocumentOptions();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>
@@ -2335,7 +2361,7 @@
             <td>${formatFileSize(item.size_bytes)}</td>
             <td>${escapeHtml(item.uploaded_by_name)}</td>
             <td>${formatTW(item.created_at)}</td>
-            <td class="table-actions"><button type="button" class="button-compact" onclick="openManagedDocument(${item.id})">大字閱讀</button> <a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟原檔</a></td>
+            <td class="table-actions"><button type="button" class="button-compact" onclick="openManagedDocument(${item.id})">大字閱讀</button> ${['推高機計價','通訊錄與年度管理','收支明細'].includes(item.category) ? `<button type="button" class="button-compact" onclick="openDocumentData(${item.id})">線上處理</button>` : ''} <a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟原檔</a></td>
           </tr>
         `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未保存公司 Excel 文件</td></tr>';
       } catch (error) {
