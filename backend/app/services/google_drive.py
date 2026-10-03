@@ -99,6 +99,8 @@ class GoogleDriveWorklogService:
         # 作業同時以同一 refresh token 向 Google 重新換取權杖。
         self._oauth_credentials_lock = threading.Lock()
         self._oauth_credentials: OAuthCredentials | None = None
+        # Serialize folder lookup/create for simultaneous photos in this instance.
+        self._photo_folder_lock = threading.Lock()
 
     def _has_oauth(self) -> bool:
         return bool(
@@ -588,9 +590,12 @@ class GoogleDriveWorklogService:
         root_folder_id = settings.google_drive_worklog_folder_id.strip()
         if not root_folder_id:
             raise GoogleDriveWorklogError("GOOGLE_DRIVE_WORKLOG_FOLDER_ID 尚未設定")
+        return self._find_or_create_child_folder(folder_name, parent_id=root_folder_id, client=client)
+
+    def _find_or_create_child_folder(self, folder_name: str, *, parent_id: str, client) -> str:
 
         query = (
-            f"'{root_folder_id}' in parents and trashed = false and "
+            f"'{self._escape_drive_query(parent_id)}' in parents and trashed = false and "
             f"mimeType = '{FOLDER_MIME_TYPE}' and name = '{self._escape_drive_query(folder_name)}'"
         )
         response = (
@@ -608,7 +613,7 @@ class GoogleDriveWorklogService:
                 body={
                     "name": folder_name,
                     "mimeType": FOLDER_MIME_TYPE,
-                    "parents": [root_folder_id],
+                    "parents": [parent_id],
                 },
                 fields="id",
                 supportsAllDrives=True,
@@ -616,6 +621,15 @@ class GoogleDriveWorklogService:
             .execute()
         )
         return created["id"]
+
+    def _find_or_create_photo_folder(self, folder_path: tuple[str, ...], *, client) -> str:
+        parent_id = settings.google_drive_worklog_folder_id.strip()
+        if not parent_id:
+            raise GoogleDriveWorklogError("GOOGLE_DRIVE_WORKLOG_FOLDER_ID 尚未設定")
+        with self._photo_folder_lock:
+            for folder_name in folder_path:
+                parent_id = self._find_or_create_child_folder(folder_name, parent_id=parent_id, client=client)
+        return parent_id
 
     def _upload_bytes(
         self,
@@ -625,13 +639,18 @@ class GoogleDriveWorklogService:
         content_type: str,
         folder_name: str,
         public_share: bool | None = None,
+        folder_path: tuple[str, ...] | None = None,
     ) -> DriveUploadResult:
         last_exception = None
         for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
             try:
                 logger.info(f"上傳嘗試 {attempt}/{MAX_UPLOAD_RETRIES}: {file_name} (大小: {len(content)} bytes)")
                 client = self._build_client(for_upload=True)
-                folder_id = self._find_or_create_date_folder(folder_name, client=client)
+                folder_id = (
+                    self._find_or_create_photo_folder(folder_path, client=client)
+                    if folder_path
+                    else self._find_or_create_date_folder(folder_name, client=client)
+                )
                 stream = io.BytesIO(content)
                 media = MediaIoBaseUpload(stream, mimetype=content_type, resumable=False)
                 created = (
@@ -729,10 +748,9 @@ class GoogleDriveWorklogService:
         content, content_type = await line_platform_service.get_message_content(message_id)
         logger.info(f"已從 LINE 取得相片內容: {len(content)} bytes, 類型: {content_type}")
         local_dt = happened_at.astimezone(ZoneInfo(settings.timezone))
-        folder_name = local_dt.strftime("%Y-%m-%d")
-        if site_name:
-            safe_site = site_name.strip().replace("/", "-").replace("\\", "-")
-            folder_name = f"{folder_name}_{safe_site}"
+        safe_site = (site_name or "").strip().replace("/", "-").replace("\\", "-") or "未分類工地"
+        folder_path = (safe_site, local_dt.strftime("%Y-%m"), local_dt.strftime("%Y-%m-%d"))
+        folder_name = "/".join(folder_path)
         extension = mimetypes.guess_extension(content_type or "") or ".jpg"
         safe_name = employee_name.strip().replace("/", "-").replace("\\", "-")
         file_name = f"{safe_name}_{local_dt.strftime('%Y%m%d_%H%M%S')}{extension}"
@@ -744,6 +762,7 @@ class GoogleDriveWorklogService:
             content=content,
             content_type=content_type or "image/jpeg",
             folder_name=folder_name,
+            folder_path=folder_path,
         )
         logger.info(f"LINE 相片上傳完成: {file_name} -> {result.file_url}")
         return result

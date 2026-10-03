@@ -98,7 +98,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             session.add(AttendanceEvent(employee_id=employee.id, site_id=site.id,
                                         event_type=AttendanceEventType.arrive_site.value))
             session.commit()
-            upload = DriveUploadResult("file-1", "photo.jpg", "https://drive/photo", "folder-1", "2026-09-06_照片工地", "image/jpeg")
+            upload = DriveUploadResult("file-1", "photo.jpg", "https://drive/photo", "folder-1", "照片工地/2026-09/2026-09-06", "image/jpeg")
             with patch.object(line_platform_service, "get_message_content", AsyncMock(return_value=(b"img", "image/jpeg"))), \
                  patch.object(line_service, "reply_text", AsyncMock()), \
                  patch.object(line_service, "reply_messages", AsyncMock()), \
@@ -110,6 +110,8 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(upload_photo.await_args.kwargs["site_name"], "照片工地")
             saved = session.exec(select(PhotoUploadLog)).one()
             self.assertEqual(saved.site_id, site.id)
+            self.assertEqual(saved.drive_folder_id, upload.folder_id)
+            self.assertEqual(saved.drive_url, upload.file_url)
             self.assertEqual(self.backup_database.await_count, 1)
 
     async def test_shanjie_47_group_photo_uses_group_site_even_when_uploader_is_unbound(self) -> None:
@@ -120,7 +122,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             session.refresh(site)
             upload = DriveUploadResult(
                 "file-47", "photo.jpg", "https://drive/photo-47", "folder-47",
-                "2026-09-09_善捷47", "image/jpeg",
+                "善捷47/2026-09/2026-09-09", "image/jpeg",
             )
             event = {
                 "timestamp": 0,
@@ -144,6 +146,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
             saved = session.exec(select(PhotoUploadLog)).one()
             self.assertEqual(saved.site_id, site.id)
             self.assertIn("群組工地：善捷47", saved.note)
+            self.assertEqual(saved.drive_folder_id, upload.folder_id)
             self.assertEqual(self.backup_database.await_count, 1)
 
     async def test_group_display_name_reads_line_group_summary(self) -> None:
