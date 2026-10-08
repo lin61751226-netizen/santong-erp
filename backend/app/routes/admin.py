@@ -1588,13 +1588,17 @@ def list_leave_requests(
 
 
 @router.post("/leave-requests", status_code=status.HTTP_201_CREATED)
-def create_leave_request(
+async def create_leave_request(
     payload: LeaveRequestCreate,
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="請假結束日期不得早於開始日期")
+    if payload.leave_type not in {"事假", "病假", "特休", "公假", "排休", "其他"}:
+        raise HTTPException(status_code=400, detail="請選擇有效的休假／排休假別")
+    if not payload.reason.strip() or len(payload.reason) > 2000:
+        raise HTTPException(status_code=400, detail="請填寫休假原因（最多 2000 字）")
 
     employee = actor
     if payload.employee_code and payload.employee_code != actor.employee_code:
@@ -1602,6 +1606,8 @@ def create_leave_request(
         if not employee:
             raise HTTPException(status_code=404, detail="找不到員工代碼")
         ensure_employee_scope(actor, employee)
+    if employee.status != EmployeeStatus.active:
+        raise HTTPException(status_code=400, detail="此員工已停用，無法新增休假／排休")
 
     policy = evaluate_leave_policy(
         session=session,
@@ -1609,6 +1615,7 @@ def create_leave_request(
         leave_type=payload.leave_type,
         start_date=payload.start_date,
         end_date=payload.end_date,
+        requested_on=local_today(),
     )
     if policy.errors:
         raise HTTPException(status_code=400, detail="；".join(policy.errors))
@@ -1618,18 +1625,26 @@ def create_leave_request(
         leave_type=payload.leave_type,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        reason=payload.reason,
+        reason=payload.reason.strip(),
         policy_note=format_policy_notes(policy.notes),
     )
     session.add(leave_request)
+    session.flush()
+    session.add(AdminAuditLog(
+        actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+        action="create", entity_type="leave_request", entity_id=leave_request.id,
+        summary=f"登記{employee.employee_code} {payload.leave_type}：{payload.start_date} 至 {payload.end_date}（待核准）",
+    ))
     session.commit()
     session.refresh(leave_request)
+    backup = await google_drive_worklog_service.backup_database()
 
     return {
         "message": "請假申請已建立",
         "leave_request_id": leave_request.id,
         "policy_note": leave_request.policy_note,
         "conflict_count": len(policy.conflicts),
+        "backup_status": backup.get("status"),
     }
 
 
@@ -1666,6 +1681,11 @@ async def decide_leave_request(
     leave_request.approver_id = actor.id
     leave_request.reviewed_at = datetime.utcnow()
     session.add(leave_request)
+    session.add(AdminAuditLog(
+        actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+        action="decision", entity_type="leave_request", entity_id=leave_request.id,
+        summary=f"休假審核：{employee.employee_code} {leave_request.leave_type} → {payload.status.value}",
+    ))
     session.commit()
 
     if payload.status == LeaveStatus.approved:
@@ -1688,12 +1708,14 @@ async def decide_leave_request(
         target_value=employee.employee_code,
         content=notice_text,
     )
+    backup = await google_drive_worklog_service.backup_database()
 
     return {
         "message": "請假審核已更新",
         "status": leave_request.status,
         "conflict_count": len(conflict_rows),
         "conflicts": conflict_rows,
+        "backup_status": backup.get("status"),
     }
 
 

@@ -592,6 +592,7 @@
         <div><label for="reportMonth">查詢月份（年度表使用此年）</label><input id="reportMonth" type="month" onchange="loadManagementReport()"></div>
         <div class="full"><label for="reportKind">選擇報表</label><select id="reportKind" onchange="loadManagementReport()"><option value="finance">每月收支明細表</option><option value="payroll">每月薪資表</option><option value="roster">每月排休表</option><option value="calendar">每月行事曆記錄</option><option value="annual">年度總表</option><option value="categories">年度類別統計</option><option value="contacts">公司通訊錄</option></select></div>
         <div class="full button-row"><button type="button" onclick="loadManagementReport()">查詢／更新對照</button><button id="reportExport" type="button" class="button-secondary" onclick="exportManagementReport()" disabled>下載此表全部資料 CSV</button></div>
+        <div id="reportRosterActions" class="full" hidden><button type="button" onclick="openLeaveSettings(true)">設定休假／排休</button><p class="muted">此表是查詢對照；新增休假請由設定頁保存並核准，Excel 原表不會被覆蓋。</p></div>
       </div>
       <p id="reportFeedback" class="notice" role="status" aria-live="polite">先上傳全年管理 Excel，再預覽保存對照版本。僅管理者可查看薪資與完整聯絡資料。</p>
       <details id="reportImportPreview" class="pricing-rules" hidden><summary>Excel預覽與員工對應</summary><div id="reportImportCounts"></div><div id="reportEmployeeMapping" class="form-grid"></div><div id="reportImportWarnings" class="report-warnings"></div><button id="reportSaveButton" type="button" onclick="saveManagementWorkbook()" disabled>第2步：保存對照版本到資料庫</button><p class="muted">只保存原表證據與員工對應，不自動入帳、核假、付款或變更LINE綁定。同檔同對應重送不重複保存。</p></details>
@@ -751,8 +752,8 @@
       <section class="panel span-6" data-workspace="operations">
         <div class="panel-header">
           <div>
-            <h2>請假審核</h2>
-            <p class="muted">員工可由 LINE 提交，主管與行政可在這裡核准或退回。</p>
+            <h2>休假／排休設定與審核</h2>
+            <p class="muted">在這裡替員工登記休假或排休；LINE 申請也會列在下方，保存後由管理者核准或退回。</p>
           </div>
           <div class="button-row">
             <select id="leaveStatusFilter">
@@ -764,6 +765,16 @@
             <button type="button" class="button-secondary" onclick="loadLeaves()">查詢</button>
           </div>
         </div>
+        <form id="leaveSettingsForm" class="form-grid" onsubmit="saveLeaveSettings(event)">
+          <div><label for="leaveEmployee">休假員工</label><select id="leaveEmployee" required><option value="">請選擇員工</option></select></div>
+          <div><label for="leaveType">休假／排休假別</label><select id="leaveType" required><option value="排休">排休</option><option value="事假">事假</option><option value="病假">病假</option><option value="特休">特休</option><option value="公假">公假</option><option value="其他">其他</option></select></div>
+          <div><label for="leaveStart">休假開始日期</label><input id="leaveStart" type="date" required></div>
+          <div><label for="leaveEnd">休假結束日期</label><input id="leaveEnd" type="date" required></div>
+          <div class="full"><label for="leaveReason">休假原因／排休說明</label><textarea id="leaveReason" required maxlength="2000" placeholder="例如：本月排休安排、家中有事"></textarea></div>
+          <div class="full button-row"><button id="leaveSaveButton" type="submit">保存休假／排休（待核准）</button><button type="button" class="button-secondary" onclick="openPanelFor('calendarMonth'); loadCalendar();">查看行事曆</button></div>
+        </form>
+        <p class="muted">單日休假請將起訖日期設為同一天。排休每月最多六天、不可跨月；平日需提前申請。核准後才會連動行事曆、排休對照及派工衝突檢查，不會自動刪除派工。</p>
+        <div id="leaveSettingsFeedback" class="notice" role="status" aria-live="polite">先選員工、假別及日期，再按保存；新增資料不會自動核准。</div>
         <div id="leaveNotice" class="notice">待審清單會依目前操作身分自動過濾。</div>
         <div class="table-wrap">
           <table>
@@ -888,6 +899,7 @@
             <h2>員工名冊與綁定狀態</h2>
             <p class="muted">第一版先把員工代碼、角色與 LINE 綁定碼集中管理。</p>
           </div>
+          <button type="button" onclick="openLeaveSettings()">休假／排休設定</button>
         </div>
         <div class="table-wrap">
           <table>
@@ -1157,6 +1169,7 @@
 
   <script src="/static/document_data.js"></script>
   <script src="/static/management_reports.js"></script>
+  <script src="/static/leave_settings.js"></script>
   <script>
     const state = {
       actor: null,
@@ -1790,6 +1803,7 @@
       if (contractEmployee) contractEmployee.innerHTML = '<option value="">不指定</option>' + employeeOptions;
       const certificateEmployee = document.getElementById("certificateEmployee");
       if (certificateEmployee) certificateEmployee.innerHTML = '<option value="">請選擇員工</option>' + employeeOptions;
+      renderLeaveSettingsOptions();
 
       const supervisors = state.employees.filter((employee) => ["owner", "admin", "site_manager"].includes(employee.role));
       const supervisorOptions = `<option value="">依目前角色自動帶入</option>` + supervisors.map((employee) => `
@@ -1845,17 +1859,17 @@
       document.getElementById("leaveNotice").textContent = `共 ${rows.length} 筆請假申請，已依目前操作身分與狀態條件過濾。`;
       document.getElementById("leaveRows").innerHTML = rows.map((row) => `
         <tr>
-          <td>${row.employee_name}<br><span class="muted">${row.employee_code}</span></td>
-          <td>${row.leave_type}</td>
+          <td>${escapeHtml(row.employee_name)}<br><span class="muted">${escapeHtml(row.employee_code)}</span></td>
+          <td>${escapeHtml(row.leave_type)}</td>
           <td>${row.start_date}<br>${row.end_date}</td>
           <td>
-            ${row.reason}
-            ${row.policy_note ? `<br><span class="muted">提醒：${row.policy_note}</span>` : ""}
-            ${row.review_note ? `<br><span class="muted">審核：${row.review_note}</span>` : ""}
+            ${escapeHtml(row.reason)}
+            ${row.policy_note ? `<br><span class="muted">提醒：${escapeHtml(row.policy_note)}</span>` : ""}
+            ${row.review_note ? `<br><span class="muted">審核：${escapeHtml(row.review_note)}</span>` : ""}
           </td>
-          <td><span class="pill">${row.status}</span></td>
+          <td><span class="pill">${({pending: '待核准', approved: '已核准', rejected: '已退回', cancelled: '已取消'})[row.status] || escapeHtml(row.status)}</span></td>
           <td>
-            ${row.conflict_count ? `<strong>${row.conflict_count} 筆</strong><br><span class="muted">${row.conflicts.map((item) => `${item.work_date} ${item.site_name}`).join(" / ")}</span><br><button type="button" class="button-secondary" onclick="loadReassignmentSuggestions(${row.id})">候補建議</button>` : "-"}
+            ${row.conflict_count ? `<strong>${row.conflict_count} 筆</strong><br><span class="muted">${row.conflicts.map((item) => `${escapeHtml(item.work_date)} ${escapeHtml(item.site_name)}`).join(" / ")}</span><br><button type="button" class="button-secondary" onclick="loadReassignmentSuggestions(${row.id})">候補建議</button>` : "-"}
           </td>
           <td class="button-row">
             ${row.status === "pending" ? `
@@ -3214,9 +3228,11 @@
           method: "POST",
           body: JSON.stringify({ status: statusValue, review_note: statusValue === "approved" ? "後台核准" : "後台退回" }),
         });
-        await Promise.all([loadDashboard(), loadLeaves(), loadAttendance(), loadAttendanceExceptions()]);
+        document.getElementById("leaveSettingsFeedback").textContent = `${statusValue === 'approved' ? '已核准，行事曆與派工檢查會採用此休假。' : '已退回，申請歷史仍保留。'} ${leaveBackupMessage(data.backup_status)}`;
+        await Promise.all([loadDashboard(), loadLeaves(), loadAttendance(), loadAttendanceExceptions(), loadCalendar()]);
         setConsole(JSON.stringify(data, null, 2));
       } catch (error) {
+        document.getElementById("leaveSettingsFeedback").textContent = error.message;
         setConsole(error.message);
       }
     }
@@ -4131,6 +4147,5 @@
     }
 
   </script>
-
 </body>
 </html>

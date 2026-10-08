@@ -94,6 +94,7 @@ async function saveManagementWorkbook() {
 }
 
 async function loadManagementReport(offset = 0) {
+  document.getElementById('reportRosterActions').hidden = document.getElementById('reportKind').value !== 'roster';
   const month = document.getElementById('reportMonth');
   if (!month.value) month.value = todayString().slice(0, 7);
   const id = ++managementReports.request;
