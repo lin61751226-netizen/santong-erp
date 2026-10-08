@@ -50,3 +50,20 @@ test('stale async responses never replace the newly selected report', async () =
   assert.ok(controls.get('reportRows').innerHTML.includes('最新'));
   assert.ok(controls.get('reportCount').textContent.includes('薪資新資料'));
 });
+
+for (const status of ['active', 'change-password', 'expired']) {
+  test(`existing login session displays the correct overlay: ${status}`, async () => {
+    const hidden = new Set();
+    const calls = [];
+    const document = {getElementById: id => ({classList: {add: value => hidden.add(`${id}:${value}`)}})};
+    const init = html.match(/\(async function initAuth\(\) \{[\s\S]*?\}\)\(\);/)[0];
+    await runInNewContext(init, {document,
+      api: async () => {if (status === 'expired') throw new Error('401'); return {must_change_password: status === 'change-password'};},
+      bootstrap: async () => calls.push('bootstrap'),
+      openChangePassword: forced => calls.push(`change:${forced}`),
+      showLogin: () => calls.push('login'),
+    });
+    assert.equal(hidden.has('loginOverlay:hidden'), status !== 'expired');
+    assert.deepEqual(calls, [status === 'active' ? 'bootstrap' : status === 'change-password' ? 'change:true' : 'login']);
+  });
+}

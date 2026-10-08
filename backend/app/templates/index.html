@@ -3778,6 +3778,7 @@
     (async function initAuth() {
       try {
         const data = await api("/api/auth/me");
+        document.getElementById("loginOverlay").classList.add("hidden");
         if (data.must_change_password) {
           openChangePassword(true);
         } else {
