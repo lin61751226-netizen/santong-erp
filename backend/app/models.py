@@ -513,6 +513,18 @@ class DocumentDataExport(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class ManagementWorkbookSnapshot(SQLModel, table=True):
+    """Immutable annual-workbook evidence, separate from payroll/payment operations."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    version_key: str = Field(unique=True, index=True)
+    source_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    content_sha256: str
+    employee_mapping: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_by_id: int = Field(foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
 class LineLinkStatus(str, Enum):
     issued = "issued"
     authorized = "authorized"

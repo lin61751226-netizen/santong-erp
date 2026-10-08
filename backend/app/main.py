@@ -14,6 +14,7 @@ from app.routes.auth import router as auth_router
 from app.routes.forklift import router as forklift_router
 from app.routes.finance_imports import router as finance_import_router
 from app.routes.document_data import router as document_data_router
+from app.routes.management_reports import router as management_reports_router
 from app.routes.line_management import api_router as line_management_api_router
 from app.routes.line_management import page_router as line_management_page_router
 from app.routes.line_webhook import router as line_router
@@ -82,6 +83,7 @@ app.include_router(line_management_page_router)
 app.include_router(forklift_router)
 app.include_router(finance_import_router)
 app.include_router(document_data_router)
+app.include_router(management_reports_router)
 
 
 @app.get("/", response_class=HTMLResponse)

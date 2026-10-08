@@ -42,6 +42,7 @@ OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
 # These tables are append-only or use disable/restore semantics. A lower row
 # count means an older or empty database is about to overwrite newer history.
 PRESERVED_DATABASE_TABLES = (
+    "managementworkbooksnapshot",
     "documentdatarevision",
     "documentdataexport",
     "businesscontact",

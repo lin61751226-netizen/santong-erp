@@ -477,7 +477,7 @@
       <div class="panel-header">
         <div>
           <h2>收支與通訊錄資料匯入</h2>
-          <p class="muted">先從上方文件庫保存 Excel，再在這裡預覽。系統只匯入可辨識的通訊錄與逐筆收支，年度總表、月報、薪資、排休及行事曆原檔會完整保留但不會自動寫入。</p>
+          <p class="muted">此入口匯入可確認的逐筆收支及通訊錄。薪資、排休、行事曆與年度統計請使用「月度與年度管理對照」；原始 Excel 不覆蓋。</p>
         </div>
       </div>
       <div class="action-callout">
@@ -581,6 +581,25 @@
       <div class="button-row"><button id="dataExport" type="button" onclick="exportDocumentData()" disabled>匯出新的 Excel 到 Drive</button><button id="dataBackup" type="button" class="button-secondary" onclick="retryDataBackup()">重試雲端備份</button></div>
       <p class="muted">匯出此來源檔、此類型的全部已存資料，不受目前篩選或分頁影響。產生新的標準資料表，不含原檔特殊排版、公式或巨集；不新增公開分享。</p>
       <details class="pricing-rules"><summary>修改與匯出版本記錄</summary><div id="dataHistory">尚未載入</div></details>
+    </section>
+
+    <section id="managementReportsPanel" class="panel span-12" data-workspace="documents">
+      <div class="panel-header"><div><h2>月度與年度管理對照</h2><p class="muted">七種報表依月份查詢。Excel版本、正式收支與實際出勤分開保存，避免覆蓋既有紀錄。</p></div></div>
+      <div class="form-grid">
+        <div class="full"><label for="reportSource">全年管理 Excel</label><select id="reportSource" onchange="changeReportSource()"><option value="">按重新整理載入文件</option></select></div>
+        <div class="full button-row"><button type="button" class="button-secondary" onclick="loadReportSources()">重新整理來源</button><button type="button" class="button-secondary" onclick="openDocumentTask(2)">上傳原始 Excel</button><button id="reportPreviewButton" type="button" onclick="previewManagementWorkbook()">第1步：預覽／員工對應</button></div>
+        <div><label for="reportVersion">已存版本</label><select id="reportVersion" onchange="loadManagementReport()"><option value="">只看系統資料</option></select></div>
+        <div><label for="reportMonth">查詢月份（年度表使用此年）</label><input id="reportMonth" type="month" onchange="loadManagementReport()"></div>
+        <div class="full"><label for="reportKind">選擇報表</label><select id="reportKind" onchange="loadManagementReport()"><option value="finance">每月收支明細表</option><option value="payroll">每月薪資表</option><option value="roster">每月排休表</option><option value="calendar">每月行事曆記錄</option><option value="annual">年度總表</option><option value="categories">年度類別統計</option><option value="contacts">公司通訊錄</option></select></div>
+        <div class="full button-row"><button type="button" onclick="loadManagementReport()">查詢／更新對照</button><button id="reportExport" type="button" class="button-secondary" onclick="exportManagementReport()" disabled>下載此表全部資料 CSV</button></div>
+      </div>
+      <p id="reportFeedback" class="notice" role="status" aria-live="polite">先上傳全年管理 Excel，再預覽保存對照版本。僅管理者可查看薪資與完整聯絡資料。</p>
+      <details id="reportImportPreview" class="pricing-rules" hidden><summary>Excel預覽與員工對應</summary><div id="reportImportCounts"></div><div id="reportEmployeeMapping" class="form-grid"></div><div id="reportImportWarnings" class="report-warnings"></div><button id="reportSaveButton" type="button" onclick="saveManagementWorkbook()" disabled>第2步：保存對照版本到資料庫</button><p class="muted">只保存原表證據與員工對應，不自動入帳、核假、付款或變更LINE綁定。同檔同對應重送不重複保存。</p></details>
+      <div id="reportSummary" class="pricing-totals"></div>
+      <p id="reportCount" class="muted"></p>
+      <div class="table-wrap management-report-table"><table><thead id="reportHeaders"></thead><tbody id="reportRows"></tbody></table></div>
+      <div class="reader-pagination"><button id="reportPrevious" type="button" class="button-secondary" onclick="changeManagementReportPage(-1)" disabled>上一頁</button><button id="reportNext" type="button" class="button-secondary" onclick="changeManagementReportPage(1)" disabled>下一頁</button></div>
+      <p class="muted">正式收入支出只依系統已存帳目；Excel結餘、轉帳或未分類金額另列，不當營收。薪資按原表加給及扣款計算，不把出勤工時自動換成薪資；排休空白不代表休假。</p>
     </section>
 
     <section class="panel span-12" data-workspace="settings">
@@ -1137,6 +1156,7 @@
   </dialog>
 
   <script src="/static/document_data.js"></script>
+  <script src="/static/management_reports.js"></script>
   <script>
     const state = {
       actor: null,
@@ -1197,6 +1217,7 @@
         panel.hidden = !visible;
         panel.classList.toggle("workspace-panel-active", visible);
       });
+      if (panels[index]?.id === "managementReportsPanel" && !managementReports.loadingSources && !managementReports.sourcesLoaded) loadReportSources();
     }
 
     function openDocumentTask(view) {
@@ -2275,6 +2296,7 @@
       document.getElementById("meetingAt").value = `${todayString()}T09:00`;
       const currentMonth = todayString().slice(0, 7);
       document.getElementById("calendarMonth").value = currentMonth;
+      document.getElementById("reportMonth").value = currentMonth;
       document.getElementById("signSlipMonth").value = currentMonth;
       document.getElementById("forkliftAttendanceFrom").value = `${currentMonth}-01`;
       document.getElementById("forkliftAttendanceTo").value = todayString();
@@ -2361,7 +2383,7 @@
             <td>${formatFileSize(item.size_bytes)}</td>
             <td>${escapeHtml(item.uploaded_by_name)}</td>
             <td>${formatTW(item.created_at)}</td>
-            <td class="table-actions"><button type="button" class="button-compact" onclick="openManagedDocument(${item.id})">大字閱讀</button> ${['推高機計價','通訊錄與年度管理','收支明細'].includes(item.category) ? `<button type="button" class="button-compact" onclick="openDocumentData(${item.id})">線上處理</button>` : ''} <a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟原檔</a></td>
+            <td class="table-actions"><button type="button" class="button-compact" onclick="openManagedDocument(${item.id})">大字閱讀</button> ${['推高機計價','通訊錄與年度管理','收支明細'].includes(item.category) ? `<button type="button" class="button-compact" onclick="openDocumentData(${item.id})">線上處理</button>` : ''} ${item.category === '通訊錄與年度管理' ? `<button type="button" class="button-compact" onclick="openManagementReports(${item.id})">月度／年度對照</button>` : ''} <a class="button-secondary button-compact" href="${escapeAttr(item.drive_url)}" target="_blank" rel="noopener">開啟原檔</a></td>
           </tr>
         `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未保存公司 Excel 文件</td></tr>';
       } catch (error) {

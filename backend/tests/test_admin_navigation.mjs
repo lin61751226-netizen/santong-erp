@@ -7,7 +7,7 @@ const html = readFileSync(new URL('../app/templates/index.html', import.meta.url
 const navigation = html.slice(html.indexOf('    const workspaceDefaults'), html.indexOf('    function api('));
 
 function fixture() {
-  const groups = {overview: 2, documents: 6, operations: 7, fleet: 6, people: 2, calendar: 1};
+  const groups = {overview: 2, documents: 7, operations: 7, fleet: 6, people: 2, calendar: 1};
   const panels = Object.entries(groups).flatMap(([workspace, count]) =>
     Array.from({length: count}, (_, index) => ({
       dataset: {workspace}, hidden: true, classList: {toggle() {}},
@@ -66,7 +66,7 @@ test('journal links select pricing or saved sign slips, not library', () => {
   context.openDocumentTask(0);
   assert.equal(controls.get('workspaceView').value, '0');
   context.setWorkspaceView(999);
-  assert.equal(controls.get('workspaceView').value, '5');
+  assert.equal(controls.get('workspaceView').value, '6');
 });
 
 test('reassignment results reveal their own panel', () => {
