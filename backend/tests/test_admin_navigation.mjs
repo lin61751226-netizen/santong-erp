@@ -167,6 +167,7 @@ test('search jumps to a function by name or alias', () => {
   assert.equal(context.searchNav('檢查簽單與計價金額')[0].group, '計價與收支');
   assert.ok(context.searchNav('請假').some((item) => item.key === 'leave'));
   assert.ok(context.searchNav('點檢').some((item) => item.key === 'inspections'));
+  assert.equal(context.searchNav('登入名稱')[0].key, 'users');
   context.renderNavSearch('簽單');
   assert.equal(controls.get('navSearchResults').hidden, false);
   assert.match(controls.get('navSearchResults').innerHTML, /當日簽單紀錄/);

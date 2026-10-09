@@ -26,6 +26,17 @@ def session_scope():
         yield session
 
 
+def employee_login_alias_statements(columns: set[str]) -> list[str]:
+    """既有資料庫補上登入名稱。大小寫不區分的唯一索引；空白（NULL）可以有很多筆。"""
+    statements = []
+    if "login_alias" not in columns:
+        statements.append("ALTER TABLE employee ADD COLUMN login_alias VARCHAR")
+    statements.append(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_employee_login_alias_ci ON employee (lower(login_alias))"
+    )
+    return statements
+
+
 def _apply_lightweight_migrations() -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
@@ -67,6 +78,7 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE employee ADD COLUMN session_key VARCHAR")
         if "session_expires_at" not in columns:
             statements.append("ALTER TABLE employee ADD COLUMN session_expires_at TIMESTAMP")
+        statements.extend(employee_login_alias_statements(columns))
         if statements:
             with engine.begin() as connection:
                 for statement in statements:

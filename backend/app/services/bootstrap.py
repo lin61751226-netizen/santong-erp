@@ -283,8 +283,8 @@ def _upsert_employee(session: Session, payload: dict, worksites: dict[str, Works
     employee.assigned_sites = normalized_sites
 
     # 僅「全新建立」的後台帳號（owner/admin）給統一預設密碼並要求首次改密碼；
-    # 已存在帳號一律不碰 password_hash / must_change_password，確保每次重新部署
-    # 都不會把使用者改過的密碼重置、也不會反覆要求改密碼。
+    # 已存在帳號一律不碰 password_hash / must_change_password / login_alias /
+    # session 與 line_user_id，確保每次重新部署都不會把密碼、登入名稱或綁定清掉。
     if is_new and employee.role in {Role.owner, Role.admin}:
         employee.password_hash = hash_password(settings.default_password)
         employee.must_change_password = True

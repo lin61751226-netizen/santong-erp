@@ -22,9 +22,10 @@ from app.core.security import (
     verify_signed_token,
 )
 from app.deps import require_roles
-from app.models import Employee, LoginLog, LoginStatus, Role
-from app.schemas import ChangePasswordRequest, LoginRequest, PasswordResetRequest
+from app.models import AdminAuditLog, Employee, LoginLog, LoginStatus, Role
+from app.schemas import ChangePasswordRequest, LoginAliasUpdate, LoginRequest, PasswordResetRequest
 from app.services.google_drive import google_drive_worklog_service
+from app.services.login_alias import LoginAliasError, find_login_employee, save_login_alias
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -68,6 +69,15 @@ def _employee_by_code(session: Session, employee_code: str) -> Employee | None:
     ).first()
 
 
+def _alias_summary(employee: Employee, previous: str | None) -> str:
+    current = employee.login_alias
+    if current and previous:
+        return f"變更登入名稱：{employee.employee_code}｜{previous} → {current}"
+    if current:
+        return f"設定登入名稱：{employee.employee_code}｜{current}"
+    return f"清除登入名稱：{employee.employee_code}"
+
+
 def _is_backoffice_role(employee: Employee) -> bool:
     return employee.role in {Role.owner, Role.admin}
 
@@ -100,7 +110,8 @@ async def login(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    employee = _employee_by_code(session, payload.employee_code.strip())
+    identifier = payload.employee_code.strip()
+    employee = find_login_employee(session, identifier)
     now = _now()
 
     # 統一錯誤訊息，避免帳號是否存在被探測
@@ -111,7 +122,7 @@ async def login(
 
     if employee is None:
         await _log_login(
-            session, request, payload.employee_code.strip(), None,
+            session, request, identifier, None,
             LoginStatus.failed, "帳號不存在或密碼錯誤",
         )
         raise invalid_credentials
@@ -156,6 +167,9 @@ async def login(
         session.commit()
         remaining_attempts = settings.login_fail_limit - employee.failed_login_count
         await _log_login(session, request, employee.employee_code, employee.name, LoginStatus.failed, "密碼錯誤")
+        # 登入名稱打錯時不顯示剩餘次數，避免和「查無此名稱」看出差別。員工代碼維持原提示。
+        if identifier != employee.employee_code:
+            raise invalid_credentials
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"帳號或密碼錯誤（還剩 {remaining_attempts} 次嘗試機會）",
@@ -210,6 +224,53 @@ def me(
         "name": employee.name,
         "role": employee.role,
         "must_change_password": employee.must_change_password,
+        "login_alias": employee.login_alias,
+    }
+
+
+@router.post("/login-alias")
+async def update_own_login_alias(
+    payload: LoginAliasUpdate,
+    session: Session = Depends(get_session),
+    cookie_session: str = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+):
+    """登入者設定、變更或清除自己的登入名稱。必須提供目前密碼。"""
+    employee = _resolve_session_employee(session, cookie_session)
+    if employee is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="尚未登入")
+    if employee.must_change_password:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="請先變更密碼")
+    if not verify_password(payload.current_password, employee.password_hash):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="目前密碼錯誤")
+
+    previous = employee.login_alias
+    try:
+        changed = save_login_alias(session, employee, payload.login_alias)
+    except LoginAliasError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if not changed:
+        return {
+            "message": "登入名稱沒有變更",
+            "employee_code": employee.employee_code,
+            "login_alias": employee.login_alias,
+            "backup_status": "unchanged",
+        }
+    session.add(AdminAuditLog(
+        actor_id=employee.id,
+        actor_code=employee.employee_code,
+        actor_name=employee.name,
+        action="login_alias",
+        entity_type="employee",
+        entity_id=employee.id,
+        summary=_alias_summary(employee, previous),
+    ))
+    session.commit()
+    backup = await google_drive_worklog_service.backup_database()
+    return {
+        "message": "登入名稱已清除" if not employee.login_alias else "登入名稱已更新",
+        "employee_code": employee.employee_code,
+        "login_alias": employee.login_alias,
+        "backup_status": backup.get("status"),
     }
 
 
