@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -97,8 +97,12 @@ from app.services.google_drive import GoogleDriveWorklogError, google_drive_work
 from app.services.cost_workbook import (
     CostWorkbookError,
     MonthHourUpdate,
+    billable_hours_from_texts,
     count_forklift_units,
     evaluate_day_amounts,
+    money_differs,
+    pooled_normal_amount,
+    price_normal_hours,
     _excel_round as excel_round,
     find_cost_sheet_target,
     holiday_reason,
@@ -2473,6 +2477,47 @@ async def list_cost_hour_import_targets(
     }
 
 
+def _slip_records_for_site_day(session: Session, worksite_id: int, work_date: date) -> list[SignSlipRecord]:
+    return list(session.exec(
+        select(SignSlipRecord).where(
+            SignSlipRecord.worksite_id == worksite_id,
+            SignSlipRecord.slip_date == work_date,
+            SignSlipRecord.is_active.is_(True),
+        )
+    ).all())
+
+
+def _slip_text_records(slips: list[SignSlipRecord]) -> list[dict]:
+    return [
+        {
+            "work_content": slip.work_content,
+            "notes": slip.notes,
+            "normal_hours": slip.normal_hours,
+            "overtime_hours": slip.overtime_hours,
+            "is_active": slip.is_active,
+        }
+        for slip in slips
+    ]
+
+
+def _amount_payload(cost) -> dict:
+    return {
+        "normal_amount": cost.normal_amount,
+        "overtime_amount": cost.overtime_amount,
+        "support_amount": cost.support_amount,
+        "total": cost.total,
+    }
+
+
+def _sign_slip_blocks_import(suggestion: Optional[dict], normal_hours: float, overtime_hours: float) -> bool:
+    """簽單已有明確工時，但這次要寫入的時數不一樣。"""
+    if not suggestion or suggestion.get("conflict"):
+        return False
+    same_normal = abs(float(normal_hours) - float(suggestion.get("normal_hours") or 0)) <= 0.001
+    same_overtime = abs(float(overtime_hours) - float(suggestion.get("overtime_hours") or 0)) <= 0.001
+    return not (same_normal and same_overtime)
+
+
 @router.post("/cost-hour-imports/preview")
 async def preview_cost_hour_import(
     payload: CostHourImportRequest,
@@ -2488,7 +2533,11 @@ async def preview_cost_hour_import(
         target = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
     except CostWorkbookError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    slips = _slip_records_for_site_day(session, worksite.id, payload.work_date)
+    suggestion = billable_hours_from_texts(_slip_text_records(slips))
+    slip_mismatch = _sign_slip_blocks_import(suggestion, payload.normal_hours, payload.overtime_hours)
     pricing = None
+    amount_changed = False
     try:
         parameters = read_pricing_parameters(content, document.original_file_name)
         rates = parameters.rates_for(target.label)
@@ -2504,6 +2553,19 @@ async def preview_cost_hour_import(
             c_formula=target.c_formula, e_formula=target.e_formula, g_formula=target.g_formula,
             is_holiday=target.is_holiday,
         )
+        amount_changed = target.normal_hours is not None and money_differs(existing_amount.total, incoming_amount.total)
+        sign_slip_amount = None
+        if suggestion and not suggestion.get("conflict"):
+            sign_slip_amount = {
+                "normal_amount": price_normal_hours(rates, suggestion.get("normal_hours"), suggestion.get("segments")),
+                "overtime_amount": (suggestion.get("overtime_hours") or 0) * (
+                    rates.holiday_rate if target.is_holiday else rates.ot_rate
+                ),
+                "workbook_normal_amount": pooled_normal_amount(
+                    rates, suggestion.get("normal_hours"), suggestion.get("segments")
+                ),
+            }
+            sign_slip_amount["total"] = sign_slip_amount["normal_amount"] + sign_slip_amount["overtime_amount"]
         pricing = {
             "is_holiday": target.is_holiday,
             "holiday_reason": holiday_reason(payload.work_date),
@@ -2516,21 +2578,13 @@ async def preview_cost_hour_import(
                 "holiday_rate": rates.holiday_rate,
                 "support_rate": rates.support_rate,
             },
-            "existing_amount": {
-                "normal_amount": existing_amount.normal_amount,
-                "overtime_amount": existing_amount.overtime_amount,
-                "support_amount": existing_amount.support_amount,
-                "total": existing_amount.total,
-            },
-            "incoming_amount": {
-                "normal_amount": incoming_amount.normal_amount,
-                "overtime_amount": incoming_amount.overtime_amount,
-                "support_amount": incoming_amount.support_amount,
-                "total": incoming_amount.total,
-            },
+            "existing_amount": _amount_payload(existing_amount),
+            "incoming_amount": _amount_payload(incoming_amount),
+            "sign_slip_amount": sign_slip_amount,
         }
     except CostWorkbookError:
         pricing = None
+    requires_amount_confirmation = amount_changed or slip_mismatch
     return {
         "document_name": document.original_file_name,
         "worksite_name": worksite.name,
@@ -2550,7 +2604,19 @@ async def preview_cost_hour_import(
         },
         "cells": {"normal_hours": f"B{target.row_number}", "overtime_hours": f"D{target.row_number}", "support_hours": f"F{target.row_number}"},
         "pricing": pricing,
-        "warning": "確認匯入後會更新 Google Drive 計價檔的同一日期列；Google Drive 會保留檔案版本修訂，系統也會保存本次匯入紀錄。",
+        "sign_slip": None if not suggestion else {
+            "conflict": bool(suggestion.get("conflict")),
+            "segments": list(suggestion["segments"]) if suggestion.get("segments") else None,
+            "normal_hours": suggestion.get("normal_hours"),
+            "overtime_hours": suggestion.get("overtime_hours"),
+            "matches_incoming": not slip_mismatch,
+        },
+        "requires_amount_confirmation": requires_amount_confirmation,
+        "warning": (
+            "這次匯入會改變目前金額，或與簽單工時不同。請核對後勾選確認才會寫入；未確認前不會更新計價檔。"
+            if requires_amount_confirmation
+            else "確認匯入後會更新 Google Drive 計價檔的同一日期列；Google Drive 會保留檔案版本修訂，系統也會保存本次匯入紀錄。"
+        ),
     }
 
 
@@ -2567,6 +2633,40 @@ async def apply_cost_hour_import(
     content, _ = await _read_cost_targets(document, payload.work_date)
     try:
         previous = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
+    except CostWorkbookError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    suggestion = billable_hours_from_texts(_slip_text_records(
+        _slip_records_for_site_day(session, worksite.id, payload.work_date)
+    ))
+    slip_mismatch = _sign_slip_blocks_import(suggestion, payload.normal_hours, payload.overtime_hours)
+    amount_changed = False
+    try:
+        parameters = read_pricing_parameters(content, document.original_file_name)
+        rates = parameters.rates_for(previous.label)
+        existing_amount = evaluate_day_amounts(
+            parameters, rates, previous.row_number,
+            previous.normal_hours, previous.overtime_hours, previous.support_hours,
+            c_formula=previous.c_formula, e_formula=previous.e_formula, g_formula=previous.g_formula,
+            is_holiday=previous.is_holiday,
+        )
+        incoming_amount = evaluate_day_amounts(
+            parameters, rates, previous.row_number,
+            payload.normal_hours, payload.overtime_hours, payload.support_hours,
+            c_formula=previous.c_formula, e_formula=previous.e_formula, g_formula=previous.g_formula,
+            is_holiday=previous.is_holiday,
+        )
+        amount_changed = previous.normal_hours is not None and money_differs(existing_amount.total, incoming_amount.total)
+    except CostWorkbookError:
+        existing_amount = incoming_amount = None
+    if (amount_changed or slip_mismatch) and not payload.confirm_amount_change:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "這次匯入會改變目前金額，或與簽單的每台工時不同，尚未寫入計價檔。"
+                "請先核對目前金額與匯入後金額，確認後再儲存。"
+            ),
+        )
+    try:
         updated_content, target = import_cost_hours(
             content,
             document.original_file_name,
@@ -2659,6 +2759,143 @@ def list_cost_hour_imports(
     ]
 
 
+@router.get("/cost-hour-imports/slip-check")
+async def check_sign_slip_pricing(
+    response: Response,
+    document_id: Optional[int] = Query(default=None, ge=1),
+    year: Optional[int] = Query(default=None, ge=2020, le=2200),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """只讀檢查簽單工時與已匯入／計價表金額是否不同。不寫入、不改金額。"""
+    response.headers["Cache-Control"] = "no-store"
+    statement = select(SignSlipRecord).where(SignSlipRecord.is_active.is_(True))
+    if year and month:
+        first_day, last_day = _month_bounds(year, month)
+        statement = statement.where(
+            SignSlipRecord.slip_date >= first_day,
+            SignSlipRecord.slip_date <= last_day,
+        )
+    slips = session.exec(statement.order_by(SignSlipRecord.slip_date, SignSlipRecord.id)).all()
+    logs = session.exec(
+        select(WorkHourImportLog).order_by(WorkHourImportLog.created_at.desc())
+    ).all()
+    latest_log: dict[tuple, WorkHourImportLog] = {}
+    for log in logs:
+        latest_log.setdefault((log.worksite_id, log.work_date), log)
+
+    sheet_by_site_day: dict[tuple, tuple] = {}
+    if document_id and year and month:
+        document = _cost_document_or_400(session, document_id)
+        content = await _download_cost_content(document)
+        period = roc_period(date(year, month, 1))
+        try:
+            month_data = read_month_cost_data(content, document.original_file_name, period)
+        except CostWorkbookError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        worksites = {row.id: row for row in session.exec(select(Worksite)).all() if row.id is not None}
+        for label, rows in month_data.sheets.items():
+            matched = next(
+                (site for site in worksites.values() if match_label_for_site(site.code, site.name, [label]) == label),
+                None,
+            )
+            if matched is None:
+                continue
+            for row in rows:
+                sheet_by_site_day[(matched.id, row.day)] = (label, row, month_data.parameters)
+
+    days = []
+    for slip in slips:
+        suggestion = billable_hours_from_texts(_slip_text_records([slip]))
+        if not suggestion or suggestion.get("conflict") or suggestion.get("normal_hours") is None:
+            continue
+        site = session.get(Worksite, slip.worksite_id) if slip.worksite_id else None
+        log = latest_log.get((slip.worksite_id, slip.slip_date))
+        full_day_estimate = float(slip.forklift_count or 0) * 8 if slip.forklift_count else None
+        reasons: list[str] = []
+        imported = None
+        if log is not None:
+            imported = {
+                "normal_hours": log.normal_hours,
+                "overtime_hours": log.overtime_hours,
+                "support_hours": log.support_hours,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            hours_differ = (
+                abs(float(log.normal_hours) - float(suggestion["normal_hours"])) > 0.001
+                or abs(float(log.overtime_hours or 0) - float(suggestion["overtime_hours"] or 0)) > 0.001
+            )
+            if hours_differ:
+                reasons.append("最近一次匯入的工時與簽單不同")
+            if (
+                full_day_estimate
+                and abs(float(log.normal_hours) - full_day_estimate) <= 0.001
+                and abs(float(log.normal_hours) - float(suggestion["normal_hours"])) > 0.001
+            ):
+                reasons.append("匯入的正常工時等於台數×8，沒有用簽單上每台的工時")
+        workbook = None
+        sheet = sheet_by_site_day.get((slip.worksite_id, slip.slip_date))
+        if sheet is not None:
+            label, row, parameters = sheet
+            rates = parameters.rates_for(label)
+            current_amount = evaluate_day_amounts(
+                parameters, rates, row.row_number,
+                row.normal_hours, row.overtime_hours, row.support_hours,
+                c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                is_holiday=row.is_holiday,
+            )
+            slip_normal = price_normal_hours(rates, suggestion["normal_hours"], suggestion.get("segments"))
+            slip_overtime = float(suggestion["overtime_hours"] or 0) * (
+                rates.holiday_rate if row.is_holiday else rates.ot_rate
+            )
+            slip_total = slip_normal + slip_overtime
+            workbook = {
+                "label": label,
+                "normal_hours": row.normal_hours,
+                "overtime_hours": row.overtime_hours,
+                "support_hours": row.support_hours,
+                "current_total": current_amount.total,
+                "sign_slip_total": slip_total,
+            }
+            sheet_hours_differ = row.normal_hours is not None and (
+                abs(float(row.normal_hours) - float(suggestion["normal_hours"])) > 0.001
+                or abs(float(row.overtime_hours or 0) - float(suggestion["overtime_hours"] or 0)) > 0.001
+                or money_differs(current_amount.total, slip_total)
+            )
+            if sheet_hours_differ:
+                reasons.append("計價表這一天的工時或金額與簽單不同")
+            if (
+                full_day_estimate
+                and row.normal_hours is not None
+                and abs(float(row.normal_hours) - full_day_estimate) <= 0.001
+                and abs(float(row.normal_hours) - float(suggestion["normal_hours"])) > 0.001
+            ):
+                reasons.append("計價表正常工時等於台數×8")
+        if not reasons:
+            continue
+        days.append({
+            "date": slip.slip_date.isoformat(),
+            "worksite_id": slip.worksite_id,
+            "worksite_name": site.name if site else slip.location,
+            "slip_no": slip.slip_no,
+            "vehicle_hours": list(suggestion["segments"]) if suggestion.get("segments") else None,
+            "sign_slip_normal_hours": suggestion["normal_hours"],
+            "sign_slip_overtime_hours": suggestion["overtime_hours"],
+            "full_day_estimate_hours": full_day_estimate,
+            "imported": imported,
+            "workbook": workbook,
+            "reasons": reasons,
+        })
+    return {
+        "read_only": True,
+        "changes_amounts": False,
+        "affected_count": len(days),
+        "days": days,
+        "note": "這份清單只讀取簽單、匯入紀錄與計價檔，沒有改金額，也沒有寫入 Google Drive。",
+    }
+
+
 def _local_date_utc_bounds(target_date: date) -> tuple[datetime, datetime]:
     local_tz = ZoneInfo(settings.timezone)
     start = datetime.combine(target_date, time.min, tzinfo=local_tz)
@@ -2679,8 +2916,12 @@ def _month_bounds(year: int, month: int):
     return date(year, month, 1), date(year, month, last_day)
 
 
+def _empty_journal_bucket() -> dict:
+    return {"assigned": [], "inspected": [], "saved_hours": None, "sign_slips": []}
+
+
 def _gather_month_journal(session: Session, first_day: date, last_day: date) -> dict:
-    """彙整整月每日每工地的派工、點檢與已保存日誌工時。"""
+    """彙整整月每日每工地的派工、點檢、已保存日誌工時與簽單。"""
     assignments = session.exec(
         select(WorkAssignment).where(
             WorkAssignment.work_date >= first_day,
@@ -2699,13 +2940,17 @@ def _gather_month_journal(session: Session, first_day: date, last_day: date) -> 
             WorksiteJournalHours.work_date <= last_day,
         )
     ).all()
+    sign_slips = session.exec(
+        select(SignSlipRecord).where(
+            SignSlipRecord.slip_date >= first_day,
+            SignSlipRecord.slip_date <= last_day,
+            SignSlipRecord.is_active.is_(True),
+        )
+    ).all()
     forklifts = {row.id: row for row in session.exec(select(Forklift)).all() if row.id is not None}
     buckets: dict[tuple, dict] = {}
     for assignment in assignments:
-        bucket = buckets.setdefault(
-            (assignment.site_id, assignment.work_date),
-            {"assigned": [], "inspected": [], "saved_hours": None},
-        )
+        bucket = buckets.setdefault((assignment.site_id, assignment.work_date), _empty_journal_bucket())
         for text in (assignment.vehicle, assignment.equipment):
             if text:
                 bucket["assigned"].append(str(text))
@@ -2713,17 +2958,16 @@ def _gather_month_journal(session: Session, first_day: date, last_day: date) -> 
         forklift = forklifts.get(inspection.forklift_id)
         model = getattr(forklift, "model", None) if forklift else None
         if model:
-            bucket = buckets.setdefault(
-                (inspection.site_id, inspection.inspection_date),
-                {"assigned": [], "inspected": [], "saved_hours": None},
-            )
+            bucket = buckets.setdefault((inspection.site_id, inspection.inspection_date), _empty_journal_bucket())
             bucket["inspected"].append(str(model))
     for item in saved_hours:
-        bucket = buckets.setdefault(
-            (item.worksite_id, item.work_date),
-            {"assigned": [], "inspected": [], "saved_hours": None},
-        )
+        bucket = buckets.setdefault((item.worksite_id, item.work_date), _empty_journal_bucket())
         bucket["saved_hours"] = item
+    for slip in sign_slips:
+        if slip.worksite_id is None:
+            continue
+        bucket = buckets.setdefault((slip.worksite_id, slip.slip_date), _empty_journal_bucket())
+        bucket["sign_slips"].append(slip)
     return buckets
 
 
@@ -2740,7 +2984,8 @@ def _serialize_rates(rates) -> dict:
 
 
 def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
-                      session: Session, selected_labels, overwrite: bool, overrides=None):
+                      session: Session, selected_labels, overwrite: bool, overrides=None,
+                      confirm_amount_changes: bool = False):
     """產生整月寫入計畫（乾跑結果），同時回傳待寫入的 MonthHourUpdate 清單。"""
     first_day, last_day = _month_bounds(year, month)
     period = roc_period(first_day)
@@ -2768,7 +3013,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
     warnings: list[str] = []
     serialized_labels: list[dict] = []
     updates: list[MonthHourUpdate] = []
-    totals_counter = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0}
+    totals_counter = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0, "held_amount": 0}
     invoice_totals = {"untaxed": 0.0, "tax": 0, "taxed": 0}
 
     for label in sorted(labels):
@@ -2786,7 +3031,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
 
         days_payload: list[dict] = []
         daily_costs = []
-        counters = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0}
+        counters = {"write": 0, "skipped_exists": 0, "empty": 0, "no_worksite": 0, "held_amount": 0}
 
         for row in rows:
             units = {"twoPointFive": 0, "threePointZero": 0, "fourPointFive": 0, "total": 0}
@@ -2795,21 +3040,28 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                 units = count_forklift_units(bucket["assigned"], bucket["inspected"])
             forklift_count = units["total"]
             saved_hours = bucket.get("saved_hours") if bucket else None
-            incoming_normal = (
-                float(saved_hours.normal_hours)
-                if saved_hours is not None
-                else normal_hours_from_units(units)
-            )
-            incoming_overtime = (
-                float(saved_hours.overtime_hours)
-                if saved_hours is not None
-                else row.overtime_hours
-            )
-            incoming_support = (
-                float(saved_hours.support_hours)
-                if saved_hours is not None
-                else row.support_hours
-            )
+            suggestion = billable_hours_from_texts(_slip_text_records(bucket.get("sign_slips") or [])) if bucket else None
+            hour_source = "auto"
+            vehicle_segments = None
+            if suggestion and not suggestion.get("conflict"):
+                incoming_normal = float(suggestion["normal_hours"] or 0)
+                incoming_overtime = float(suggestion["overtime_hours"] or 0)
+                incoming_support = (
+                    float(saved_hours.support_hours)
+                    if saved_hours is not None
+                    else (row.support_hours or 0)
+                )
+                hour_source = "sign_slip"
+                vehicle_segments = list(suggestion["segments"]) if suggestion.get("segments") else None
+            elif saved_hours is not None:
+                incoming_normal = float(saved_hours.normal_hours)
+                incoming_overtime = float(saved_hours.overtime_hours)
+                incoming_support = float(saved_hours.support_hours)
+                hour_source = "saved"
+            else:
+                incoming_normal = normal_hours_from_units(units)
+                incoming_overtime = row.overtime_hours
+                incoming_support = row.support_hours
             has_saved_hours = saved_hours is not None and any(
                 value > 0
                 for value in (
@@ -2818,6 +3070,11 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                     saved_hours.support_hours,
                 )
             )
+            has_sign_slip_hours = hour_source == "sign_slip" and (
+                incoming_normal > 0 or (incoming_overtime or 0) > 0
+            )
+            if suggestion and suggestion.get("conflict"):
+                warnings.append(f"{row.day.isoformat()} 標別「{label}」有多張工時不一致的簽單，未自動採用，請人工確認")
             override = override_map.get((label, row.day))
             has_override = override is not None
 
@@ -2825,9 +3082,9 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                 action = "write"
             elif matched_site is None:
                 action = "no_worksite"
-            elif forklift_count == 0 and not has_saved_hours:
+            elif forklift_count == 0 and not has_saved_hours and not has_sign_slip_hours:
                 action = "empty"
-            elif row.normal_hours is not None and not overwrite:
+            elif row.normal_hours is not None and not overwrite and not has_override:
                 action = "skipped_exists"
             else:
                 action = "write"
@@ -2842,6 +3099,56 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
             effective_o = override['overtime_hours'] if has_override else incoming_overtime
             effective_s = override['support_hours'] if has_override else incoming_support
 
+            existing_cost = None
+            cost = None
+            amount_changed = False
+            if rates:
+                existing_cost = evaluate_day_amounts(
+                    parameters, rates, row.row_number,
+                    row.normal_hours, row.overtime_hours, row.support_hours,
+                    c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                    is_holiday=row.is_holiday,
+                )
+                proposed_n = float(incoming_normal) if has_override and override['normal_hours'] is None else (
+                    override['normal_hours'] if has_override and override['normal_hours'] is not None else incoming_normal
+                )
+                proposed_o = override['overtime_hours'] if has_override else incoming_overtime
+                proposed_s = override['support_hours'] if has_override else incoming_support
+                if action == "write":
+                    cost = evaluate_day_amounts(
+                        parameters, rates, row.row_number,
+                        effective_n, effective_o, effective_s,
+                        c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                        is_holiday=row.is_holiday,
+                    )
+                else:
+                    cost = evaluate_day_amounts(
+                        parameters, rates, row.row_number,
+                        proposed_n, proposed_o, proposed_s,
+                        c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                        is_holiday=row.is_holiday,
+                    )
+                if row.normal_hours is not None and money_differs(existing_cost.total, cost.total):
+                    amount_changed = True
+                if vehicle_segments and rates:
+                    per_vehicle = price_normal_hours(rates, incoming_normal, tuple(vehicle_segments))
+                    pooled = pooled_normal_amount(rates, incoming_normal, tuple(vehicle_segments))
+                    if money_differs(per_vehicle, pooled):
+                        amount_changed = True
+                        warnings.append(
+                            f"{row.day.isoformat()} 標別「{label}」每台分開計價為 {per_vehicle:g}，"
+                            f"活頁簿把合計工時連續計算為 {pooled:g}，請人工確認後再寫入"
+                        )
+            if action == "write" and amount_changed and not confirm_amount_changes:
+                action = "held_amount"
+                effective_n = float(incoming_normal)
+                effective_o = incoming_overtime
+                effective_s = incoming_support
+            elif action == "skipped_exists":
+                effective_n = row.normal_hours
+                effective_o = row.overtime_hours
+                effective_s = row.support_hours
+
             if action == "write":
                 counters["write"] += 1
                 updates.append(MonthHourUpdate(
@@ -2854,17 +3161,14 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                     forklift_count=forklift_count,
                     force=has_override,
                 ))
+                if rates and cost and action == "write":
+                    daily_costs.append(cost)
             else:
                 counters[action] += 1
-            cost = None
-            if rates:
-                cost = evaluate_day_amounts(
-                    parameters, rates, row.row_number,
-                    effective_n, effective_o, effective_s,
-                    c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
-                    is_holiday=row.is_holiday,
-                )
-                daily_costs.append(cost)
+                if action != "held_amount" and rates and existing_cost and row.normal_hours is not None:
+                    daily_costs.append(existing_cost)
+                elif action == "held_amount" and rates and existing_cost:
+                    daily_costs.append(existing_cost)
 
             days_payload.append({
                 "date": row.day.isoformat(),
@@ -2879,7 +3183,9 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                     "support_hours": row.support_hours,
                 },
                 "incoming_normal": incoming_normal,
-                "journal_hours_source": "saved" if saved_hours is not None else "auto",
+                "journal_hours_source": hour_source,
+                "vehicle_hours": vehicle_segments,
+                "amount_changed": amount_changed,
                 "action": action,
                 "overridden": has_override,
                 "hours": {
@@ -2887,12 +3193,18 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                     "overtime_hours": effective_o,
                     "support_hours": effective_s,
                 },
+                "proposed_hours": {
+                    "normal_hours": incoming_normal,
+                    "overtime_hours": incoming_overtime,
+                    "support_hours": incoming_support,
+                },
+                "existing_amount": _amount_payload(existing_cost) if existing_cost else None,
                 "amount": {
-                    "normal_amount": cost.normal_amount,
-                    "overtime_amount": cost.overtime_amount,
-                    "support_amount": cost.support_amount,
-                    "total": cost.total,
-                } if cost else None,
+                    "normal_amount": (cost or existing_cost).normal_amount,
+                    "overtime_amount": (cost or existing_cost).overtime_amount,
+                    "support_amount": (cost or existing_cost).support_amount,
+                    "total": (cost or existing_cost).total,
+                } if (cost or existing_cost) else None,
             })
 
         totals = totals_from_day_costs(
@@ -2926,6 +3238,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
                 "skipped_exists": counters["skipped_exists"],
                 "empty": counters["empty"],
                 "no_worksite": counters["no_worksite"],
+                "held_amount": counters["held_amount"],
                 "untaxed": totals.untaxed if totals else 0,
                 "tax": totals.tax if totals else 0,
                 "taxed": totals.taxed if totals else 0,
@@ -2952,6 +3265,7 @@ def _build_month_plan(content: bytes, file_name: str, year: int, month: int,
             "skipped_exists": totals_counter["skipped_exists"],
             "empty": totals_counter["empty"],
             "no_worksite": totals_counter["no_worksite"],
+            "held_amount": totals_counter["held_amount"],
             "labels": len(serialized_labels),
         },
         "invoice": invoice_totals,
@@ -2978,6 +3292,7 @@ async def preview_cost_month_imports(
         plan, _ = _build_month_plan(
             content, document.original_file_name, payload.year, payload.month,
             session, payload.labels, payload.overwrite, payload.overrides,
+            confirm_amount_changes=payload.confirm_amount_changes,
         )
     except CostWorkbookError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2998,11 +3313,20 @@ async def apply_cost_month_imports(
         plan, updates = _build_month_plan(
             content, document.original_file_name, payload.year, payload.month,
             session, payload.labels, payload.overwrite, payload.overrides,
+            confirm_amount_changes=payload.confirm_amount_changes,
         )
     except CostWorkbookError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not updates:
+        if plan["counts"].get("held_amount"):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"有 {plan['counts']['held_amount']} 日的匯入金額與目前金額不同，尚未寫入計價檔。"
+                    "請核對預覽的目前金額與匯入後金額，確認後再儲存。"
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail="整月沒有可寫入的工時（可能尚無工作日誌，或日期皆已填入）；如要重新計算已存在日期，請勾選覆寫。",
@@ -3063,13 +3387,18 @@ async def apply_cost_month_imports(
         ),
     )
     backup_result = await google_drive_worklog_service.backup_database()
+    held = plan["counts"].get("held_amount") or 0
+    message = f"已將 {period} 工作日誌工時批次寫入 Google Drive 計價檔（{len(written)} 日），並保留修訂與系統紀錄"
+    if held:
+        message += f"。另有 {held} 日金額與目前不同，尚未寫入；請核對後勾選確認再儲存。"
     return {
-        "message": f"已將 {period} 工作日誌工時批次寫入 Google Drive 計價檔（{len(written)} 日），並保留修訂與系統紀錄",
+        "message": message,
         "period": period,
         "written": len(written),
         "skipped_exists": plan["counts"]["skipped_exists"],
         "empty": plan["counts"]["empty"],
         "no_worksite": plan["counts"]["no_worksite"],
+        "held_amount": held,
         "warnings": plan["warnings"],
         "drive_url": drive_url,
         "backup_status": backup_result.get("status"),
@@ -3316,18 +3645,33 @@ def list_worksite_journals(
             ],
         )
         saved = saved_hours_by_site.get(journal["site_id"])
-        journal["pricing_hours"] = {
-            "normal_hours": (
-                float(saved.normal_hours)
-                if saved is not None
-                else float(normal_hours_from_units(unit_counts))
-            ),
-            "overtime_hours": float(saved.overtime_hours) if saved is not None else 0.0,
-            "support_hours": float(saved.support_hours) if saved is not None else 0.0,
-            "forklift_count": unit_counts["total"],
-            "source": "saved" if saved is not None else "auto",
-            "updated_at": saved.updated_at.isoformat() if saved is not None else None,
-        }
+        suggestion = billable_hours_from_texts(journal["sign_slips"])
+        if suggestion and not suggestion.get("conflict"):
+            journal["pricing_hours"] = {
+                "normal_hours": float(suggestion["normal_hours"] or 0),
+                "overtime_hours": float(suggestion["overtime_hours"] or 0),
+                "support_hours": float(saved.support_hours) if saved is not None else 0.0,
+                "forklift_count": unit_counts["total"],
+                "vehicle_hours": list(suggestion["segments"]) if suggestion.get("segments") else None,
+                "source": "sign_slip",
+                "updated_at": saved.updated_at.isoformat() if saved is not None else None,
+            }
+        else:
+            journal["pricing_hours"] = {
+                "normal_hours": (
+                    float(saved.normal_hours)
+                    if saved is not None
+                    else float(normal_hours_from_units(unit_counts))
+                ),
+                "overtime_hours": float(saved.overtime_hours) if saved is not None else 0.0,
+                "support_hours": float(saved.support_hours) if saved is not None else 0.0,
+                "forklift_count": unit_counts["total"],
+                "vehicle_hours": None,
+                "source": "saved" if saved is not None else "auto",
+                "updated_at": saved.updated_at.isoformat() if saved is not None else None,
+            }
+        if suggestion and suggestion.get("conflict"):
+            journal["pricing_hours"]["sign_slip_conflict"] = True
         result.append(journal)
     result.sort(key=lambda item: (item["site_id"] is None, item["site_name"]))
     return {"date": journal_date.isoformat(), "sites": result}

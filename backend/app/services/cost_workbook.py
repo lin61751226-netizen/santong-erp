@@ -987,8 +987,128 @@ def count_forklift_units(assigned_texts: list[str], inspected_models: list[str])
 
 
 def normal_hours_from_units(unit_counts: dict[str, int]) -> int:
-    """正常工時＝堆高機台數 × 8 小時。"""
+    """沒有簽單工時時的估計：堆高機台數 × 8 小時。"""
     return unit_counts.get("total", 0) * 8
+
+
+_HOUR_LINE_EXPR = re.compile(r"工時計算[^\n]*")
+_VEHICLE_HOUR_EXPR = re.compile(
+    r"(?:正常作業|工時計算)[^\n]{0,24}?"
+    r"([0-9]+(?:\.[0-9]+)?(?:\s*[+＋]\s*[0-9]+(?:\.[0-9]+)?)+)"
+)
+_OVERTIME_HOUR_EXPR = re.compile(r"加班\s*([0-9]+(?:\.[0-9]+)?)\s*小時")
+
+
+def _pricing_hour_line(text: str) -> Optional[str]:
+    match = _HOUR_LINE_EXPR.search(text)
+    return match.group(0) if match else None
+
+
+def parse_vehicle_hour_segments(text: Optional[str]) -> Optional[tuple[float, ...]]:
+    """從簽單工時算式取出每台正常工時，例如「正常作業 8+4」。
+
+    有「工時計算」那一行時只看那一行。必須含有加號，避免把工作內容裡的
+    「一台」「加班3小時」當成每台工時。
+    """
+    if not text:
+        return None
+    source = _pricing_hour_line(str(text)) or str(text)
+    match = _VEHICLE_HOUR_EXPR.search(source)
+    if not match:
+        return None
+    parts = tuple(float(piece) for piece in re.split(r"\s*[+＋]\s*", match.group(1)))
+    if not parts or any(part < 0 for part in parts):
+        return None
+    return parts
+
+
+def parse_overtime_hours_text(text: Optional[str]) -> Optional[float]:
+    """只讀「工時計算」那一行的加班時數。
+
+    工作內容裡的「加班3小時」「晚上加班一小時」是敘述，不是計價加班合計。
+    沒有工時計算行時回傳 None，由簽單的加班欄位決定。
+    """
+    if not text:
+        return None
+    line = _pricing_hour_line(str(text))
+    if line is None:
+        return None
+    match = _OVERTIME_HOUR_EXPR.search(line)
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _hours_close(left: Optional[float], right: Optional[float], tolerance: float = 0.001) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    return abs(float(left) - float(right)) <= tolerance
+
+
+def money_differs(left: Optional[float], right: Optional[float], tolerance: float = 0.5) -> bool:
+    return abs(float(left or 0) - float(right or 0)) > tolerance
+
+
+def billable_hours_from_texts(records: list[dict]) -> Optional[dict]:
+    """由有效簽單決定要匯入的正常／加班工時。
+
+    有「8+4」這類算式時以每台時數為準，不加總後再當成連續工時，也不把每台都估成 8 小時。
+    多張簽單的時數不一致時回傳 conflict，呼叫端不可自行挑一張。
+    """
+    parsed: list[dict] = []
+    for record in records:
+        if record.get("is_active") is False:
+            continue
+        text = "\n".join(
+            part for part in (record.get("work_content"), record.get("notes")) if part
+        )
+        segments = parse_vehicle_hour_segments(text)
+        overtime_text = parse_overtime_hours_text(text)
+        field_overtime = float(record.get("overtime_hours") or 0)
+        if segments:
+            if field_overtime and overtime_text is not None and not _hours_close(field_overtime, overtime_text):
+                return {"conflict": True, "segments": None, "normal_hours": None, "overtime_hours": None}
+            overtime = field_overtime if field_overtime else (overtime_text or 0.0)
+            parsed.append({
+                "conflict": False,
+                "segments": segments,
+                "normal_hours": float(sum(segments)),
+                "overtime_hours": float(overtime),
+            })
+            continue
+        field_normal = float(record.get("normal_hours") or 0)
+        if field_normal or field_overtime or overtime_text:
+            overtime = field_overtime if field_overtime else (overtime_text or 0.0)
+            parsed.append({
+                "conflict": False,
+                "segments": None,
+                "normal_hours": field_normal,
+                "overtime_hours": float(overtime),
+            })
+    if not parsed:
+        return None
+    first = parsed[0]
+    for item in parsed[1:]:
+        if (
+            item["segments"] != first["segments"]
+            or not _hours_close(item["normal_hours"], first["normal_hours"])
+            or not _hours_close(item["overtime_hours"], first["overtime_hours"])
+        ):
+            return {"conflict": True, "segments": None, "normal_hours": None, "overtime_hours": None}
+    return first
+
+
+def price_normal_hours(rates: LabelRates, hours: Optional[float], segments: Optional[tuple[float, ...]] = None) -> float:
+    """每台各自套用未滿 8 小時時薪、滿 8 小時日薪；沒有分台明細時才用合計時數。"""
+    if segments:
+        return sum(normal_day_amount(rates, part) for part in segments)
+    return normal_day_amount(rates, hours)
+
+
+def pooled_normal_amount(rates: LabelRates, hours: Optional[float], segments: Optional[tuple[float, ...]] = None) -> float:
+    """活頁簿 C 欄實際算法：把正常工時加總後每滿 8 小時一個日薪。"""
+    total = sum(segments) if segments else hours
+    return normal_day_amount(rates, total)
 
 
 # ---------------------------------------------------------------------------
