@@ -66,7 +66,7 @@
       <div class="hero-card">
         <span class="eyebrow">Santong Internal Ops</span>
         <h1>{{ app_name }}</h1>
-        <p class="hero-copy">先選功能，再選操作；一次處理一件事，資料與紀錄完整保留。</p>
+        <p class="hero-copy">登入後先看今日總覽。要找其他功能，點上方分類，或在搜尋框輸入名稱。</p>
       </div>
       <aside class="hero-card hero-side">
         <div class="user-chip">
@@ -87,20 +87,25 @@
       </aside>
     </section>
 
-    <nav class="workspace-nav" aria-label="後台功能導覽">
-      <button type="button" class="workspace-tab is-active" data-workspace-tab="overview" onclick="setWorkspace('overview')">今日總覽</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="operations" onclick="setWorkspace('operations')">派工與審核</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機管理</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="forklift-attendance" onclick="setWorkspace('forklift-attendance')">堆高機出勤</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="calendar" onclick="setWorkspace('calendar')">行事曆</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="contracts" onclick="setWorkspace('contracts')">合約與證照</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="documents" onclick="setWorkspace('documents')">文件與計價</button>
-      <button type="button" class="workspace-tab" data-workspace-tab="settings" onclick="setWorkspace('settings')">LINE 與系統</button>
-    </nav>
-    <div class="mobile-workspace-nav">
-      <label for="workspaceMain">功能區</label>
-      <select id="workspaceMain" onchange="setWorkspace(this.value)"></select>
+    <div class="nav-shell">
+      <div class="nav-search">
+        <label for="navSearch">搜尋功能</label>
+        <input id="navSearch" type="search" placeholder="輸入名稱，例如：請假、簽單、點檢" autocomplete="off" oninput="renderNavSearch(this.value)" onkeydown="onNavSearchKey(event)">
+        <div id="navSearchResults" class="nav-search-results" hidden></div>
+      </div>
+      <nav class="workspace-nav" aria-label="後台功能導覽">
+        <button type="button" class="workspace-tab is-active" data-workspace-tab="today" onclick="setWorkspace('today')">今日總覽</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="dispatch" onclick="setWorkspace('dispatch')">派工與工地</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="journals" onclick="setWorkspace('journals')">日誌與簽單</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="pricing" onclick="setWorkspace('pricing')">計價與收支</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="files" onclick="setWorkspace('files')">文件與設定</button>
+      </nav>
+      <div class="mobile-workspace-nav">
+        <label for="workspaceMain">功能區</label>
+        <select id="workspaceMain" onchange="setWorkspace(this.value)"></select>
+      </div>
     </div>
 
     <div id="workspaceTools" class="workspace-tools" hidden>
@@ -114,7 +119,19 @@
       <pre id="actionResultBody" aria-live="polite"></pre>
     </details>
 
-    <section class="panel span-12" data-workspace="overview">
+    <section id="panel-today-board" class="panel span-12" data-workspace="today" data-panel="today-board" data-nav-order="0" data-legacy="overview:home" data-nav-aliases="首頁,今天,總覽">
+      <div class="panel-header">
+        <div>
+          <h2>今日總覽</h2>
+          <p id="todayBoardDate" class="muted">登入後顯示今天的出勤、派工、待審與異常。</p>
+        </div>
+        <button type="button" onclick="loadTodayOverview()">重新整理</button>
+      </div>
+      <div id="todayBoardCards" class="today-grid"></div>
+      <p id="todayBoardStatus" class="notice" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel span-12" data-workspace="today" id="panel-system-stats" data-panel="system-stats" data-nav-order="1" data-legacy="overview:0" data-nav-aliases="人數,統計,員工數">
       <div class="panel-header">
         <div>
           <h2>系統總覽</h2>
@@ -124,7 +141,7 @@
       <div id="stats" class="stats"></div>
     </section>
 
-    <section class="panel span-12" data-workspace="overview">
+    <section class="panel span-12" data-workspace="journals" id="panel-journal" data-panel="journal" data-nav-order="0" data-legacy="overview:1" data-nav-aliases="工作日誌,AI草稿,預填簽單,日誌">
       <div class="panel-header">
         <div>
           <h2>今日各工地工作日誌</h2>
@@ -147,7 +164,7 @@
       <div id="aiOpsJournal"></div>
     </section>
 
-    <section class="panel span-12" data-workspace="calendar">
+    <section class="panel span-12" data-workspace="dispatch" id="panel-calendar" data-panel="calendar" data-nav-order="3" data-legacy="calendar:0" data-nav-aliases="月曆,行事曆">
       <div class="panel-header">
         <div>
           <span class="eyebrow">工作節奏</span>
@@ -166,7 +183,7 @@
       <div id="calendarList" class="calendar-list"></div>
     </section>
 
-    <section class="panel span-12" data-workspace="contracts">
+    <section class="panel span-12" data-workspace="files" id="panel-contracts" data-panel="contracts" data-nav-order="1" data-legacy="contracts:0" data-nav-aliases="合約,證照">
       <div class="panel-header">
         <div>
           <span class="eyebrow">文件期限</span>
@@ -219,7 +236,7 @@
       <div class="table-wrap"><table><thead><tr><th>員工</th><th>證照名稱</th><th>證號</th><th>期限</th><th>狀態</th><th>文件</th><th>操作</th></tr></thead><tbody id="certificateRows"></tbody></table></div>
     </section>
 
-    <section class="panel span-12" data-workspace="forklift-attendance">
+    <section class="panel span-12" data-workspace="fleet" id="panel-forklift-attendance" data-panel="forklift-attendance" data-nav-order="3" data-legacy="forklift-attendance:0" data-nav-aliases="出勤統計,車隊出勤">
       <div class="panel-header">
         <div>
           <span class="eyebrow">車隊出勤</span>
@@ -241,7 +258,7 @@
     </section>
 
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="fleet" id="panel-rentals" data-panel="rentals" data-nav-order="4" data-legacy="fleet:0" data-nav-aliases="出租,客戶">
       <div class="panel-header">
         <div>
           <h2>堆高機出租管理</h2>
@@ -257,7 +274,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="fleet" id="panel-fleet-machines" data-panel="fleet-machines" data-nav-order="0" data-legacy="fleet:1" data-nav-aliases="車隊,新增堆高機">
       <div class="panel-header">
         <div>
           <h2>堆高機車隊管理</h2>
@@ -298,7 +315,7 @@
       <p id="fleetFeedback" class="notice" role="status" aria-live="polite">可在車隊列表修改目前工地、油量與保養日期，再按該車輛的「儲存」。</p>
     </section>
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="dispatch" id="panel-sites" data-panel="sites" data-nav-order="2" data-legacy="fleet:2" data-nav-aliases="工地">
       <div class="panel-header">
         <div>
           <h2>工地管理</h2>
@@ -326,7 +343,7 @@
       <p id="worksiteFeedback" class="notice" role="status" aria-live="polite">新增或刪除工地後，相關下拉選單會自動更新。</p>
     </section>
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="files" id="panel-audit" data-panel="audit" data-nav-order="6" data-legacy="fleet:3" data-nav-aliases="操作紀錄,稽核">
       <div class="panel-header">
         <div>
           <h2>管理操作紀錄</h2>
@@ -342,7 +359,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="fleet" id="panel-inspections" data-panel="inspections" data-nav-order="1" data-legacy="fleet:4" data-nav-aliases="點檢">
       <div class="panel-header">
         <div>
           <h2>堆高機點檢記錄</h2>
@@ -380,7 +397,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="fleet">
+    <section class="panel span-12" data-workspace="fleet" id="panel-inspection-notices" data-panel="inspection-notices" data-nav-order="2" data-legacy="fleet:5" data-nav-aliases="保養通知,點檢通知">
       <div class="panel-header">
         <div><h2>點檢與保養通知紀錄</h2><p class="muted">最近 50 筆發送結果；發送失敗會在服務運行期間每小時重試。</p></div>
         <button type="button" class="button-secondary" onclick="loadForkliftNotifications()">更新通知紀錄</button>
@@ -392,7 +409,7 @@
     </section>
 
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="pricing" id="panel-pricing-hours" data-panel="pricing-hours" data-nav-order="0" data-legacy="documents:0" data-nav-aliases="計價工時,匯入工時">
       <div class="panel-header">
         <div>
           <h2>工作日誌匯入計價工時</h2>
@@ -426,7 +443,7 @@
       </table></div>
     </section>
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="pricing" id="panel-pricing-month" data-panel="pricing-month" data-nav-order="1" data-legacy="documents:1" data-nav-aliases="整月計價,計價核對,批次匯入,檢查簽單與計價金額">
       <div class="panel-header">
         <div>
           <h2>整月批次匯入（工作日誌自動彙整）</h2>
@@ -464,7 +481,7 @@
       <div id="signSlipPricingCheck"></div>
     </section>
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="files" id="panel-excel-library" data-panel="excel-library" data-nav-order="0" data-legacy="documents:2" data-nav-aliases="文件庫,Excel,大字閱讀">
       <div class="panel-header">
         <div>
           <h2>公司 Excel 文件庫</h2>
@@ -491,7 +508,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="pricing" id="panel-finance-import" data-panel="finance-import" data-nav-order="2" data-legacy="documents:3" data-nav-aliases="收支匯入,通訊錄匯入">
       <div class="panel-header">
         <div>
           <h2>收支與通訊錄資料匯入</h2>
@@ -532,7 +549,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="journals" id="panel-sign-slips" data-panel="sign-slips" data-nav-order="1" data-legacy="documents:4" data-nav-aliases="簽單,當日簽單">
       <div class="panel-header">
         <div>
           <h2>當日簽單紀錄</h2>
@@ -583,7 +600,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="documents">
+    <section class="panel span-12" data-workspace="pricing" id="panel-excel-editor" data-panel="excel-editor" data-nav-order="3" data-legacy="documents:5" data-nav-aliases="線上編輯,收支修改">
       <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p></div></div>
       <div class="form-grid">
         <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
@@ -601,7 +618,7 @@
       <details class="pricing-rules"><summary>修改與匯出版本記錄</summary><div id="dataHistory">尚未載入</div></details>
     </section>
 
-    <section id="managementReportsPanel" class="panel span-12" data-workspace="documents">
+    <section id="managementReportsPanel" class="panel span-12" data-workspace="pricing" data-panel="management-reports" data-nav-order="4" data-legacy="documents:6" data-nav-aliases="月度對照,年度,薪資,排休表">
       <div class="panel-header"><div><h2>月度與年度管理對照</h2><p class="muted">七種報表依月份查詢。Excel版本、正式收支與實際出勤分開保存，避免覆蓋既有紀錄。</p></div></div>
       <div class="form-grid">
         <div class="full"><label for="reportSource">全年管理 Excel</label><select id="reportSource" onchange="changeReportSource()"><option value="">按重新整理載入文件</option></select></div>
@@ -621,7 +638,7 @@
       <p class="muted">正式收入支出只依系統已存帳目；Excel結餘、轉帳或未分類金額另列，不當營收。薪資按原表加給及扣款計算，不把出勤工時自動換成薪資；排休空白不代表休假。</p>
     </section>
 
-    <section class="panel span-12" data-workspace="settings">
+    <section class="panel span-12" data-workspace="files" id="panel-line" data-panel="line" data-nav-order="2" data-legacy="settings:0" data-nav-aliases="LINE接線,正式接線">
       <div class="panel-header">
         <div>
           <h2>LINE 正式接線</h2>
@@ -644,7 +661,7 @@
     </section>
 
     <div class="grid">
-      <section class="panel span-8" data-workspace="operations">
+      <section class="panel span-8" data-workspace="dispatch" id="panel-assignment-create" data-panel="assignment-create" data-nav-order="0" data-legacy="operations:0" data-nav-aliases="建立派工,新增派工">
         <div class="panel-header">
           <div>
             <h2>建立每日工作安排</h2>
@@ -697,7 +714,7 @@
         </form>
       </section>
 
-      <section class="panel span-4" data-workspace="operations">
+      <section class="panel span-4" data-workspace="dispatch" id="panel-notices" data-panel="notices" data-nav-order="7" data-legacy="operations:1" data-nav-aliases="臨時通知,通知">
         <div class="panel-header">
           <div>
             <h2>臨時通知</h2>
@@ -739,7 +756,7 @@
         </form>
       </section>
 
-      <section class="panel span-12" data-workspace="operations">
+      <section class="panel span-12" data-workspace="dispatch" id="panel-assignment-list" data-panel="assignment-list" data-nav-order="1" data-legacy="operations:2" data-nav-aliases="派工清單,工作安排">
         <div class="panel-header">
           <div>
             <h2>工作安排清單</h2>
@@ -767,7 +784,7 @@
         </div>
       </section>
 
-      <section class="panel span-6" data-workspace="operations">
+      <section class="panel span-6" data-workspace="people" id="panel-leave" data-panel="leave" data-nav-order="2" data-legacy="operations:3" data-nav-aliases="請假,排休,休假">
         <div class="panel-header">
           <div>
             <h2>休假／排休設定與審核</h2>
@@ -812,7 +829,7 @@
         </div>
       </section>
 
-      <section class="panel span-6" data-workspace="operations">
+      <section class="panel span-6" data-workspace="dispatch" id="panel-meetings" data-panel="meetings" data-nav-order="4" data-legacy="operations:4" data-nav-aliases="會議">
         <div class="panel-header">
           <div>
             <h2>會議記錄</h2>
@@ -861,7 +878,7 @@
         </form>
       </section>
 
-      <section class="panel span-12" data-workspace="operations">
+      <section class="panel span-12" data-workspace="dispatch" id="panel-exceptions" data-panel="exceptions" data-nav-order="5" data-legacy="operations:5" data-nav-aliases="異常審核,遲到,未打卡">
         <div class="panel-header">
           <div>
             <h2>主管異常審核</h2>
@@ -889,7 +906,7 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="operations">
+      <section class="panel span-12" data-workspace="dispatch" id="panel-reassignment" data-panel="reassignment" data-nav-order="6" data-legacy="operations:6" data-nav-aliases="改派,候補">
         <div class="panel-header">
           <div>
             <h2>自動改派建議</h2>
@@ -911,7 +928,7 @@
         </div>
       </section>
 
-      <section class="panel span-8" data-workspace="people">
+      <section class="panel span-8" data-workspace="people" id="panel-employees" data-panel="employees" data-nav-order="0" data-legacy="people:0" data-nav-aliases="員工名冊,綁定">
         <div class="panel-header">
           <div>
             <h2>員工名冊與綁定狀態</h2>
@@ -956,7 +973,7 @@
         </div>
       </section>
 
-      <section class="panel span-4" data-workspace="settings">
+      <section class="panel span-4" data-workspace="files" id="panel-line-sim" data-panel="line-sim" data-nav-order="3" data-legacy="settings:1" data-nav-aliases="模擬測試,測試訊息">
         <div class="panel-header">
           <div>
             <h2>LINE 模擬測試</h2>
@@ -979,7 +996,7 @@
         <div id="console" class="console"></div>
       </section>
 
-      <section class="panel span-12" data-workspace="people">
+      <section class="panel span-12" data-workspace="people" id="panel-attendance" data-panel="attendance" data-nav-order="1" data-legacy="people:1" data-nav-aliases="考勤,打卡,工作回報">
         <div class="panel-header">
           <div>
             <h2>考勤與回報查詢</h2>
@@ -1032,7 +1049,7 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="settings">
+      <section class="panel span-12" data-workspace="people" id="panel-users" data-panel="users" data-nav-order="3" data-legacy="settings:2" data-nav-aliases="使用者,帳號,密碼">
         <div class="panel-header">
           <div>
             <h2>使用者管理</h2>
@@ -1059,7 +1076,7 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="settings">
+      <section class="panel span-12" data-workspace="journals" id="panel-photos" data-panel="photos" data-nav-order="2" data-legacy="settings:3" data-nav-aliases="相片,照片">
         <div class="panel-header">
           <div>
             <h2>工作相片上傳記錄</h2>
@@ -1088,7 +1105,7 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="settings">
+      <section class="panel span-12" data-workspace="files" id="panel-login-logs" data-panel="login-logs" data-nav-order="4" data-legacy="settings:4" data-nav-aliases="登入紀錄,登入日誌">
         <div class="panel-header">
           <div>
             <h2>登入稽核日誌</h2>
@@ -1122,7 +1139,7 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="settings">
+      <section class="panel span-12" data-workspace="files" id="panel-master-options" data-panel="master-options" data-nav-order="5" data-legacy="settings:5" data-nav-aliases="工作內容,機具">
         <div class="panel-header">
           <div>
             <h2>工作內容與機具管理</h2>
@@ -1203,23 +1220,40 @@
       costHourPreview: null,
       costMonthPreview: null,
       calendarData: null,
-      workspace: "overview",
+      workspace: "today",
       workspaceViews: {},
       documentReader: null,
     };
 
-    const workspaceDefaults = {overview: 1, documents: 2};
+    const legacyDocumentTasks = {0: "pricing-hours", 1: "pricing-month", 2: "excel-library", 3: "finance-import", 4: "sign-slips", 5: "excel-editor", 6: "management-reports"};
+    const workspaceDefaults = {today: 0, journals: 0, pricing: 0, files: 0};
+
+    function workspacePanels(workspace) {
+      return [...document.querySelectorAll(`[data-workspace="${workspace}"]`)].sort((left, right) =>
+        (Number(left.dataset.navOrder) || 0) - (Number(right.dataset.navOrder) || 0)
+      );
+    }
+
+    function resolveWorkspace(workspace) {
+      if (workspacePanels(workspace).length) return workspace;
+      if (!/^[a-z0-9-]+$/.test(String(workspace || ""))) return workspace;
+      const legacyPanel = [...document.querySelectorAll("[data-legacy]")].find((panel) =>
+        String(panel.dataset.legacy || "").startsWith(`${workspace}:`)
+      );
+      return legacyPanel ? legacyPanel.dataset.workspace : workspace;
+    }
 
     function setWorkspace(workspace, shouldScroll = true) {
-      const panels = [...document.querySelectorAll(`[data-workspace="${workspace}"]`)];
+      const resolved = resolveWorkspace(workspace);
+      const panels = workspacePanels(resolved);
       if (!panels.length) return;
-      state.workspace = workspace;
+      state.workspace = resolved;
       document.getElementById("actionResult").hidden = true;
       const mainSelect = document.getElementById("workspaceMain");
       mainSelect.innerHTML = [...document.querySelectorAll("[data-workspace-tab]")].map(tab =>
         `<option value="${escapeAttr(tab.dataset.workspaceTab)}">${escapeHtml(tab.textContent)}</option>`
       ).join("");
-      mainSelect.value = workspace;
+      mainSelect.value = resolved;
       panels.forEach((panel, index) => { panel.dataset.workspaceView = String(index); });
       const selector = document.getElementById("workspaceView");
       selector.innerHTML = panels.map((panel, index) =>
@@ -1227,19 +1261,18 @@
       ).join("");
       document.getElementById("workspaceTools").hidden = panels.length < 2;
       document.getElementById("workspaceViewHint").textContent = `共 ${panels.length} 項功能；切換不會清除未儲存的表單`;
-      setWorkspaceView(state.workspaceViews[workspace] ?? workspaceDefaults[workspace] ?? 0);
+      setWorkspaceView(state.workspaceViews[resolved] ?? workspaceDefaults[resolved] ?? 0);
       document.querySelectorAll("[data-workspace-tab]").forEach((tab) => {
-        const isActive = tab.dataset.workspaceTab === workspace;
+        const isActive = tab.dataset.workspaceTab === resolved;
         tab.classList.toggle("is-active", isActive);
         tab.setAttribute("aria-pressed", String(isActive));
       });
-      if (shouldScroll) {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
+      if (shouldScroll) window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
     function setWorkspaceView(view) {
-      const panels = [...document.querySelectorAll(`[data-workspace="${state.workspace}"]`)];
+      const panels = workspacePanels(state.workspace);
+      if (!panels.length) return;
       const index = Math.max(0, Math.min(Number(view) || 0, panels.length - 1));
       state.workspaceViews[state.workspace] = index;
       document.getElementById("workspaceView").value = String(index);
@@ -1251,17 +1284,160 @@
       if (panels[index]?.id === "managementReportsPanel" && !managementReports.loadingSources && !managementReports.sourcesLoaded) loadReportSources();
     }
 
+    function openNamedPanel(panelKey) {
+      const panel = document.querySelector(`[data-panel="${panelKey}"]`);
+      if (!panel) return;
+      const panels = workspacePanels(panel.dataset.workspace);
+      state.workspaceViews[panel.dataset.workspace] = Math.max(0, panels.indexOf(panel));
+      setWorkspace(panel.dataset.workspace);
+    }
+
     function openDocumentTask(view) {
-      setWorkspace("documents");
+      const key = legacyDocumentTasks[Number(view)];
+      if (key && document.querySelector(`[data-panel="${key}"]`)) {
+        openNamedPanel(key);
+        return;
+      }
+      setWorkspace("pricing");
       setWorkspaceView(view);
     }
 
     function openPanelFor(elementId) {
       const panel = document.getElementById(elementId)?.closest("[data-workspace]");
       if (!panel) return;
+      if (panel.dataset.panel) {
+        openNamedPanel(panel.dataset.panel);
+        return;
+      }
       setWorkspace(panel.dataset.workspace);
-      const panels = [...document.querySelectorAll(`[data-workspace="${state.workspace}"]`)];
-      setWorkspaceView(panels.indexOf(panel));
+      setWorkspaceView(workspacePanels(state.workspace).indexOf(panel));
+    }
+
+    function navEntries() {
+      return [...document.querySelectorAll("[data-panel]")].map((panel) => {
+        const tab = document.querySelector(`[data-workspace-tab="${panel.dataset.workspace}"]`);
+        return {
+          key: panel.dataset.panel,
+          title: (panel.querySelector("h2")?.textContent || panel.dataset.panel).trim(),
+          group: (tab?.textContent || "").trim(),
+          aliases: String(panel.dataset.navAliases || "").split(/[、,]/).map((item) => item.trim()).filter(Boolean),
+        };
+      });
+    }
+
+    function searchNav(query) {
+      const needle = String(query || "").trim().toLowerCase();
+      if (!needle) return [];
+      return navEntries().flatMap((entry) => {
+        const title = entry.title.toLowerCase();
+        const aliasHit = entry.aliases.some((alias) => alias.toLowerCase().includes(needle));
+        const groupHit = entry.group.toLowerCase().includes(needle);
+        if (title.includes(needle)) return [{entry, rank: 0}];
+        if (entry.aliases.some((alias) => alias.toLowerCase() === needle)) return [{entry, rank: 1}];
+        if (aliasHit || groupHit) return [{entry, rank: 2}];
+        return [];
+      }).sort((left, right) => left.rank - right.rank).map((item) => item.entry);
+    }
+
+    function renderNavSearch(query) {
+      const host = document.getElementById("navSearchResults");
+      if (!host) return;
+      const items = searchNav(query);
+      if (!String(query || "").trim()) {
+        host.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      host.hidden = false;
+      host.innerHTML = items.length
+        ? items.map((item) => `<button type="button" onclick="openNamedPanel('${escapeAttr(item.key)}'); closeNavSearch()">${escapeHtml(item.group)}｜${escapeHtml(item.title)}</button>`).join("")
+        : `<p class="muted">找不到「${escapeHtml(query)}」。可以試請假、簽單、點檢、計價。</p>`;
+    }
+
+    function closeNavSearch() {
+      const input = document.getElementById("navSearch");
+      const host = document.getElementById("navSearchResults");
+      if (input) input.value = "";
+      if (host) {
+        host.hidden = true;
+        host.innerHTML = "";
+      }
+    }
+
+    function onNavSearchKey(event) {
+      if (event.key === "Escape") closeNavSearch();
+      if (event.key !== "Enter") return;
+      const first = searchNav(event.target.value)[0];
+      if (!first) return;
+      event.preventDefault();
+      openNamedPanel(first.key);
+      closeNavSearch();
+    }
+
+    function applyDeepLink(hash) {
+      const raw = String(hash || "").replace(/^#/, "").trim();
+      if (!raw) return false;
+      const [head, view] = raw.split("/");
+      const index = view === undefined || view === "" ? null : Number(view);
+      if (head === "documents" && index === null) {
+        openNamedPanel("excel-library");
+        return true;
+      }
+      if (head === "documents" && index !== null) {
+        openDocumentTask(index);
+        return true;
+      }
+      if (head === "overview" && index === null) {
+        openNamedPanel("today-board");
+        return true;
+      }
+      const legacy = [...document.querySelectorAll("[data-legacy]")].find((panel) => panel.dataset.legacy === `${head}:${index ?? 0}`);
+      if (legacy?.dataset.panel) {
+        openNamedPanel(legacy.dataset.panel);
+        return true;
+      }
+      const key = head.startsWith("panel-") ? head.slice("panel-".length) : head;
+      if (document.querySelector(`[data-panel="${key}"]`)) {
+        openNamedPanel(key);
+        return true;
+      }
+      const workspace = resolveWorkspace(head);
+      if (!workspacePanels(workspace).length) return false;
+      if (index !== null) state.workspaceViews[workspace] = index;
+      setWorkspace(workspace, false);
+      return true;
+    }
+
+    function openTodayPanel(panelKey) {
+      const today = typeof todayString === "function" ? todayString() : "";
+      const dateTargets = {
+        attendance: "attendanceFilterDate",
+        exceptions: "exceptionFilterDate",
+        "assignment-list": "assignmentFilterDate",
+        inspections: "inspectionFilterDate",
+        journal: "journalDate",
+      };
+      const dateInput = dateTargets[panelKey] ? document.getElementById(dateTargets[panelKey]) : null;
+      if (dateInput && today) dateInput.value = today;
+      if (panelKey === "sign-slips") {
+        const month = document.getElementById("signSlipMonth");
+        if (month && today) month.value = today.slice(0, 7);
+      }
+      if (panelKey === "leave") {
+        const filter = document.getElementById("leaveStatusFilter");
+        if (filter) filter.value = "pending";
+      }
+      openNamedPanel(panelKey);
+      const refreshers = {
+        attendance: () => { loadAttendance(); loadWorkReports(); },
+        exceptions: () => loadAttendanceExceptions(),
+        "assignment-list": () => loadAssignments(),
+        inspections: () => loadForkliftInspections(),
+        leave: () => loadLeaves(),
+        journal: () => loadWorksiteJournals(),
+        "sign-slips": () => loadSignSlips(),
+      };
+      if (refreshers[panelKey]) refreshers[panelKey]();
     }
 
     function api(path, options = {}) {
@@ -1335,6 +1511,67 @@
           <div class="value">${value}</div>
         </article>
       `).join("");
+    }
+
+
+    function renderTodayOverview(data) {
+      const root = document.getElementById("todayBoardCards");
+      const dateLine = document.getElementById("todayBoardDate");
+      if (!root || !data) return;
+      if (dateLine) dateLine.textContent = `${data.today}（台灣時間）。先看出勤、派工、待審和異常，再點進去處理。`;
+      const attendance = data.attendance || {};
+      const assignments = data.assignments || {};
+      const reviews = data.reviews || {};
+      const anomalies = data.anomalies || {};
+      const item = (text) => `<li>${escapeHtml(text)}</li>`;
+      const attendanceItems = [
+        ...(attendance.missing || []).map((row) => `未打卡｜${row.name}｜${row.site || ""}`),
+        ...(attendance.late || []).map((row) => `遲到｜${row.name}｜${row.time || ""}`),
+        ...(attendance.clocked_in || []).map((row) => `已上班｜${row.name}｜${row.time || ""}`),
+        ...(attendance.clocked_out || []).map((row) => `已下班｜${row.name}｜${row.time || ""}`),
+        ...(attendance.on_leave || []).map((row) => `請假中｜${row.name}｜${row.leave_type || ""}`),
+      ];
+      const assignmentItems = (assignments.sites || []).map((site) =>
+        `${site.site_name}｜${(site.people || []).join("、") || "尚未指定人員"}｜${(site.forklifts || []).join("、") || "未填車輛"}`
+      );
+      const reviewItems = [
+        ...(reviews.leaves || []).map((row) => `請假｜${row.name}｜${row.leave_type} ${row.start_date}`),
+        ...(reviews.journal_drafts || []).map((row) => `日誌草稿｜${row.site_name}｜${row.work_date}`),
+        ...(reviews.sign_slip_drafts || []).map((row) => `簽單預填｜${row.site_name}｜${row.work_date}`),
+        ...((reviews.billing && reviews.billing.items) || []).map((row) => `計價｜${row.site_name}｜${row.explanation}`),
+      ];
+      const anomalyItems = [
+        ...(anomalies.missed_inspections || []).map((row) => `未點檢｜${row.name}｜${row.detail || ""}`),
+        ...(anomalies.failed_inspections || []).map((row) => `點檢異常｜${row.forklift_code}｜${row.detail || ""}`),
+        ...(anomalies.abnormal_reports || []).map((row) => `異常回報｜${row.name}｜${row.detail || ""}`),
+        ...(anomalies.missing_journals || []).map((row) => `缺工作日誌｜${row.site_name}`),
+        ...(anomalies.missing_sign_slips || []).map((row) => `缺簽單｜${row.site_name}`),
+        ...(anomalies.drive_warnings || []).map((row) => row.message),
+      ];
+      const metrics = (pairs) => `<div class="today-metrics">${pairs.map(([label, value]) =>
+        `<div><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`).join("")}</div>`;
+      const jump = (panel, label) => `<button type="button" class="button-secondary" onclick="openTodayPanel('${panel}')">${escapeHtml(label)}</button>`;
+      const card = (title, tone, metricHtml, items, actions) => `
+        <article class="today-card ${tone}">
+          <h3>${escapeHtml(title)}</h3>
+          ${metricHtml}
+          <ul class="today-list">${(items.length ? items.slice(0, 6) : ["目前沒有要處理的項目"]).map(item).join("")}</ul>
+          <div class="button-row">${actions}</div>
+        </article>`;
+      root.innerHTML = [
+        card("今日出勤", (attendance.missing_count || attendance.late_count) ? "is-alert" : "",
+          metrics([["已上班", attendance.in_count || 0], ["已下班", attendance.out_count || 0], ["未打卡", attendance.missing_count || 0], ["遲到", attendance.late_count || 0]]),
+          attendanceItems, jump("attendance", "查看考勤")),
+        card("今日派工", "",
+          metrics([["派工", assignments.count || 0], ["工地", (assignments.sites || []).length]]),
+          assignmentItems, jump("assignment-list", "查看派工")),
+        card("待審事項", reviews.total ? "is-alert" : "",
+          metrics([["請假", reviews.leave_count || 0], ["日誌草稿", reviews.journal_draft_count || 0], ["簽單預填", reviews.sign_slip_draft_count || 0], ["計價差異", reviews.billing_issue_count || 0]]),
+          reviewItems, [jump("leave", "審核請假"), jump("journal", "看草稿"), jump("pricing-month", "看計價核對")].join("")),
+        card("異常提醒", anomalies.total ? "is-alert" : "",
+          metrics([["未點檢", anomalies.missed_inspection_count || 0], ["異常回報", anomalies.abnormal_report_count || 0], ["缺日誌", anomalies.missing_journal_count || 0], ["缺簽單", anomalies.missing_sign_slip_count || 0]]),
+          anomalyItems, [jump("inspections", "看點檢"), jump("attendance", "看回報"), jump("journal", "補日誌"), jump("sign-slips", "補簽單")].join("")),
+      ].join("");
     }
 
     function formatTWTime(value) {
@@ -2366,7 +2603,7 @@
       ]);
       const selectedJournalIndex = selectedJournalSiteIndex();
       if (selectedJournalIndex >= 0) await syncJournalHoursToCostImport(selectedJournalIndex, true);
-      setWorkspace("overview", false);
+      if (!applyDeepLink(location.hash)) setWorkspace("today", false);
     }
 
     async function loadMeta() {
@@ -2391,6 +2628,18 @@
     async function loadDashboard() {
       const data = await api("/api/dashboard");
       renderStats(data);
+      await loadTodayOverview();
+    }
+
+    async function loadTodayOverview() {
+      const status = document.getElementById("todayBoardStatus");
+      try {
+        const overview = await api("/api/today-overview");
+        renderTodayOverview(overview);
+        if (status) status.textContent = "";
+      } catch (error) {
+        if (status) status.textContent = error.message;
+      }
     }
 
     function formatFileSize(bytes) {

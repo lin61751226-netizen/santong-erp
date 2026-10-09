@@ -23,7 +23,8 @@ const report = {title: '每月收支明細表', kind: 'finance', month: '2026-09
   rows: [['<svg onload=bad>', 0]], summary: {'收入': 0, '支出': null}, offset: 0, total: 51, snapshot_id: 1};
 
 test('seven report types are present in one dedicated final document panel', () => {
-  const panel = html.slice(html.indexOf('<section id="managementReportsPanel"'), html.indexOf('<section class="panel span-12" data-workspace="settings">'));
+  const start = html.indexOf('<section id="managementReportsPanel"');
+  const panel = html.slice(start, html.indexOf('<section', start + 20));
   assert.equal((panel.match(/<option value="(finance|payroll|roster|calendar|annual|categories|contacts)"/g) || []).length, 7);
   assert.ok(panel.includes('保存對照版本到資料庫'));
 });
