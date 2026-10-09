@@ -54,3 +54,9 @@ services:
         value: "480"
       - key: SESSION_SECRET_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: AI_ASSISTANT_ENABLED
+        sync: false

@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     login_lock_minutes: int = 15
     session_expire_minutes: int = 480
     session_secret_key: str = ""
+    # LINE 自然語言助理。未啟用或沒有金鑰時，維持原本的指令回覆。
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1-mini"
+    ai_assistant_enabled: bool = False
 
     @field_validator("google_drive_public_share", mode="before")
     @classmethod
@@ -60,6 +64,25 @@ class Settings(BaseSettings):
         if normalized in {"0", "false", "no", "off"}:
             return False
         return True
+
+    @field_validator("ai_assistant_enabled", mode="before")
+    @classmethod
+    def coerce_ai_assistant_enabled(cls, value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        return False
+
+    @field_validator("openai_model", mode="before")
+    @classmethod
+    def default_openai_model(cls, value):
+        if value is None or not str(value).strip():
+            return "gpt-4.1-mini"
+        return str(value).strip()
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",

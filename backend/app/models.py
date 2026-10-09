@@ -656,3 +656,27 @@ class MasterOption(SQLModel, table=True):
     sort_order: int = Field(default=0)
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AiInteractionLog(SQLModel, table=True):
+    """LINE 自然語言助理的輸入、解析與結果。不得寫入 API 金鑰。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    employee_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    line_user_id: Optional[str] = Field(default=None, index=True)
+    input_text: str = Field(sa_column=Column(Text))
+    parsed_intent: Optional[str] = Field(default=None, sa_column=Column(Text))
+    outcome: str = Field(index=True)
+    detail: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class AiPendingDraft(SQLModel, table=True):
+    """寫入前的確認草稿。使用者按確認後才會進入既有的請假、派工或回報流程。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    line_user_id: str = Field(index=True)
+    employee_id: int = Field(foreign_key="employee.id", index=True)
+    kind: str = Field(index=True)
+    payload_json: str = Field(sa_column=Column(Text))
+    status: str = Field(default="pending", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    expires_at: datetime = Field(index=True)

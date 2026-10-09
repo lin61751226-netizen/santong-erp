@@ -380,6 +380,26 @@ def record_attendance_event(
     return AttendanceRecordResult(event=event, assignment=assignment, anomalies=anomalies)
 
 
+def record_named_arrival(session: Session, employee: Employee, site: Worksite) -> AttendanceEvent:
+    """記錄員工點選的到達工地，與 LINE「到達工地:工地編號」使用同一寫入方式。"""
+    event = AttendanceEvent(
+        employee_id=employee.id,
+        site_id=site.id,
+        event_type=AttendanceEventType.arrive_site.value,
+        source="line",
+    )
+    session.add(event)
+    assignment = find_assignment_for_employee(session, employee.id)
+    member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
+    if member:
+        member.ack_status = AckStatus.arrived
+        member.last_line_action = "到達工地"
+        session.add(member)
+    session.commit()
+    session.refresh(event)
+    return event
+
+
 def record_work_report_event(
     session: Session,
     employee: Employee,
@@ -387,12 +407,16 @@ def record_work_report_event(
     assignment: WorkAssignment | None = None,
     note: Optional[str] = None,
     photo_url: Optional[str] = None,
+    site_id: int | None = None,
 ) -> WorkReportEvent:
     """保存一筆不可覆寫的工作回報，並保留與當日派工及工地的關聯。"""
     assignment = assignment or find_assignment_for_employee(session, employee.id, date.today())
+    resolved_site_id = site_id
+    if resolved_site_id is None:
+        resolved_site_id = assignment.site_id if assignment else employee.home_site_id
     event = WorkReportEvent(
         employee_id=employee.id,
-        site_id=assignment.site_id if assignment else employee.home_site_id,
+        site_id=resolved_site_id,
         assignment_id=assignment.id if assignment else None,
         event_type=event_type,
         note=note,
