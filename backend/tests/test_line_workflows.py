@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import select
 from sqlmodel import Session, SQLModel, create_engine
 
+from app.core.config import settings
 from app.models import (
     AssignmentMember, AttendanceEvent, AttendanceEventType, Employee, GroupTextLog,
     PhotoUploadLog, WorkAssignment, WorkReportEvent, Worksite,
@@ -151,7 +152,7 @@ class LineWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_display_name_reads_line_group_summary(self) -> None:
         source = {"type": "group", "groupId": "G-shanjie-47", "userId": "U1"}
-        with patch.object(
+        with patch.object(settings, "line_channel_access_token", "test-token"), patch.object(
             line_platform_service,
             "_request",
             AsyncMock(return_value={"groupName": "善捷47"}),

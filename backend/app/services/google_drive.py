@@ -71,6 +71,8 @@ PRESERVED_DATABASE_TABLES = (
     "certificaterecord",
     "signsliprecord",
     "workhourimportlog",
+    "aiinteractionlog",
+    "aipendingdraft",
 )
 
 logger = logging.getLogger(__name__)

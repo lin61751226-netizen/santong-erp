@@ -42,6 +42,7 @@ from app.services.hr import (
     get_latest_attendance_event,
     get_today_arrival_site,
     record_attendance_event,
+    record_named_arrival,
     record_work_report_event,
 )
 from app.services import forklift_service
@@ -658,6 +659,21 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             return
         if data.startswith("action=menu:"):
             return
+        if data.startswith("action=ai:"):
+            from app.services.ai_assistant import handle_ai_postback
+
+            employee = _employee_by_line_user(session, line_user_id)
+            if not employee:
+                await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先點 Rich Menu 的「開始綁定」。")
+                return
+            await handle_ai_postback(
+                session,
+                employee=employee,
+                line_user_id=line_user_id,
+                reply_token=reply_token,
+                data=data,
+            )
+            return
         await line_service.reply_text(reply_token, "已收到選單操作。")
         return
 
@@ -1056,19 +1072,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         if not arrival_site or not arrival_site.is_active:
             await line_service.reply_text(reply_token, "工地選擇無效，請重新輸入「到達工地」。")
             return
-        session.add(AttendanceEvent(
-            employee_id=employee.id,
-            site_id=arrival_site.id,
-            event_type=AttendanceEventType.arrive_site.value,
-            source="line",
-        ))
-        arr_assignment = find_assignment_for_employee(session, employee.id)
-        arr_member = find_assignment_member(session, employee.id, arr_assignment.id if arr_assignment else None)
-        if arr_member:
-            arr_member.ack_status = AckStatus.arrived
-            arr_member.last_line_action = "到達工地"
-            session.add(arr_member)
-        session.commit()
+        record_named_arrival(session, employee, arrival_site)
         await _backup_preserved_records()
         await line_service.reply_text(
             reply_token,
@@ -1208,6 +1212,18 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             reply_token,
             "可用指令：\n" + "\n".join(f"・{cmd}" for cmd in available_commands),
         )
+        return
+
+    from app.services.ai_assistant import handle_fallback_message
+
+    handled = await handle_fallback_message(
+        session,
+        employee=employee,
+        line_user_id=line_user_id,
+        reply_token=reply_token,
+        text=text,
+    )
+    if handled:
         return
 
     await line_service.reply_text(
