@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     openai_transcribe_model: str = "gpt-4o-mini-transcribe"
     ai_assistant_enabled: bool = False
     ai_voice_enabled: bool = True
+    # 工作日誌草稿、簽單預填、計價核對。與 LINE 助理分開，預設關閉。
+    ai_ops_enabled: bool = False
+    ai_ops_schedule_enabled: bool = False
+    ai_ops_schedule_hour: int = 20
+    ai_ops_schedule_minute: int = 30
 
     @field_validator("google_drive_public_share", mode="before")
     @classmethod
@@ -107,6 +112,35 @@ class Settings(BaseSettings):
         if normalized in {"0", "false", "no", "off"}:
             return False
         return True
+
+    @field_validator("ai_ops_enabled", "ai_ops_schedule_enabled", mode="before")
+    @classmethod
+    def coerce_ai_ops_flag(cls, value):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @field_validator("ai_ops_schedule_hour", mode="before")
+    @classmethod
+    def coerce_ai_ops_hour(cls, value):
+        if value is None or str(value).strip() == "":
+            return 20
+        hour = int(value)
+        if hour < 0 or hour > 23:
+            return 20
+        return hour
+
+    @field_validator("ai_ops_schedule_minute", mode="before")
+    @classmethod
+    def coerce_ai_ops_minute(cls, value):
+        if value is None or str(value).strip() == "":
+            return 30
+        minute = int(value)
+        if minute < 0 or minute > 59:
+            return 30
+        return minute
 
     model_config = SettingsConfigDict(
         env_file=ROOT_DIR / ".env",

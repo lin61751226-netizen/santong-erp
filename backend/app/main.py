@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 from app.core.config import settings
 from app.core.db import init_db, session_scope
 from app.routes.admin import router as admin_router
+from app.routes.ai_ops import router as ai_ops_router
 from app.routes.auth import router as auth_router
 from app.routes.forklift import router as forklift_router
 from app.routes.finance_imports import router as finance_import_router
@@ -76,6 +77,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(admin_router)
+app.include_router(ai_ops_router)
 app.include_router(auth_router)
 app.include_router(line_router)
 app.include_router(line_management_api_router)

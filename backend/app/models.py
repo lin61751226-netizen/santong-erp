@@ -680,3 +680,74 @@ class AiPendingDraft(SQLModel, table=True):
     status: str = Field(default="pending", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     expires_at: datetime = Field(index=True)
+
+
+class AiJournalDraft(SQLModel, table=True):
+    """工地每日工作日誌的 AI／規則草稿。核准前不寫入派工、打卡、簽單或計價工時。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_date: date = Field(index=True)
+    worksite_id: int = Field(foreign_key="worksite.id", index=True)
+    status: str = Field(default="draft", index=True)  # draft, approved, rejected, superseded
+    content: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    source_refs: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    support_hours: float = 0
+    forklift_count: float = 0
+    hours_basis: str = Field(default="", sa_column=Column(Text))
+    ai_status: str = Field(default="disabled", index=True)  # drafted, disabled, failed
+    model_name: Optional[str] = None
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    updated_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    reviewed_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class AiSignSlipDraft(SQLModel, table=True):
+    """簽單預填草稿。管理員確認後才新增 SignSlipRecord，且不修改已存在的簽單。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    work_date: date = Field(index=True)
+    worksite_id: int = Field(foreign_key="worksite.id", index=True)
+    journal_draft_id: Optional[int] = Field(default=None, foreign_key="aijournaldraft.id")
+    status: str = Field(default="draft", index=True)  # draft, confirmed, rejected, superseded
+    customer_name: Optional[str] = None
+    site_code: Optional[str] = None
+    location: Optional[str] = None
+    work_content: Optional[str] = Field(default=None, sa_column=Column(Text))
+    vehicles: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    forklift_count: float = 0
+    normal_hours: float = 0
+    overtime_hours: float = 0
+    support_hours: float = 0
+    total_hours: float = 0
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    amount: Optional[int] = None
+    amount_basis: Optional[str] = Field(default=None, sa_column=Column(Text))
+    driver_names: Optional[str] = None
+    uncertainties: list = Field(default_factory=list, sa_column=Column(JSON))
+    source_refs: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    content_source: str = Field(default="records")
+    sign_slip_id: Optional[int] = Field(default=None, foreign_key="signsliprecord.id")
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    updated_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class AiBillingCheck(SQLModel, table=True):
+    """月度計價核對報告。只列出差異與建議，不改工時、金額或計價規則。"""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    month: str = Field(index=True)
+    document_id: Optional[int] = Field(default=None, foreign_key="manageddocument.id")
+    discrepancy_count: int = 0
+    report: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    ai_status: str = Field(default="disabled", index=True)
+    model_name: Optional[str] = None
+    created_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)

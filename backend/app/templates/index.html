@@ -136,12 +136,15 @@
             <option value="">整理後選擇工地</option>
           </select>
           <button type="button" onclick="loadWorksiteJournals()">整理工作日誌</button>
+          <button type="button" class="button-secondary" onclick="draftAiJournal(false)">整理 AI 草稿</button>
+          <button type="button" class="button-secondary" onclick="draftAiSignSlip(false)">預填簽單</button>
           <button type="button" class="button-secondary" onclick="printSelectedJournalSignSlip()">製作選定工地簽單</button>
           <button type="button" class="button-secondary" onclick="printWorksiteSignSlips(-1)">製作全部工地簽單</button>
         </div>
       </div>
       <p id="journalFeedback" class="notice" role="status" aria-live="polite">正在整理今日資料。</p>
       <div id="journalCards" class="journal-grid"></div>
+      <div id="aiOpsJournal"></div>
     </section>
 
     <section class="panel span-12" data-workspace="calendar">
@@ -444,6 +447,17 @@
       </form>
       <p id="costMonthFeedback" class="notice" role="status" aria-live="polite">請先選推高機計價表與作業月份，再按整月預覽。</p>
       <div id="costMonthPreview" class="pricing-preview" hidden></div>
+      <div class="panel-header" style="margin-top:22px;">
+        <div>
+          <h3>計價核對</h3>
+          <p class="muted">比對同一個月的工作日誌、簽單、打卡與已寫入計價的工時。只產生說明與建議，不會改金額、不會寫入計價檔。</p>
+        </div>
+      </div>
+      <div class="button-row">
+        <button type="button" class="button-secondary" onclick="runAiBillingCheck()">產生核對報告</button>
+      </div>
+      <p id="aiOpsBillingFeedback" class="notice" role="status" aria-live="polite">核對使用上方選擇的計價表與月份。沒有選擇計價表時，只比對系統裡的紀錄。</p>
+      <div id="aiOpsBilling"></div>
     </section>
 
     <section class="panel span-12" data-workspace="documents">
@@ -4147,5 +4161,6 @@
     }
 
   </script>
+  <script src="/static/ai_ops.js"></script>
 </body>
 </html>
