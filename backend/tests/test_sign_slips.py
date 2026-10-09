@@ -180,6 +180,7 @@ class TestSignSlips:
         assert "const saved = site.sign_slips || [];" in template
         assert 'const current = signSlipCache.find(item => item.id === selected.id);' in template
         assert 'fillSignSlipForm(current);' in template
-        assert 'setWorkspace("documents");' in template
+        assert 'openDocumentTask(4);' in template
+        assert '4: "sign-slips"' in template
         assert 'onclick="printSingleSignSlip(${row.id})"' in template
         assert 'function printSignSlips(rows = signSlipCache)' in template
