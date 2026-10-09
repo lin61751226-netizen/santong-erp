@@ -1,14 +1,17 @@
 """LINE 自然語言層。
 
 模型只負責把句子轉成意圖與欄位。員工、工地、請假與派工的寫入一律走既有服務與權限檢查，
-而且寫入前必須由使用者按確認。這裡不會把 API 金鑰寫進日誌或提示詞。
+而且寫入前必須由使用者按確認。一對一語音先轉成文字，再走同一條確認流程。
+這裡不會把 API 金鑰或原始語音寫進日誌或提示詞。
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+import time
 import unicodedata
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from difflib import SequenceMatcher
@@ -36,7 +39,7 @@ from app.models import (
     Worksite,
 )
 from app.services.bootstrap import SITE_ALIASES
-from app.services.forklift_service import local_today
+from app.services.forklift_service import get_session as get_inspection_session, local_today
 from app.services.hr import (
     evaluate_leave_policy,
     find_assignment_for_employee,
@@ -51,6 +54,18 @@ from app.services.hr import (
 logger = logging.getLogger(__name__)
 
 FRIENDLY_FAILURE_TEXT = "這句話我暫時沒辦法理解。請改點 Rich Menu，或輸入「指令」查看可用功能。"
+VOICE_DISABLED_TEXT = "語音功能目前沒有開啟。請改打字，或點下方 Rich Menu。"
+VOICE_TOO_LONG_TEXT = "語音太長了，請在一分半內說完，或改打字。"
+VOICE_TOO_LARGE_TEXT = "語音檔太大，請縮短後再傳，或改打字。"
+VOICE_EMPTY_TEXT = "我沒有聽清楚，請再說一次，或改打字。"
+VOICE_FAILURE_TEXT = "語音暫時沒辦法聽懂。請再說一次，或改打字、點 Rich Menu。"
+VOICE_EXTERNAL_TEXT = "這則語音不是從 LINE 直接傳來的，請改用 LINE 錄音或打字。"
+VOICE_INSPECTION_TEXT = "點檢進行中，請點選「正常」或「異常」，或輸入「取消點檢」。語音先不處理。"
+VOICE_UNKNOWN_TEXT = "沒看懂這句話。請改說一次，或輸入「指令」查看可用功能。"
+UNBOUND_TEXT = "此 LINE 帳號尚未綁定員工身分，請先點 Rich Menu 的「開始綁定」。"
+MAX_AUDIO_MS = 90_000
+MAX_AUDIO_BYTES = 2 * 1024 * 1024
+VOICE_REPLY_BUDGET_SECONDS = 20
 DRAFT_MINUTES = 30
 MANAGE_ROLES = {Role.owner.value, Role.admin.value, Role.site_manager.value}
 SELF_NAMES = {"我", "自己", "本人", "我自己"}
@@ -60,6 +75,17 @@ WEEKDAYS = "一二三四五六日"
 
 class AiServiceUnavailable(Exception):
     """金鑰未設定、逾時或模型服務失敗。訊息只放錯誤類型，避免帶出金鑰。"""
+
+
+@dataclass
+class _VoiceTurn:
+    line_user_id: str
+    started: float
+    heard: str | None = None
+    transcribe_model: str | None = None
+
+
+_voice_turn: ContextVar[_VoiceTurn | None] = ContextVar("ai_voice_turn", default=None)
 
 
 class ParsedIntent(BaseModel):
@@ -228,6 +254,64 @@ async def parse_user_text(
     """只呼叫模型解析，不讀寫資料庫。"""
     current = today or local_today()
     return await _call_model(_messages(text, current, context), timeout=timeout)
+
+
+def build_transcription_prompt(session: Session) -> str:
+    """給語音模型的短提示。只放資料庫裡已有的人名與工地名，不寫金鑰。"""
+    static = "繁體中文，台灣工地與堆高機用語。常見說法：派工、排休、病假、上班、到達工地。"
+    try:
+        employees = session.exec(
+            select(Employee).where(Employee.status == EmployeeStatus.active).order_by(Employee.name)
+        ).all()
+        sites = session.exec(
+            select(Worksite).where(Worksite.is_active.is_(True)).order_by(Worksite.name)
+        ).all()
+        names = "、".join(row.name.strip() for row in employees if row.name and row.name.strip())
+        site_names = "、".join(row.name.strip() for row in sites if row.name and row.name.strip())
+    except Exception:
+        logger.warning("語音提示詞讀取名單失敗")
+        return static
+    parts = ["繁體中文，台灣工地與堆高機用語。"]
+    if names:
+        parts.append(f"員工：{names}。")
+    if site_names:
+        parts.append(f"工地：{site_names}。")
+    parts.append("常見說法：派工、排休、病假、上班、到達工地。")
+    return _clip("".join(parts), 400)
+
+
+def _audio_filename(content_type: str) -> str:
+    lowered = (content_type or "").lower()
+    if "mpeg" in lowered or "mp3" in lowered:
+        return "voice.mp3"
+    if "wav" in lowered:
+        return "voice.wav"
+    return "voice.m4a"
+
+
+async def transcribe_audio(content: bytes, content_type: str, *, session: Session) -> str:
+    """把 LINE 語音轉成文字。不寫檔、不把音檔放進日誌。"""
+    key = settings.openai_api_key.strip()
+    if not key:
+        raise AiServiceUnavailable("missing_key")
+    try:
+        from openai import AsyncOpenAI
+    except ImportError as exc:
+        raise AiServiceUnavailable("openai_missing") from exc
+    client = AsyncOpenAI(api_key=key, timeout=20, max_retries=0)
+    try:
+        result = await client.audio.transcriptions.create(
+            model=settings.openai_transcribe_model,
+            file=(_audio_filename(content_type), content, content_type or "audio/mp4"),
+            language="zh",
+            prompt=build_transcription_prompt(session),
+        )
+    except Exception as exc:
+        raise AiServiceUnavailable(type(exc).__name__) from exc
+    text = getattr(result, "text", None)
+    if text is None and isinstance(result, str):
+        text = result
+    return str(text or "").strip()
 
 
 def _ratio(left: str, right: str) -> float:
@@ -719,6 +803,12 @@ def _log(
     outcome: str,
     detail: str | None = None,
 ) -> None:
+    turn = _voice_turn.get()
+    if turn is not None:
+        extra = "source=voice"
+        if turn.transcribe_model:
+            extra += f"; transcribe_model={turn.transcribe_model}"
+        detail = f"{detail}; {extra}" if detail else extra
     session.add(AiInteractionLog(
         employee_id=employee.id if employee else None,
         line_user_id=line_user_id,
@@ -789,19 +879,59 @@ def _owned_draft(session: Session, employee: Employee, line_user_id: str, draft_
     return draft
 
 
-async def _reply(reply_token: str, text: str, buttons: list[dict[str, Any]] | None = None) -> None:
+def _with_heard(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    turn = _voice_turn.get()
+    if turn is None or not turn.heard:
+        return messages
+    prefix = f"我聽到：{_clip(turn.heard, 200)}\n\n"
+    copied: list[dict[str, Any]] = []
+    for message in messages:
+        item = dict(message)
+        text = item.get("text")
+        if item.get("type") == "text" and isinstance(text, str) and not text.startswith("我聽到："):
+            item["text"] = prefix + text
+        copied.append(item)
+    return copied
+
+
+async def _deliver_messages(
+    reply_token: str,
+    messages: list[dict[str, Any]],
+    *,
+    as_text: bool = False,
+) -> None:
+    """沒有語音上下文時維持原本的 reply。語音若可能超過 reply token，改 push 同一則內容。"""
     from app.services.line import line_service
 
-    if not reply_token:
+    turn = _voice_turn.get()
+    prepared = _with_heard(messages)
+    if turn is None:
+        if not reply_token:
+            return
+        if as_text and len(prepared) == 1 and "quickReply" not in prepared[0]:
+            await line_service.reply_text(reply_token, str(prepared[0].get("text") or ""))
+            return
+        await line_service.reply_messages(reply_token, prepared)
         return
+
+    elapsed = time.monotonic() - turn.started
+    if reply_token and elapsed < VOICE_REPLY_BUDGET_SECONDS:
+        ok, _ignored = await line_service.reply_messages(reply_token, prepared)
+        if ok:
+            return
+        logger.warning("LINE 語音 reply 未送出，改用 push")
+    if not turn.line_user_id:
+        return
+    ok, _ignored = await line_service.push_messages(turn.line_user_id, prepared)
+    if not ok:
+        logger.warning("LINE 語音 push 未送出")
+
+
+async def _reply(reply_token: str, text: str, buttons: list[dict[str, Any]] | None = None) -> None:
+    message: dict[str, Any] = {"type": "text", "text": text}
     if buttons:
-        await line_service.reply_messages(reply_token, [{
-            "type": "text",
-            "text": text,
-            "quickReply": {"items": buttons},
-        }])
-        return
-    await line_service.reply_text(reply_token, text)
+        message["quickReply"] = {"items": buttons}
+    await _deliver_messages(reply_token, [message], as_text=not buttons)
 
 
 def _postback_button(label: str, data: str) -> dict[str, Any]:
@@ -847,23 +977,23 @@ async def _render(
         _log(session, employee=employee, line_user_id=line_user_id, text=source_text, parsed=parsed_json, outcome="unknown", detail=detail)
         return False
     if kind == "clock":
-        from app.services.line import _pending_location_attendance, _reply_location_prompt
+        from app.services.line import _pending_location_attendance, location_prompt_message
 
         _supersede_pending(session, line_user_id)
         _pending_location_attendance[line_user_id] = action["command"]
         _log(session, employee=employee, line_user_id=line_user_id, text=source_text, parsed=parsed_json, outcome=action["outcome"], detail=detail)
-        await _reply_location_prompt(reply_token, action["command"])
+        await _deliver_messages(reply_token, [location_prompt_message(action["command"])])
         return True
     if kind == "arrive_menu":
-        from app.services.line import _quick_reply, line_service
+        from app.services.line import _quick_reply
 
         _supersede_pending(session, line_user_id)
         sites = session.exec(select(Worksite).where(Worksite.is_active.is_(True)).order_by(Worksite.name)).all()
         _log(session, employee=employee, line_user_id=line_user_id, text=source_text, parsed=parsed_json, outcome="arrive_menu", detail=detail)
         if not sites:
-            await line_service.reply_text(reply_token, "目前沒有可用的工地。")
+            await _deliver_messages(reply_token, [{"type": "text", "text": "目前沒有可用的工地。"}], as_text=True)
             return True
-        await line_service.reply_messages(reply_token, [{
+        await _deliver_messages(reply_token, [{
             "type": "text",
             "text": "請選擇你到達的工地：",
             "quickReply": _quick_reply([(site.name, f"到達工地:{site.id}") for site in sites]),
@@ -985,6 +1115,167 @@ async def handle_fallback_message(
         except Exception:
             logger.warning("LINE 自然語言失敗回覆沒有送出")
         return True
+
+
+def _voice_note(detail: str) -> str:
+    return f"{detail}; source=voice"
+
+
+async def handle_line_audio_message(
+    session: Session,
+    *,
+    employee: Employee | None,
+    line_user_id: str,
+    reply_token: str,
+    message: dict[str, Any],
+) -> None:
+    """一對一語音：下載、轉文字，再交給既有的確認流程。任何失敗都只回短句，不讓 Webhook 中斷。"""
+    try:
+        await _route_line_audio(
+            session,
+            employee=employee,
+            line_user_id=line_user_id,
+            reply_token=reply_token,
+            message=message,
+        )
+    except Exception as exc:
+        logger.warning("LINE 語音處理失敗：%s", type(exc).__name__)
+        try:
+            _log(
+                session, employee=employee, line_user_id=line_user_id, text="[語音]",
+                parsed=None, outcome="fallback", detail=type(exc).__name__,
+            )
+        except Exception:
+            logger.warning("LINE 語音日誌寫入失敗")
+        try:
+            await _reply(reply_token, VOICE_FAILURE_TEXT)
+        except Exception:
+            logger.warning("LINE 語音失敗回覆沒有送出")
+
+
+async def _route_line_audio(
+    session: Session,
+    *,
+    employee: Employee | None,
+    line_user_id: str,
+    reply_token: str,
+    message: dict[str, Any],
+) -> None:
+    if not settings.ai_assistant_enabled or not settings.ai_voice_enabled:
+        await _reply(reply_token, VOICE_DISABLED_TEXT)
+        return
+    if employee is None:
+        await _reply(reply_token, UNBOUND_TEXT)
+        return
+    if get_inspection_session(line_user_id):
+        await _reply(reply_token, VOICE_INSPECTION_TEXT)
+        return
+
+    duration = message.get("duration")
+    try:
+        duration_ms = int(duration) if duration is not None else 0
+    except (TypeError, ValueError):
+        duration_ms = 0
+    if duration_ms > MAX_AUDIO_MS:
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail=_voice_note("超過長度上限"),
+        )
+        await _reply(reply_token, VOICE_TOO_LONG_TEXT)
+        return
+
+    provider = message.get("contentProvider") or {}
+    provider_type = str(provider.get("type") or "line") if isinstance(provider, dict) else "line"
+    if provider_type != "line":
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail=_voice_note("非 LINE 語音"),
+        )
+        await _reply(reply_token, VOICE_EXTERNAL_TEXT)
+        return
+
+    message_id = str(message.get("id") or "").strip()
+    if not message_id:
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail=_voice_note("缺少訊息編號"),
+        )
+        await _reply(reply_token, VOICE_FAILURE_TEXT)
+        return
+
+    turn = _VoiceTurn(line_user_id=line_user_id, started=time.monotonic())
+    token = _voice_turn.set(turn)
+    try:
+        await _transcribe_and_handle(
+            session,
+            employee=employee,
+            line_user_id=line_user_id,
+            reply_token=reply_token,
+            message_id=message_id,
+            turn=turn,
+        )
+    finally:
+        _voice_turn.reset(token)
+
+
+async def _transcribe_and_handle(
+    session: Session,
+    *,
+    employee: Employee,
+    line_user_id: str,
+    reply_token: str,
+    message_id: str,
+    turn: _VoiceTurn,
+) -> None:
+    from app.services.line_platform import line_platform_service
+
+    try:
+        content, content_type = await line_platform_service.get_message_content(message_id)
+    except Exception as exc:
+        logger.warning("LINE 語音下載失敗：%s", type(exc).__name__)
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail=type(exc).__name__,
+        )
+        await _reply(reply_token, VOICE_FAILURE_TEXT)
+        return
+    if not isinstance(content, (bytes, bytearray)) or len(content) > MAX_AUDIO_BYTES:
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail="超過大小上限",
+        )
+        await _reply(reply_token, VOICE_TOO_LARGE_TEXT)
+        return
+
+    turn.transcribe_model = settings.openai_transcribe_model
+    try:
+        transcript = await transcribe_audio(bytes(content), str(content_type or ""), session=session)
+    except Exception as exc:
+        logger.warning("LINE 語音轉文字失敗：%s", type(exc).__name__)
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail=type(exc).__name__,
+        )
+        await _reply(reply_token, VOICE_FAILURE_TEXT)
+        return
+    if not transcript:
+        _log(
+            session, employee=employee, line_user_id=line_user_id, text="[語音]",
+            parsed=None, outcome="fallback", detail="空白辨識",
+        )
+        await _reply(reply_token, VOICE_EMPTY_TEXT)
+        return
+
+    turn.heard = transcript
+    handled = await handle_fallback_message(
+        session,
+        employee=employee,
+        line_user_id=line_user_id,
+        reply_token=reply_token,
+        text=transcript,
+    )
+    if not handled:
+        await _reply(reply_token, VOICE_UNKNOWN_TEXT)
 
 
 async def _cancel_draft(

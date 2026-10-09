@@ -58,5 +58,9 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4.1-mini
+      - key: OPENAI_TRANSCRIBE_MODEL
+        value: gpt-4o-mini-transcribe
       - key: AI_ASSISTANT_ENABLED
+        sync: false
+      - key: AI_VOICE_ENABLED
         sync: false
