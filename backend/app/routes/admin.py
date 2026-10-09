@@ -15,7 +15,7 @@ from urllib.parse import unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -94,6 +94,7 @@ from app.services.hr import (
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service
+from app.services.today_overview import build_today_overview
 from app.services.cost_workbook import (
     CostWorkbookError,
     MonthHourUpdate,
@@ -897,6 +898,19 @@ def dashboard(
         "unbound_employee_count": len([item for item in employees if not item.line_user_id]),
         "attendance_exception_count": len(attendance_exceptions),
     }
+
+
+def _no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+
+
+@router.get("/today-overview", dependencies=[Depends(_no_store)])
+def today_overview(
+    session: Session = Depends(get_session),
+    _actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """今日總覽。只讀彙整，不寫入考勤、草稿、備份或 Google Drive。"""
+    return build_today_overview(session)
 
 
 @router.get("/employees")
