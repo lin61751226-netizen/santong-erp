@@ -94,6 +94,7 @@ class MasterOptionCreate(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    # 欄位名稱維持 employee_code，內容可以是員工代碼或登入名稱。
     employee_code: str
     password: str
 
@@ -101,6 +102,15 @@ class LoginRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class LoginAliasUpdate(BaseModel):
+    current_password: str
+    login_alias: Optional[str] = None
+
+
+class LoginAliasAdminUpdate(BaseModel):
+    login_alias: Optional[str] = None
 
 
 class PasswordResetRequest(BaseModel):

@@ -797,6 +797,11 @@ tbody tr:nth-child(even) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.user-chip .button-row {
+  justify-content: flex-end;
 }
 
 /* Keep the active operation in view; hidden forms stay mounted and retain edits. */

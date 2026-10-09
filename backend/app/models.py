@@ -124,6 +124,7 @@ class Employee(SQLModel, table=True):
     training_records: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     machine_skills: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     password_hash: Optional[str] = None
+    login_alias: Optional[str] = None
     failed_login_count: int = Field(default=0)
     locked_until: Optional[datetime] = None
     must_change_password: bool = Field(default=False)

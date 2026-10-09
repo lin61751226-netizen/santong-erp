@@ -58,6 +58,7 @@ from app.schemas import (
     AssignmentCreate,
     EmployeeCreate,
     EmployeeUpdate,
+    LoginAliasAdminUpdate,
     MasterOptionCreate,
     ForkliftCareUpdate,
     ForkliftCreate,
@@ -94,6 +95,7 @@ from app.services.hr import (
 from app.core.security import hash_password
 from app.services.line import notify_employees, process_webhook_event
 from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service
+from app.services.login_alias import LoginAliasError, save_login_alias
 from app.services.today_overview import build_today_overview
 from app.services.cost_workbook import (
     CostWorkbookError,
@@ -297,6 +299,7 @@ def _serialize_employee(worksites: dict[int, Worksite], item: Employee) -> dict:
         "assigned_sites": item.assigned_sites,
         "line_bound": bool(item.line_user_id),
         "bind_token": item.bind_token,
+        "login_alias": item.login_alias,
     }
 
 
@@ -561,6 +564,7 @@ def get_options(
             "employee_code": actor.employee_code,
             "name": actor.name,
             "role": actor.role,
+            "login_alias": actor.login_alias,
         },
         "employees": [
             {
@@ -2249,6 +2253,54 @@ def reset_employee_password(
         "new_password": new_password,
         "must_change_password": True,
     }
+
+
+@router.put("/employees/{employee_code}/login-alias")
+async def update_employee_login_alias(
+    employee_code: str,
+    payload: LoginAliasAdminUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner)),
+):
+    """老闆替後台帳號設定登入名稱。不改密碼、session 或 LINE 綁定。"""
+    employee = session.exec(select(Employee).where(Employee.employee_code == employee_code)).first()
+    if not employee:
+        raise HTTPException(status_code=404, detail="找不到員工代碼")
+    ensure_employee_scope(actor, employee)
+    if employee.role not in {Role.owner, Role.admin}:
+        raise HTTPException(status_code=400, detail="只有後台帳號可以設定登入名稱")
+    previous = employee.login_alias
+    try:
+        changed = save_login_alias(session, employee, payload.login_alias)
+    except LoginAliasError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    if not changed:
+        return {
+            "message": "登入名稱沒有變更",
+            "employee_code": employee.employee_code,
+            "login_alias": employee.login_alias,
+            "backup_status": "unchanged",
+        }
+    _write_admin_audit(
+        session, actor, action="login_alias", entity_type="employee", entity_id=employee.id,
+        summary=_login_alias_summary(employee, previous),
+    )
+    backup = await google_drive_worklog_service.backup_database()
+    return {
+        "message": "登入名稱已清除" if not employee.login_alias else "登入名稱已更新",
+        "employee_code": employee.employee_code,
+        "login_alias": employee.login_alias,
+        "backup_status": backup.get("status"),
+    }
+
+
+def _login_alias_summary(employee: Employee, previous: str | None) -> str:
+    current = employee.login_alias
+    if current and previous:
+        return f"變更登入名稱：{employee.employee_code}｜{previous} → {current}"
+    if current:
+        return f"設定登入名稱：{employee.employee_code}｜{current}"
+    return f"清除登入名稱：{employee.employee_code}"
 
 
 @router.get("/photo-uploads")

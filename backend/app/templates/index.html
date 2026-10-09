@@ -15,11 +15,11 @@
     <div class="auth-card">
       <span class="eyebrow">Santong Internal Ops</span>
       <h1>後台登入</h1>
-      <p class="muted" style="margin-bottom:18px;">請使用後台帳號（員工代碼）與密碼登入。</p>
+      <p class="muted" style="margin-bottom:18px;">請輸入員工代碼或登入名稱，以及密碼。員工代碼請照原樣，例如 ADMIN001。</p>
       <form id="loginForm" class="form-grid">
         <div class="full">
-          <label for="loginCode">員工代碼</label>
-          <input id="loginCode" autocomplete="username" placeholder="例如：ADMIN001" required>
+          <label for="loginCode">員工代碼或登入名稱</label>
+          <input id="loginCode" autocomplete="username" placeholder="例如：ADMIN001 或 林老闆" required>
         </div>
         <div class="full">
           <label for="loginPassword">密碼</label>
@@ -61,6 +61,31 @@
     </div>
   </div>
 
+  <div id="loginAliasOverlay" class="auth-overlay hidden">
+    <div class="auth-card">
+      <span class="eyebrow">Santong Internal Ops</span>
+      <h1>自訂登入名稱</h1>
+      <p id="loginAliasCurrent" class="muted" style="margin-bottom:18px;">可改用好記的名稱或手機號碼登入。員工代碼不會改變。</p>
+      <form id="loginAliasForm" class="form-grid">
+        <div class="full">
+          <label for="loginAliasInput">登入名稱</label>
+          <input id="loginAliasInput" maxlength="32" autocomplete="nickname" placeholder="例如：林老闆 或手機號碼">
+        </div>
+        <div class="full">
+          <label for="loginAliasPassword">目前密碼</label>
+          <input id="loginAliasPassword" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="full button-row">
+          <button type="submit">儲存</button>
+          <button type="button" class="button-secondary" onclick="clearOwnLoginAlias()">清除</button>
+          <button type="button" class="button-secondary" onclick="closeLoginAlias()">取消</button>
+        </div>
+        <div id="loginAliasStatus" class="muted"></div>
+        <div id="loginAliasError" class="auth-error"></div>
+      </form>
+    </div>
+  </div>
+
   <div class="shell">
     <section class="hero">
       <div class="hero-card">
@@ -75,7 +100,11 @@
             <strong id="userChipName">-</strong>
             <div id="userChipMeta" class="muted"></div>
           </div>
-          <button type="button" class="button-secondary button-compact" onclick="logout()">登出</button>
+          <div class="button-row">
+            <button type="button" class="button-secondary button-compact" onclick="openChangePassword(false)">修改密碼</button>
+            <button type="button" class="button-secondary button-compact" onclick="openLoginAlias()">登入名稱</button>
+            <button type="button" class="button-secondary button-compact" onclick="logout()">登出</button>
+          </div>
         </div>
         <div class="badge-list">
           <span class="badge">LINE webhook</span>
@@ -1049,11 +1078,12 @@
         </div>
       </section>
 
-      <section class="panel span-12" data-workspace="people" id="panel-users" data-panel="users" data-nav-order="3" data-legacy="settings:2" data-nav-aliases="使用者,帳號,密碼">
+      <section class="panel span-12" data-workspace="people" id="panel-users" data-panel="users" data-nav-order="3" data-legacy="settings:2" data-nav-aliases="使用者,帳號,密碼,登入名稱">
         <div class="panel-header">
           <div>
             <h2>使用者管理</h2>
-            <p class="muted">啟用或停用帳號、重設密碼與確認 LINE 綁定狀態。僅 owner / admin 可操作。</p>
+            <p class="muted">啟用或停用帳號、重設密碼與確認 LINE 綁定狀態。老闆可在此替後台帳號設定登入名稱，員工代碼不會改變。</p>
+            <p id="userAliasFeedback" class="muted"></p>
           </div>
           <div class="button-row">
             <button type="button" class="button-secondary" onclick="loadUserManagement()">重新整理</button>
@@ -1065,6 +1095,7 @@
               <tr>
                 <th>員工代碼</th>
                 <th>姓名</th>
+                <th>登入名稱</th>
                 <th>角色</th>
                 <th>狀態</th>
                 <th>LINE 綁定</th>
@@ -2621,8 +2652,9 @@
     function renderUserChip() {
       if (!state.actor) return;
       const roleLabel = { owner: "經營者", admin: "管理員", site_manager: "工地主管", employee: "員工" }[state.actor.role] || state.actor.role;
+      const aliasLabel = state.actor.login_alias ? `登入名稱：${state.actor.login_alias}` : "尚未設定登入名稱";
       document.getElementById("userChipName").textContent = `${state.actor.employee_code}｜${state.actor.name}`;
-      document.getElementById("userChipMeta").textContent = `角色：${roleLabel}`;
+      document.getElementById("userChipMeta").textContent = `角色：${roleLabel}｜${aliasLabel}`;
     }
 
     async function loadDashboard() {
@@ -3597,6 +3629,11 @@
       }
     });
 
+    document.getElementById("loginAliasForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await submitOwnLoginAlias(document.getElementById("loginAliasInput").value);
+    });
+
     document.getElementById("changePasswordForm").addEventListener("submit", async (event) => {
       event.preventDefault();
       const errorEl = document.getElementById("changePasswordError");
@@ -4097,6 +4134,7 @@
       closeDocumentReader();
       document.getElementById("loginOverlay").classList.remove("hidden");
       document.getElementById("changePasswordOverlay").classList.add("hidden");
+      document.getElementById("loginAliasOverlay").classList.add("hidden");
     }
 
     function openChangePassword(forced) {
@@ -4112,6 +4150,68 @@
       document.getElementById("changePasswordOverlay").classList.add("hidden");
       document.getElementById("changePasswordForm").reset();
       document.getElementById("changePasswordError").textContent = "";
+    }
+
+    async function openLoginAlias() {
+      const errorEl = document.getElementById("loginAliasError");
+      const statusEl = document.getElementById("loginAliasStatus");
+      errorEl.textContent = "";
+      statusEl.textContent = "";
+      try {
+        const data = await api("/api/auth/me");
+        document.getElementById("loginAliasInput").value = data.login_alias || "";
+        document.getElementById("loginAliasPassword").value = "";
+        document.getElementById("loginAliasCurrent").textContent = data.login_alias
+          ? `目前登入名稱：${data.login_alias}。員工代碼仍是 ${data.employee_code}。留白後按清除即可拿掉。`
+          : `尚未設定登入名稱。員工代碼仍是 ${data.employee_code}。可填好記的名稱或手機號碼。`;
+        document.getElementById("loginAliasOverlay").classList.remove("hidden");
+        document.getElementById("loginAliasInput").focus();
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    }
+
+    function closeLoginAlias() {
+      document.getElementById("loginAliasOverlay").classList.add("hidden");
+      document.getElementById("loginAliasForm").reset();
+      document.getElementById("loginAliasError").textContent = "";
+      document.getElementById("loginAliasStatus").textContent = "";
+    }
+
+    async function submitOwnLoginAlias(loginAlias) {
+      const errorEl = document.getElementById("loginAliasError");
+      const statusEl = document.getElementById("loginAliasStatus");
+      errorEl.textContent = "";
+      statusEl.textContent = "";
+      const currentPassword = document.getElementById("loginAliasPassword").value;
+      if (!currentPassword) {
+        errorEl.textContent = "請輸入目前密碼";
+        return;
+      }
+      try {
+        const data = await api("/api/auth/login-alias", {
+          method: "POST",
+          body: JSON.stringify({ current_password: currentPassword, login_alias: loginAlias }),
+        });
+        if (state.actor) state.actor.login_alias = data.login_alias || "";
+        renderUserChip();
+        document.getElementById("loginAliasInput").value = data.login_alias || "";
+        document.getElementById("loginAliasPassword").value = "";
+        document.getElementById("loginAliasCurrent").textContent = data.login_alias
+          ? `目前登入名稱：${data.login_alias}。員工代碼仍是 ${data.employee_code}。`
+          : `已清除。員工代碼仍是 ${data.employee_code}。`;
+        const backupNote = data.backup_status && !["saved", "unchanged"].includes(data.backup_status)
+          ? "資料已保存，雲端備份未完成。"
+          : "";
+        statusEl.textContent = `${data.message}。${backupNote}`;
+      } catch (error) {
+        errorEl.textContent = error.message;
+      }
+    }
+
+    function clearOwnLoginAlias() {
+      document.getElementById("loginAliasInput").value = "";
+      submitOwnLoginAlias("");
     }
 
     async function logout() {
@@ -4144,6 +4244,7 @@
       try {
         const employees = await api("/api/employees");
         const rows = document.getElementById("userManagementRows");
+        const ownerCanSetAlias = state.actor?.role === "owner";
         rows.innerHTML = employees.map((emp) => {
           const statusBadge = emp.status === "active"
             ? '<span class="badge" style="background:#d4edda;color:#155724;">啟用</span>'
@@ -4152,9 +4253,15 @@
           const toggleBtn = emp.status === "active"
             ? '<button type="button" class="button-secondary button-compact" onclick="toggleEmployeeStatus(\'' + emp.employee_code + '\', \'inactive\')">停用</button>'
             : '<button type="button" class="button-secondary button-compact" onclick="toggleEmployeeStatus(\'' + emp.employee_code + '\', \'active\')">啟用</button>';
+          const canSetAlias = ownerCanSetAlias && (emp.role === "owner" || emp.role === "admin");
+          const aliasCell = canSetAlias
+            ? `<input id="login-alias-${emp.employee_code}" class="table-input" maxlength="32" value="${escapeAttr(emp.login_alias || "")}" placeholder="未設定">
+               <button type="button" class="button-secondary button-compact" onclick="saveEmployeeLoginAlias('${emp.employee_code}')">儲存名稱</button>`
+            : escapeHtml(emp.login_alias || "—");
           return `<tr>
             <td>${emp.employee_code}</td>
             <td>${emp.name}</td>
+            <td>${aliasCell}</td>
             <td>${emp.role}</td>
             <td>${statusBadge}</td>
             <td>${lineBadge}</td>
@@ -4178,6 +4285,28 @@
         await loadUserManagement();
       } catch (error) {
         setConsole(error.message);
+      }
+    }
+
+    async function saveEmployeeLoginAlias(employeeCode) {
+      const input = document.getElementById("login-alias-" + employeeCode);
+      const feedback = document.getElementById("userAliasFeedback");
+      if (!input || !feedback) return;
+      const value = input.value.trim();
+      if (!value && !confirm("確定要清除 " + employeeCode + " 的登入名稱嗎？清除後只能用員工代碼登入。")) return;
+      feedback.textContent = "正在儲存登入名稱...";
+      try {
+        const data = await api("/api/employees/" + encodeURIComponent(employeeCode) + "/login-alias", {
+          method: "PUT",
+          body: JSON.stringify({ login_alias: value }),
+        });
+        await loadUserManagement();
+        const backupNote = data.backup_status && !["saved", "unchanged"].includes(data.backup_status)
+          ? "資料已保存，雲端備份未完成。"
+          : "";
+        document.getElementById("userAliasFeedback").textContent = `${data.message}：${data.employee_code}。${backupNote}`;
+      } catch (error) {
+        feedback.textContent = error.message;
       }
     }
 
