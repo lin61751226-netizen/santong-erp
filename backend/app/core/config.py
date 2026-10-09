@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # LINE 自然語言助理。未啟用或沒有金鑰時，維持原本的指令回覆。
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
-    # 語音轉文字。助理開啟且未設定時預設可聽一對一語音。
+    # 語音轉文字。預設 gpt-4o-mini-transcribe（較省）。更準但較貴可改 gpt-4o-transcribe。
     openai_transcribe_model: str = "gpt-4o-mini-transcribe"
     ai_assistant_enabled: bool = False
     ai_voice_enabled: bool = True
