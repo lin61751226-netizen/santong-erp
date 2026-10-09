@@ -92,7 +92,10 @@ class LineService:
         return await self._post("reply", payload)
 
     async def push_text(self, user_id: str, text: str) -> tuple[bool, str]:
-        payload = {"to": user_id, "messages": [{"type": "text", "text": text}]}
+        return await self.push_messages(user_id, [{"type": "text", "text": text}])
+
+    async def push_messages(self, user_id: str, messages: list[dict[str, Any]]) -> tuple[bool, str]:
+        payload = {"to": user_id, "messages": messages}
         return await self._post("push", payload)
 
 
@@ -137,18 +140,19 @@ async def _reply_attendance_options(reply_token: str) -> None:
     )
 
 
+def location_prompt_message(command: str) -> dict[str, Any]:
+    return {
+        "type": "text",
+        "text": f"請點下方「傳送目前位置」，完成{command}定位打卡：",
+        "quickReply": {"items": [
+            {"type": "action", "action": {"type": "location", "label": "傳送目前位置"}},
+            {"type": "action", "action": {"type": "message", "label": "取消", "text": "取消定位打卡"}},
+        ]},
+    }
+
+
 async def _reply_location_prompt(reply_token: str, command: str) -> None:
-    await line_service.reply_messages(
-        reply_token,
-        [{
-            "type": "text",
-            "text": f"請點下方「傳送目前位置」，完成{command}定位打卡：",
-            "quickReply": {"items": [
-                {"type": "action", "action": {"type": "location", "label": "傳送目前位置"}},
-                {"type": "action", "action": {"type": "message", "label": "取消", "text": "取消定位打卡"}},
-            ]},
-        }],
-    )
+    await line_service.reply_messages(reply_token, [location_prompt_message(command)])
 
 
 async def _reply_leave_options(reply_token: str) -> None:
@@ -726,6 +730,21 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         )
         return
 
+    if message_type == "audio":
+        # 群組與聊天室維持原本靜默，不下載、不轉文字。
+        if source_type in {"group", "room"} or not line_user_id:
+            return
+        from app.services.ai_assistant import handle_line_audio_message
+
+        await handle_line_audio_message(
+            session,
+            employee=employee,
+            line_user_id=line_user_id,
+            reply_token=reply_token,
+            message=message,
+        )
+        return
+
     if message_type == "text" and source_type in {"group", "room"}:
         await _save_group_text_log(
             session,
@@ -1208,6 +1227,8 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             "已收到 / 已到場 / 工作開始 / 工作完成",
             "異常回報 現場缺料",
         ]
+        if settings.ai_assistant_enabled and settings.ai_voice_enabled:
+            available_commands.append("直接傳語音（會先請你確認聽到的內容）")
         await line_service.reply_text(
             reply_token,
             "可用指令：\n" + "\n".join(f"・{cmd}" for cmd in available_commands),

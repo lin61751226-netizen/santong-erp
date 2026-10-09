@@ -150,6 +150,7 @@ class AiAssistantTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("建成Ray Rostova", shown)
             self.assertIn("堆高機 2 台", shown)
             self.assertIn("請確認派工", shown)
+            self.assertNotIn("我聽到", shown)
             self.assertEqual(len(session.exec(select(WorkAssignment)).all()), 0)
             data = reply_messages.await_args.args[1][0]["quickReply"]["items"][0]["action"]["data"]
             self.assertTrue(data.startswith("action=ai:confirm:"))
