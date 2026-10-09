@@ -257,6 +257,55 @@ input[hidden] { display: none; }
   white-space: nowrap;
 }
 
+.ai-ops-box {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(53, 92, 79, 0.2);
+  border-radius: 16px;
+  background: #fbfaf6;
+}
+
+.ai-ops-box h3 {
+  margin: 0 0 8px;
+}
+
+.ai-ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.ai-ops-grid label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-ops-flag {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff0c9;
+  color: #815d18;
+}
+
+.ai-ops-flag.is-block {
+  background: #f6dcd8;
+  color: #8e332a;
+}
+
+.ai-ops-sources {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.ai-ops-sources li {
+  margin: 4px 0;
+}
+
 .journal-card details {
   padding: 10px 0;
   border-top: 1px solid #efe8da;

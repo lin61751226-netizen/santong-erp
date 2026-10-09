@@ -73,6 +73,9 @@ PRESERVED_DATABASE_TABLES = (
     "workhourimportlog",
     "aiinteractionlog",
     "aipendingdraft",
+    "aijournaldraft",
+    "aisignslipdraft",
+    "aibillingcheck",
 )
 
 logger = logging.getLogger(__name__)

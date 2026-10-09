@@ -21,6 +21,7 @@ from app.models import (
     WorkAssignment,
     Worksite,
 )
+from app.services.ai_ops import prepare_evening_drafts
 from app.services.line import _build_schedule_summary, line_service, notify_employees
 from app.services.forklift_notifications import deliver_forklift_notifications, process_forklift_alerts, queue_inspection_reminders
 from app.services.forklift_service import local_today
@@ -35,6 +36,7 @@ ATTENDANCE_SUMMARY_RECIPIENT_CODES = ("ADMIN002", "ADMIN001", "BOSS001")
 ATTENDANCE_SUMMARY_TARGET_SCOPE = "daily_attendance_summary"
 DRIVE_ALERT_TARGET_SCOPE = "google_drive_upload_access"
 DRIVE_ALERT_RECIPIENT_CODES = ATTENDANCE_SUMMARY_RECIPIENT_CODES
+AI_OPS_DRAFT_TARGET_SCOPE = "ai_ops_journal_drafts"
 
 
 def _local_day_bounds(target_date: date) -> tuple[datetime, datetime]:
@@ -249,6 +251,46 @@ async def check_google_drive_authorization() -> dict[str, object]:
         return {"status": "alerted", "reason": status, **result}
 
 
+async def prepare_ai_ops_drafts(target_date: date | None = None) -> dict[str, object]:
+    """晚間整理當日工作日誌草稿並通知管理員。兩個開關都預設關閉。"""
+    if not settings.ai_ops_schedule_enabled:
+        return {"status": "disabled"}
+    target_date = target_date or datetime.now(ZoneInfo(settings.timezone)).date()
+    target_value = target_date.isoformat()
+    with session_scope() as session:
+        prepared = await prepare_evening_drafts(session, target_date)
+        backup = await google_drive_worklog_service.backup_database()
+        if not prepared["notify"]:
+            return {"status": "nothing_to_review", "backup_status": backup.get("status"), **prepared}
+        already_sent = session.exec(
+            select(NotificationBatch).where(
+                NotificationBatch.category == NotificationCategory.site_progress,
+                NotificationBatch.target_scope == AI_OPS_DRAFT_TARGET_SCOPE,
+                NotificationBatch.target_value == target_value,
+            )
+        ).first()
+        if already_sent:
+            return {"status": "already_sent", "batch_id": already_sent.id, "backup_status": backup.get("status"), **prepared}
+        recipients = session.exec(
+            select(Employee).where(
+                Employee.employee_code.in_(ATTENDANCE_SUMMARY_RECIPIENT_CODES),
+                Employee.status == EmployeeStatus.active,
+            )
+        ).all()
+        recipients.sort(key=lambda employee: ATTENDANCE_SUMMARY_RECIPIENT_CODES.index(employee.employee_code))
+        sender = next((employee for employee in recipients if employee.employee_code == "BOSS001"), None)
+        result = await notify_employees(
+            session=session,
+            sender=sender,
+            employees=recipients,
+            category=NotificationCategory.site_progress,
+            target_scope=AI_OPS_DRAFT_TARGET_SCOPE,
+            target_value=target_value,
+            content=prepared["message"],
+        )
+        return {"status": "sent", "backup_status": backup.get("status"), **prepared, **result}
+
+
 async def push_forklift_alerts() -> None:
     with session_scope() as session:
         await process_forklift_alerts(session)
@@ -282,6 +324,18 @@ def start_scheduler() -> None:
         hour=settings.attendance_summary_hour,
         minute=settings.attendance_summary_minute,
         id="daily-attendance-summary",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+    # 晚間草稿預設不跑；函式內再看 AI_OPS_SCHEDULE_ENABLED，避免沒開旗標也推播。
+    scheduler.add_job(
+        prepare_ai_ops_drafts,
+        "cron",
+        hour=settings.ai_ops_schedule_hour,
+        minute=settings.ai_ops_schedule_minute,
+        id="ai-ops-evening-drafts",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

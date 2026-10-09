@@ -64,3 +64,11 @@ services:
         sync: false
       - key: AI_VOICE_ENABLED
         sync: false
+      - key: AI_OPS_ENABLED
+        sync: false
+      - key: AI_OPS_SCHEDULE_ENABLED
+        sync: false
+      - key: AI_OPS_SCHEDULE_HOUR
+        value: "20"
+      - key: AI_OPS_SCHEDULE_MINUTE
+        value: "30"
