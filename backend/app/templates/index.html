@@ -432,6 +432,7 @@
           <button type="button" class="button-secondary" onclick="previewCostHourImport()">第 1 步：核對寫入內容</button>
           <button id="costHourImportSubmit" type="submit" disabled>第 2 步：儲存工時到 Google Drive</button>
         </div>
+        <div class="full"><label id="costHourConfirmLabel" hidden><input id="costHourConfirmAmount" type="checkbox" onchange="syncCostHourConfirm()"> 我已核對目前金額與匯入後金額（以及簽單每台工時）。確認後才寫入不同的金額。</label></div>
       </form>
       <p id="costHourImportFeedback" class="notice" role="status" aria-live="polite">請先由工作日誌帶入，或自行選擇日期、工地與標別；輸入數字後仍須完成第 1、2 步才會保存。</p>
       <div id="costHourPreview" class="console" hidden></div>
@@ -442,20 +443,21 @@
       </table></div>
     </section>
 
-    <section class="panel span-12" data-workspace="pricing" id="panel-pricing-month" data-panel="pricing-month" data-nav-order="1" data-legacy="documents:1" data-nav-aliases="整月計價,計價核對,批次匯入">
+    <section class="panel span-12" data-workspace="pricing" id="panel-pricing-month" data-panel="pricing-month" data-nav-order="1" data-legacy="documents:1" data-nav-aliases="整月計價,計價核對,批次匯入,檢查簽單與計價金額">
       <div class="panel-header">
         <div>
           <h2>整月批次匯入（工作日誌自動彙整）</h2>
-          <p class="muted">選作業月份後，系統依每日工作日誌的派工／點檢堆高機台數×8 小時，自動彙整各標別整月正常工時；先整月預覽確認，再一次寫入 Google Drive 計價檔。</p>
+          <p class="muted">有簽單時依每台工時（例如 8+4）與加班時數彙整；沒有簽單才用堆高機台數×8 小時。先整月預覽，金額與目前不同時要再確認才寫入。</p>
         </div>
       </div>
       <details class="pricing-rules"><summary>查看計價與安全規則</summary>
-        <p>金額依計價檔「參數」工作表逐標計算：未滿 8 小時以時薪計、剛好 8 小時計日薪（多數 6,000、新竹寶山 8,000）、超過 8 小時為日薪加超時費；加班假日費率：週日與國定假日使用第 25 列，週一至週六其餘日期使用第 24 列。於「整月預覽」可直接修改每日正常／加班／支援工時，金額會即時試算並於寫入時一併套用；未調整的加班／支援保留計價檔現值。無派工且無點檢的日期不寫入；已填正常工時的日期預設略過，避免覆蓋人工輸入。</p>
+        <p>金額依計價檔「參數」工作表逐標計算。每一台分別計：未滿 8 小時用時薪，滿 8 小時用日薪（多數 6,000、新竹寶山 8,000），再滿 8 小時再加一個日薪，剩餘時數用時薪。加班另計：週日與國定假日用第 25 列，其餘日期用第 24 列。簽單寫「8+4」就是一台日薪、一台 4 小時時薪，不會把兩台都當成 8 小時。沒有簽單時才用台數×8 估計。已填日期預設不覆蓋；金額會變時必須再確認才寫入。</p>
       </details>
       <form id="costMonthImportForm" class="form-grid">
         <div><label for="costMonthDocument">推高機計價表</label><select id="costMonthDocument" required></select></div>
         <div><label for="costMonthMonth">作業月份</label><input id="costMonthMonth" type="month" required></div>
-        <div class="full"><label><input id="costMonthOverwrite" type="checkbox"> 覆寫已填正常工時的日期（依工作日誌重算；預設不勾，只補空白日期）</label></div>
+        <div class="full"><label><input id="costMonthOverwrite" type="checkbox"> 覆寫已填正常工時的日期（預設不勾，只補空白日期）</label></div>
+        <div class="full"><label><input id="costMonthConfirmAmount" type="checkbox"> 我已核對目前金額與匯入後金額。金額不同的日期，確認後才寫入。</label></div>
         <div class="full button-row">
           <button type="button" class="button-secondary" onclick="previewCostMonthImport()">第 1 步：整月預覽</button>
           <button id="costMonthSubmit" type="submit" disabled>第 2 步：整月寫入 Google Drive</button>
@@ -472,9 +474,11 @@
       </div>
       <div class="button-row">
         <button type="button" class="button-secondary" onclick="runAiBillingCheck()">產生核對報告</button>
+        <button type="button" class="button-secondary" onclick="runSignSlipPricingCheck()">檢查簽單與計價金額</button>
       </div>
       <p id="aiOpsBillingFeedback" class="notice" role="status" aria-live="polite">核對使用上方選擇的計價表與月份。沒有選擇計價表時，只比對系統裡的紀錄。</p>
       <div id="aiOpsBilling"></div>
+      <div id="signSlipPricingCheck"></div>
     </section>
 
     <section class="panel span-12" data-workspace="files" id="panel-excel-library" data-panel="excel-library" data-nav-order="0" data-legacy="documents:2" data-nav-aliases="文件庫,Excel,大字閱讀">
@@ -2947,15 +2951,36 @@
             `目前金額：正常 ${fmtCostAmount(data.pricing.existing_amount.normal_amount)}、加班 ${fmtCostAmount(data.pricing.existing_amount.overtime_amount)}、支援 ${fmtCostAmount(data.pricing.existing_amount.support_amount)}，合計 ${fmtCostAmount(data.pricing.existing_amount.total)}`,
             `匯入後金額：正常 ${fmtCostAmount(data.pricing.incoming_amount.normal_amount)}、加班 ${fmtCostAmount(data.pricing.incoming_amount.overtime_amount)}、支援 ${fmtCostAmount(data.pricing.incoming_amount.support_amount)}，合計 ${fmtCostAmount(data.pricing.incoming_amount.total)}`,
           ] : []),
+          ...(data.sign_slip && !data.sign_slip.conflict ? [
+            `簽單每台工時：${(data.sign_slip.segments || []).join("+") || "未分台"}，正常 ${data.sign_slip.normal_hours}、加班 ${data.sign_slip.overtime_hours}`,
+          ] : []),
+          ...(data.pricing && data.pricing.sign_slip_amount ? [
+            `簽單金額：正常 ${fmtCostAmount(data.pricing.sign_slip_amount.normal_amount)}、加班 ${fmtCostAmount(data.pricing.sign_slip_amount.overtime_amount)}，合計 ${fmtCostAmount(data.pricing.sign_slip_amount.total)}`,
+          ] : []),
+          ...(data.sign_slip && data.sign_slip.conflict ? ["同一天有多張工時不一致的簽單，請先確認哪一張。"] : []),
           data.warning,
         ].join("\n");
-        document.getElementById("costHourImportSubmit").disabled = false;
-        feedback.textContent = "第 1 步完成；數字無誤後請按「第 2 步：儲存工時到 Google Drive」。";
+        const confirmLabel = document.getElementById("costHourConfirmLabel");
+        const confirmBox = document.getElementById("costHourConfirmAmount");
+        confirmBox.checked = false;
+        confirmLabel.hidden = !data.requires_amount_confirmation;
+        document.getElementById("costHourImportSubmit").disabled = Boolean(data.requires_amount_confirmation);
+        feedback.textContent = data.requires_amount_confirmation
+          ? "第 1 步完成。匯入後金額與目前金額或簽單不同，請核對後勾選確認，才可按第 2 步。未勾選不會寫入。"
+          : "第 1 步完成；數字無誤後請按「第 2 步：儲存工時到 Google Drive」。";
       } catch (error) {
         preview.hidden = true;
         document.getElementById("costHourImportSubmit").disabled = true;
+        document.getElementById("costHourConfirmLabel").hidden = true;
         feedback.textContent = error.message;
       }
+    }
+
+    function syncCostHourConfirm() {
+      const preview = state.costHourPreview;
+      const needsConfirm = Boolean(preview?.data?.requires_amount_confirmation);
+      const checked = document.getElementById("costHourConfirmAmount").checked;
+      document.getElementById("costHourImportSubmit").disabled = needsConfirm && !checked;
     }
 
     function fmtCostAmount(value) {
@@ -2988,6 +3013,7 @@
         skipped_exists: "略過（已填）",
         empty: "無作業",
         no_worksite: "無對應工地",
+        held_amount: "需確認（金額不同，尚未寫入）",
       }[action] || action;
     }
 
@@ -3047,8 +3073,13 @@
           const dayLabel = day.is_holiday
             ? ` 假日（${day.holiday_reason || (day.weekday === 6 ? "週日" : "國定假日")}）`
             : (day.weekday === 5 ? "（週六）" : "");
+          const vehicleHours = (day.vehicle_hours || []).length ? ` ${day.vehicle_hours.join("+")}` : "";
+          const proposedTotal = day.amount ? day.amount.total : null;
+          const amountNote = day.amount_changed && day.existing_amount
+            ? ` 目前 ${fmtCostAmount(day.existing_amount.total)}，匯入後 ${fmtCostAmount(proposedTotal)}`
+            : "";
           return `<tr data-row-date="${day.date}"${day.is_holiday ? ' class="cost-holiday-row"' : ""}>
-            <td>${escapeHtml(day.date.slice(5))} 週${COST_WEEKDAYS[day.weekday]}${dayLabel}</td>
+            <td>${escapeHtml(day.date.slice(5))} 週${COST_WEEKDAYS[day.weekday]}${dayLabel}${escapeHtml(vehicleHours)}${escapeHtml(amountNote)}</td>
             <td>${escapeHtml(unitText)}</td>
             <td>${day.forklift_count} 台</td>
             <td><input ${common} data-field="n" value="${nInit}"></td>
@@ -3265,6 +3296,40 @@
       printWindow.document.close();
     }
 
+    async function runSignSlipPricingCheck() {
+      const feedback = document.getElementById("costMonthFeedback");
+      const box = document.getElementById("signSlipPricingCheck");
+      const monthValue = document.getElementById("costMonthMonth").value;
+      const documentId = document.getElementById("costMonthDocument").value;
+      if (!monthValue) {
+        feedback.textContent = "請先選擇作業月份，再檢查簽單與計價金額。";
+        return;
+      }
+      const [year, month] = monthValue.split("-");
+      const params = new URLSearchParams({ year, month });
+      if (documentId) params.set("document_id", documentId);
+      feedback.textContent = "正在讀取簽單與計價表，只檢查、不寫入。";
+      try {
+        const data = await api(`/api/cost-hour-imports/slip-check?${params}`);
+        const rows = (data.days || []).map(day => `<tr>
+          <td>${escapeHtml(day.date)}</td>
+          <td>${escapeHtml(day.worksite_name || "")}</td>
+          <td>${escapeHtml((day.vehicle_hours || []).join("+") || "")}</td>
+          <td>${escapeHtml(day.sign_slip_normal_hours)}／${escapeHtml(day.sign_slip_overtime_hours)}</td>
+          <td>${day.workbook ? `${escapeHtml(day.workbook.normal_hours ?? "")}／${escapeHtml(day.workbook.overtime_hours ?? "")}<br>目前 ${fmtCostAmount(day.workbook.current_total)}，簽單 ${fmtCostAmount(day.workbook.sign_slip_total)}` : "未讀計價表"}</td>
+          <td>${escapeHtml((day.reasons || []).join("；"))}</td>
+        </tr>`).join("");
+        box.innerHTML = `<p>${escapeHtml(data.note)} 共 ${data.affected_count} 日可能與簽單不同。</p>
+          <div class="table-wrap"><table><thead><tr><th>日期</th><th>工地</th><th>每台工時</th><th>簽單正常／加班</th><th>計價表現況</th><th>原因</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6">這段期間沒有發現與簽單不一致的匯入或計價表資料。</td></tr>'}</tbody></table></div>`;
+        feedback.textContent = data.affected_count
+          ? `檢查完成：${data.affected_count} 日與簽單不同。沒有改任何金額。`
+          : "檢查完成：沒有發現與簽單不一致的資料。沒有改任何金額。";
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    }
+
     async function previewCostMonthImport() {
       const feedback = document.getElementById("costMonthFeedback");
       const submitButton = document.getElementById("costMonthSubmit");
@@ -3279,7 +3344,10 @@
         state.costMonthPreview = { payload, data };
         renderCostMonthPreview(data);
         submitButton.disabled = false;
-        feedback.textContent = `第 1 步完成：預計寫入 ${data.counts.write} 日，略過已填 ${data.counts.skipped_exists} 日，無作業 ${data.counts.empty} 日。確認無誤後按第 2 步。`;
+        const heldDays = data.counts.held_amount || 0;
+        feedback.textContent = heldDays
+          ? `第 1 步完成：預計寫入 ${data.counts.write} 日，略過已填 ${data.counts.skipped_exists} 日。另有 ${heldDays} 日匯入後金額與目前不同，尚未列入寫入；請核對表格上的目前／匯入後金額，勾選確認後再按第 2 步。`
+          : `第 1 步完成：預計寫入 ${data.counts.write} 日，略過已填 ${data.counts.skipped_exists} 日，無作業 ${data.counts.empty} 日。確認無誤後按第 2 步。`;
       } catch (error) {
         state.costMonthPreview = null;
         submitButton.disabled = true;
@@ -3856,6 +3924,7 @@
       submitButton.disabled = true;
       feedback.textContent = "正在儲存工時到 Google Drive 計價檔並建立匯入紀錄，請稍候...";
       try {
+        payload.confirm_amount_change = document.getElementById("costHourConfirmAmount").checked;
         const data = await api("/api/cost-hour-imports", { method: "POST", body: JSON.stringify(payload) });
         feedback.textContent = `已完成第 2 步：${data.message}（${data.worksheet_name} 第 ${data.target_row} 列）。`;
         document.getElementById("costHourPreview").hidden = true;
@@ -3880,6 +3949,7 @@
       }
       submitButton.disabled = true;
       payload.overrides = collectCostMonthOverrides();
+      payload.confirm_amount_changes = document.getElementById("costMonthConfirmAmount").checked;
       feedback.textContent = payload.overrides.length
         ? `含 ${payload.overrides.length} 個人工調整日期，正在整月寫入 Google Drive 計價檔，請稍候...`
         : "正在整月寫入 Google Drive 計價檔（同一活頁簿只回寫一次），請稍候...";
@@ -3890,7 +3960,8 @@
         window.__costMonthData = null;
         document.getElementById("costMonthInvoiceBtn").disabled = true;
         const warningText = (data.warnings || []).length ? ` 注意：${data.warnings.join("；")}` : "";
-        feedback.textContent = `${data.message} 略過已填 ${data.skipped_exists} 日、無作業 ${data.empty} 日。${warningText}`;
+        const heldText = data.held_amount ? ` 金額不同而未寫入 ${data.held_amount} 日。` : "";
+        feedback.textContent = `${data.message} 略過已填 ${data.skipped_exists} 日、無作業 ${data.empty} 日。${heldText}${warningText}`;
         await Promise.all([loadCostHourImports(), loadAuditLogs(), loadManagedDocuments()]);
       } catch (error) {
         feedback.textContent = error.message;

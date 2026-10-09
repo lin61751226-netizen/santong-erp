@@ -174,6 +174,8 @@ class CostHourImportRequest(BaseModel):
     normal_hours: float = Field(ge=0, le=10000)
     overtime_hours: float = Field(default=0, ge=0, le=10000)
     support_hours: float = Field(default=0, ge=0, le=10000)
+    # 匯入後金額與目前金額不同，或與簽單工時不同時，必須明確確認才寫入。
+    confirm_amount_change: bool = False
 
 
 class WorksiteJournalHoursUpdate(BaseModel):
@@ -202,6 +204,8 @@ class CostMonthImportRequest(BaseModel):
     month: int = Field(ge=1, le=12)
     # 已有工時的日期是否覆寫，預設略過以保護人工輸入。
     overwrite: bool = False
+    # 覆寫會改變金額時，必須再確認一次，否則該日不寫入。
+    confirm_amount_changes: bool = False
     # 限定要處理的標別；None 代表活頁簿中所有能對應到工地的標別。
     labels: Optional[list[str]] = None
     # 預覽後人工調整的單日工時；被調整的日期即使原本已有值也會寫入。

@@ -163,6 +163,8 @@ test('search jumps to a function by name or alias', () => {
   const {context, panels, controls} = fixture();
   assert.equal(context.searchNav('').length, 0);
   assert.equal(context.searchNav('簽單')[0].key, 'sign-slips');
+  assert.equal(context.searchNav('檢查簽單與計價金額')[0].key, 'pricing-month');
+  assert.equal(context.searchNav('檢查簽單與計價金額')[0].group, '計價與收支');
   assert.ok(context.searchNav('請假').some((item) => item.key === 'leave'));
   assert.ok(context.searchNav('點檢').some((item) => item.key === 'inspections'));
   context.renderNavSearch('簽單');
