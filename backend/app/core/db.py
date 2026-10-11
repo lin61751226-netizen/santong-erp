@@ -102,6 +102,18 @@ def _apply_lightweight_migrations() -> None:
                 for statement in statements:
                     connection.execute(text(statement))
 
+    if "attendanceevent" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("attendanceevent")}
+        statements = []
+        if "matched_site_id" not in columns:
+            statements.append("ALTER TABLE attendanceevent ADD COLUMN matched_site_id INTEGER")
+        if "distance_m" not in columns:
+            statements.append("ALTER TABLE attendanceevent ADD COLUMN distance_m FLOAT")
+        if statements:
+            with engine.begin() as connection:
+                for statement in statements:
+                    connection.execute(text(statement))
+
     if "financeentry" in table_names:
         columns = {column["name"] for column in inspector.get_columns("financeentry")}
         statements = []

@@ -62,6 +62,11 @@ class WorksiteCreate(BaseModel):
     geofence_radius_m: Optional[int] = Field(default=None, ge=10, le=10000)
 
 
+class AttendanceSiteCorrection(BaseModel):
+    worksite_id: int
+    reason: str = ""
+
+
 class WorksiteLocationUpdate(BaseModel):
     address: Optional[str] = None
     google_maps_url: Optional[str] = None

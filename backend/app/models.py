@@ -226,6 +226,19 @@ class AttendanceEvent(SQLModel, table=True):
     photo_url: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    matched_site_id: Optional[int] = Field(default=None, foreign_key="worksite.id")
+    distance_m: Optional[float] = None
+
+
+class AttendanceSiteRevision(SQLModel, table=True):
+    """修正打卡工地時留下原本的工地，不刪除打卡。"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_id: int = Field(foreign_key="attendanceevent.id", index=True)
+    previous_site_id: Optional[int] = Field(default=None, foreign_key="worksite.id")
+    new_site_id: Optional[int] = Field(default=None, foreign_key="worksite.id")
+    reason: str = Field(sa_column=Column(Text))
+    actor_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class WorkReportEvent(SQLModel, table=True):

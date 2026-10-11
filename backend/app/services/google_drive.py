@@ -56,6 +56,7 @@ PRESERVED_DATABASE_TABLES = (
     "notificationdelivery",
     "leaverequest",
     "attendanceevent",
+    "attendancesiterevision",
     "workreportevent",
     "photouploadlog",
     "grouptextlog",

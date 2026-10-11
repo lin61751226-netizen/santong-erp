@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -104,6 +105,19 @@ line_service = LineService()
 # LINE location events arrive as a separate message after the user chooses a
 # check-in action. This short-lived state avoids changing the existing schema.
 _pending_location_attendance: dict[str, str] = {}
+_CLOCK_SITE_PENDING_MINUTES = 15
+
+
+@dataclass
+class _PendingClockSite:
+    command: str
+    latitude: float
+    longitude: float
+    address: str | None
+    created_at: datetime
+
+
+_pending_clock_site: dict[str, _PendingClockSite] = {}
 
 
 def _quick_reply(items: list[tuple[str, str]]) -> dict[str, Any]:
@@ -153,6 +167,134 @@ def location_prompt_message(command: str) -> dict[str, Any]:
 
 async def _reply_location_prompt(reply_token: str, command: str) -> None:
     await line_service.reply_messages(reply_token, [location_prompt_message(command)])
+
+
+def _clip_label(text: str, limit: int = 20) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: limit - 1] + "…"
+
+
+def clock_site_prompt_message(plan) -> dict[str, Any]:
+    name = plan.matched_site_name or "這個工地"
+    items = [{
+        "type": "action",
+        "action": {
+            "type": "postback",
+            "label": _clip_label(f"是，在 {name}"),
+            "data": "action=clocksite:yes",
+            "displayText": f"是，在 {name}"[:300],
+        },
+    }]
+    if plan.assigned_site_name:
+        items.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": _clip_label(f"不是，在派工的 {plan.assigned_site_name}"),
+                "data": "action=clocksite:assigned",
+                "displayText": f"不是，在派工的 {plan.assigned_site_name}"[:300],
+            },
+        })
+    else:
+        items.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": "不是這個工地",
+                "data": "action=clocksite:none",
+                "displayText": "不是這個工地",
+            },
+        })
+    items.append({
+        "type": "action",
+        "action": {"type": "message", "label": "取消", "text": "取消定位打卡"},
+    })
+    return {
+        "type": "text",
+        "text": f"你現在在「{name}」嗎？",
+        "quickReply": {"items": items},
+    }
+
+
+def _clock_site_expired(pending: _PendingClockSite, now: datetime | None = None) -> bool:
+    current = now or datetime.utcnow()
+    return current - pending.created_at > timedelta(minutes=_CLOCK_SITE_PENDING_MINUTES)
+
+
+def _clock_site_choice_from_text(text: str) -> str | None:
+    if text.startswith("是，在"):
+        return "yes"
+    if text.startswith("不是，在派工的"):
+        return "assigned"
+    if text == "不是這個工地":
+        return "none"
+    return None
+
+
+def _clear_clock_site(line_user_id: str) -> None:
+    _pending_clock_site.pop(line_user_id, None)
+
+
+async def _reply_saved_clock(session: Session, reply_token: str | None, command: str, result) -> None:
+    if not reply_token or result.event is None:
+        return
+    site_name = "未指定工地"
+    if result.event.site_id:
+        site = session.get(Worksite, result.event.site_id)
+        if site:
+            site_name = site.name
+    lines = [
+        f"已完成定位打卡：{command}",
+        f"工地：{site_name}",
+        f"位置：{result.event.latitude:.6f}, {result.event.longitude:.6f}",
+    ]
+    if result.anomalies:
+        lines.append(f"提醒：{'；'.join(result.anomalies)}")
+    await line_service.reply_text(reply_token, "\n".join(lines))
+
+
+async def _confirm_clock_site(
+    session: Session,
+    line_user_id: str,
+    reply_token: str | None,
+    choice: str,
+) -> None:
+    pending = _pending_clock_site.get(line_user_id)
+    if pending is None or _clock_site_expired(pending):
+        _clear_clock_site(line_user_id)
+        if reply_token:
+            await line_service.reply_text(reply_token, "定位確認已逾時，請重新按「上班打卡」或「下班打卡」。")
+        return
+    employee = _employee_by_line_user(session, line_user_id)
+    if not employee:
+        _clear_clock_site(line_user_id)
+        if reply_token:
+            await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先完成綁定。")
+        return
+    if choice == "assigned":
+        assignment = find_assignment_for_employee(session, employee.id, date.today())
+        if assignment is None:
+            if reply_token:
+                await line_service.reply_text(reply_token, "今日沒有派工工地可改記。請選擇是否在最近工地，或輸入「取消定位打卡」。")
+            return
+    result = record_attendance_event(
+        session,
+        employee,
+        pending.command,
+        note=pending.address or "LINE 位置打卡",
+        latitude=pending.latitude,
+        longitude=pending.longitude,
+        confirmed_choice=choice,
+    )
+    if result.needs_confirmation:
+        if reply_token:
+            await line_service.reply_messages(reply_token, [clock_site_prompt_message(result.plan)])
+        return
+    _clear_clock_site(line_user_id)
+    await _backup_preserved_records()
+    await _reply_saved_clock(session, reply_token, pending.command, result)
 
 
 async def _reply_leave_options(reply_token: str) -> None:
@@ -663,6 +805,9 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             return
         if data.startswith("action=menu:"):
             return
+        if data in {"action=clocksite:yes", "action=clocksite:assigned", "action=clocksite:none"}:
+            await _confirm_clock_site(session, line_user_id, reply_token, data.rsplit(":", 1)[-1])
+            return
         if data.startswith("action=ai:"):
             from app.services.ai_assistant import handle_ai_postback
 
@@ -688,6 +833,13 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     employee = _employee_by_line_user(session, line_user_id) if line_user_id else None
 
     if message_type == "location" and line_user_id:
+        waiting = _pending_clock_site.get(line_user_id)
+        if waiting is not None and not _clock_site_expired(waiting):
+            if reply_token:
+                await line_service.reply_text(reply_token, "請先回答目前是否在這個工地，或輸入「取消定位打卡」。")
+            return
+        if waiting is not None:
+            _clear_clock_site(line_user_id)
         pending_command = _pending_location_attendance.pop(line_user_id, None)
         if not employee:
             if reply_token:
@@ -705,18 +857,26 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             if reply_token:
                 await line_service.reply_text(reply_token, "位置資料無效，請重新按打卡後傳送位置。")
             return
+        address = message.get("address") or "LINE 位置打卡"
         result = record_attendance_event(
             session, employee, pending_command,
-            note=message.get("address") or "LINE 位置打卡",
+            note=address,
             latitude=latitude,
             longitude=longitude,
         )
+        if result.needs_confirmation:
+            _pending_clock_site[line_user_id] = _PendingClockSite(
+                command=pending_command,
+                latitude=latitude,
+                longitude=longitude,
+                address=address,
+                created_at=datetime.utcnow(),
+            )
+            if reply_token:
+                await line_service.reply_messages(reply_token, [clock_site_prompt_message(result.plan)])
+            return
         await _backup_preserved_records()
-        if reply_token:
-            reply_lines = [f"已完成定位打卡：{pending_command}", f"位置：{latitude:.6f}, {longitude:.6f}"]
-            if result.anomalies:
-                reply_lines.append(f"提醒：{'；'.join(result.anomalies)}")
-            await line_service.reply_text(reply_token, "\n".join(reply_lines))
+        await _reply_saved_clock(session, reply_token, pending_command, result)
         return
 
     if message_type == "image" and line_user_id:
@@ -799,6 +959,11 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     if not employee:
         await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先點 Rich Menu 的「開始綁定」。")
+        return
+
+    clock_choice = _clock_site_choice_from_text(text)
+    if clock_choice and line_user_id in _pending_clock_site:
+        await _confirm_clock_site(session, line_user_id, reply_token, clock_choice)
         return
 
     # ---- 堆高機點檢流程 ----
@@ -1101,6 +1266,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     if text in ATTENDANCE_COMMAND_MAP:
         if text in {"上班打卡", "下班打卡"}:
+            _clear_clock_site(line_user_id)
             _pending_location_attendance[line_user_id] = text
             await _reply_location_prompt(reply_token, text)
         else:
@@ -1117,6 +1283,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
 
     if text == "取消定位打卡":
         _pending_location_attendance.pop(line_user_id, None)
+        _clear_clock_site(line_user_id)
         await line_service.reply_text(reply_token, "已取消定位打卡。")
         return
 

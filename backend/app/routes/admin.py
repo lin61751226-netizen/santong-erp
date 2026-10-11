@@ -33,6 +33,7 @@ from app.models import (
     ForkliftStatus,
     GroupTextLog,
     AttendanceEvent,
+    AttendanceSiteRevision,
     CertificateRecord,
     ContractRecord,
     LeaveRequest,
@@ -58,6 +59,7 @@ from app.schemas import (
     AssignmentCreate,
     AssignmentUpdate,
     AssignmentCancel,
+    AttendanceSiteCorrection,
     EmployeeCreate,
     EmployeeUpdate,
     LoginAliasAdminUpdate,
@@ -86,6 +88,7 @@ from app.schemas import (
 from app.services.hr import (
     apply_reassignment_to_assignment,
     annotate_leave_conflicts,
+    _append_note,
     build_attendance_rows,
     build_leave_reassignment_suggestions,
     evaluate_leave_policy,
@@ -138,6 +141,7 @@ SITE_ALIASES = {
     "45": "45",
     "53": "齊裕53",
     "56": "56",
+    "76": "金駿76",
     "47": "善捷47",
     "善捷47": "善捷47",
     "金駿76": "金駿76",
@@ -1948,6 +1952,59 @@ def list_calendar_events(
             "meeting": sum(item["type"] == "meeting" for item in events),
             "inspection": sum(item["type"] == "inspection" for item in events),
         },
+    }
+
+
+@router.post("/attendance/{event_id}/site")
+async def correct_attendance_site(
+    event_id: int,
+    payload: AttendanceSiteCorrection,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    reason = payload.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="請填寫修正原因")
+    if len(reason) > 500:
+        raise HTTPException(status_code=400, detail="修正原因請在 500 字以內")
+    event = session.get(AttendanceEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="找不到打卡紀錄")
+    site = session.get(Worksite, payload.worksite_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    if event.site_id == site.id:
+        raise HTTPException(status_code=400, detail="工地沒有變更")
+    previous = session.get(Worksite, event.site_id) if event.site_id else None
+    previous_name = previous.name if previous else "未指定"
+    employee = session.get(Employee, event.employee_id)
+    session.add(AttendanceSiteRevision(
+        event_id=event.id,
+        previous_site_id=event.site_id,
+        new_site_id=site.id,
+        reason=reason,
+        actor_id=actor.id,
+    ))
+    event.site_id = site.id
+    event.note = _append_note(event.note, f"工地已由「{previous_name}」修正為「{site.name}」：{reason}")
+    session.add(event)
+    code = employee.employee_code if employee else "-"
+    name = employee.name if employee else "-"
+    _write_admin_audit(
+        session,
+        actor,
+        action="correct_site",
+        entity_type="attendance_event",
+        entity_id=event.id,
+        summary=f"將 {code} {name} 的{event.event_type}工地由「{previous_name}」修正為「{site.name}」。原因：{reason}",
+    )
+    backup = await google_drive_worklog_service.backup_database()
+    return {
+        "event_id": event.id,
+        "site_id": site.id,
+        "site_name": site.name,
+        "previous_site_name": previous_name,
+        "backup_status": backup.get("status"),
     }
 
 
