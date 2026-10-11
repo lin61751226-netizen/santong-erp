@@ -23,6 +23,10 @@ class AssignmentUpdate(AssignmentCreate):
     version: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+class AssignmentCancel(BaseModel):
+    version: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class EmployeeUpdate(BaseModel):
     title: Optional[str] = None
     phone: Optional[str] = None

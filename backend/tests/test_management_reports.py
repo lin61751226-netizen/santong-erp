@@ -66,14 +66,15 @@ def ctx():
     site = Worksite(code='53', name='齊裕53')
     session.add_all([actor, employee, doc, site])
     session.commit()
-    data = analyze_workbook(workbook_bytes())
+    source_bytes = workbook_bytes()
+    data = analyze_workbook(source_bytes)
     snapshot = ManagementWorkbookSnapshot(version_key='initial', source_document_id=doc.id,
         content_sha256=data['content_sha256'], employee_mapping={'林育弘': employee.employee_code}, data=data, created_by_id=actor.id)
     session.add(snapshot)
     session.commit()
     app.dependency_overrides[get_session] = lambda: session
     app.dependency_overrides[get_current_actor] = lambda: actor
-    download = AsyncMock(return_value=workbook_bytes())
+    download = AsyncMock(return_value=source_bytes)
     backup = AsyncMock(return_value={'status': 'saved'})
     with patch.object(routes.drive, 'download_file_bytes', download), patch.object(routes.drive, 'backup_database', backup):
         yield SimpleNamespace(session=session, actor=actor, employee=employee, doc=doc, site=site,

@@ -2,6 +2,7 @@ let assignmentEditingId = null;
 let assignmentEditingVersion = null;
 let assignmentBaseline = null;
 let assignmentOpening = false;
+let assignmentDeleting = false;
 
 function assignmentPayload() {
   const value = id => document.getElementById(id).value;
@@ -62,10 +63,11 @@ function fillAssignmentEditor(row) {
 }
 
 async function editAssignment(id) {
-  if (assignmentOpening || document.getElementById('assignmentSaveButton').disabled || !confirmAssignmentDiscard()) return;
+  if (assignmentDeleting || assignmentOpening || document.getElementById('assignmentSaveButton').disabled || !confirmAssignmentDiscard()) return;
   assignmentOpening = true;
   try {
     const row = await api(`/api/assignments/${id}`);
+    if (row.status === 'cancelled') throw new Error('此派工已刪除（取消），請另建工作安排。');
     fillAssignmentEditor(row);
     document.getElementById('assignmentFeedback').textContent = '已載入原派工設定，修改後請按「保存派工修改」；尚未保存的輸入不會寫入資料庫。';
     openPanelFor('assignmentForm');
@@ -99,14 +101,32 @@ function renderAssignments(rows) {
     <td>${escapeHtml(row.work_item)}<br><span class="muted">${escapeHtml(row.notes || '')}${row.vehicle || row.equipment ? `<br>車輛／機具：${escapeHtml([row.vehicle, row.equipment].filter(Boolean).join('、'))}` : ''}</span></td>
     <td>${escapeHtml(row.supervisor_name)}</td><td>${escapeHtml((row.members || []).join('、'))}</td>
     <td><span class="pill">${escapeHtml(statusLabels[row.status] || row.status)}</span></td>
-    <td><button type="button" class="button-secondary button-compact" onclick="editAssignment(${Number(row.id)})">修改</button></td>
+    <td>${row.status === 'cancelled' ? '已刪除・歷史保留' : `<button type="button" class="button-secondary button-compact" onclick="editAssignment(${Number(row.id)})">修改</button> <button type="button" class="button-secondary button-compact" onclick="deleteAssignment(${Number(row.id)}, '${escapeAttr(row.version)}')">刪除</button>`}</td>
   </tr>`).join('') || '<tr><td colspan="7">此日期尚無工作安排；可清空日期查詢全部。</td></tr>';
+}
+
+async function deleteAssignment(id, version) {
+  if (assignmentDeleting || assignmentOpening || document.getElementById('assignmentSaveButton').disabled) return;
+  if (!confirmAssignmentDiscard() || !confirm(`確定刪除派工 ${id} 並保存？\n此派工將取消，人員不再收到此筆每日行程；打卡、回報、照片與修改紀錄仍保留。`)) return;
+  assignmentDeleting = true;
+  try {
+    const result = await api(`/api/assignments/${id}/cancel`, {method: 'POST', body: JSON.stringify({version})});
+    if (assignmentEditingId === id) {
+      assignmentBaseline = JSON.stringify(assignmentPayload());
+      resetAssignmentEditor();
+    }
+    const message = `${result.message}。${leaveBackupMessage(result.backup_status)}`;
+    document.getElementById('assignmentListFeedback').textContent = message;
+    try { await Promise.all([loadDashboard(), loadAssignments(), loadCalendar(), loadAttendance(), loadAttendanceExceptions(), loadAuditLogs()]); }
+    catch (error) { document.getElementById('assignmentListFeedback').textContent += ` 清單更新失敗：${error.message}，請重新查詢。`; }
+  } catch (error) { document.getElementById('assignmentListFeedback').textContent = error.message; }
+  finally { assignmentDeleting = false; }
 }
 
 async function saveAssignmentSettings(event) {
   event.preventDefault();
   const button = document.getElementById('assignmentSaveButton');
-  if (button.disabled || assignmentOpening) return;
+  if (button.disabled || assignmentOpening || assignmentDeleting) return;
   const feedback = document.getElementById('assignmentFeedback');
   const payload = assignmentPayload();
   if (!payload.work_date || !payload.site_id || !payload.work_item || !payload.employee_codes.length) {

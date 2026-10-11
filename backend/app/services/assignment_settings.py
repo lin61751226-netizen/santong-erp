@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.deps import ensure_employee_scope, ensure_site_scope
 from app.models import (
-    AckStatus, AdminAuditLog, AssignmentMember, AttendanceEvent, Employee,
+    AckStatus, AdminAuditLog, AssignmentMember, AssignmentStatus, AttendanceEvent, Employee,
     EmployeeStatus, LeaveStatus, PhotoUploadLog, Role, WorkAssignment,
     WorkReportEvent, Worksite,
 )
@@ -114,6 +114,8 @@ def update_assignment(session: Session, actor: Employee, assignment_id: int, pay
         before = assignment_snapshot(session, assignment)
         if payload.version != snapshot_version(before):
             raise HTTPException(409, "派工已被修改或收到新回報；請重新開啟最新設定後再保存。")
+        if assignment.status == AssignmentStatus.cancelled:
+            raise HTTPException(409, "此派工已刪除（取消），請另建工作安排。")
         employees, supervisor_id = validate_assignment(session, actor, payload, assignment)
         if payload.work_date != assignment.work_date or payload.site_id != assignment.site_id:
             history = any(session.exec(select(model.id).where(model.assignment_id == assignment.id).limit(1)).first()
@@ -151,6 +153,38 @@ def update_assignment(session: Session, actor: Employee, assignment_id: int, pay
     except OperationalError:
         session.rollback()
         raise HTTPException(409, "派工正在被另一位使用者修改，請重新查詢後再保存。")
+    except Exception:
+        session.rollback()
+        raise
+
+
+def cancel_assignment(session: Session, actor: Employee, assignment_id: int, version: str) -> WorkAssignment:
+    assignment = session.get(WorkAssignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "找不到工作安排")
+    ensure_site_scope(actor, assignment.site_id)
+    try:
+        session.exec(update(WorkAssignment).where(WorkAssignment.id == assignment_id).values(id=assignment_id))
+        session.refresh(assignment)
+        ensure_site_scope(actor, assignment.site_id)
+        before = assignment_snapshot(session, assignment)
+        if version != snapshot_version(before):
+            raise HTTPException(409, "派工已變更，請重新查詢後再刪除。")
+        if assignment.status != AssignmentStatus.cancelled:
+            assignment.status = AssignmentStatus.cancelled
+            session.add(assignment)
+            for member in session.exec(select(AssignmentMember).where(AssignmentMember.assignment_id == assignment_id)).all():
+                member.is_active = False
+                session.add(member)
+            session.flush()
+            session.add(AdminAuditLog(actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+                action="cancel", entity_type="work_assignment", entity_id=assignment.id,
+                summary=json.dumps({"before": before, "after": assignment_snapshot(session, assignment)}, ensure_ascii=False)))
+        session.commit()
+        return assignment
+    except OperationalError:
+        session.rollback()
+        raise HTTPException(409, "派工正在被修改，請重新查詢後再刪除。")
     except Exception:
         session.rollback()
         raise

@@ -9,6 +9,23 @@ const row = {id: 7, version: 'a'.repeat(64), work_date: '2026-11-02', site_id: 1
   work_item: '移料', supervisor_code: 'ADMIN001', supervisor_name: '主管', member_codes: ['EMP001', 'EMP002'],
   members: ['甲', '乙'], start_time: '08:00:00', end_time: '17:00:00', vehicle: '3T×2', equipment: '堆高機', notes: '原備註'};
 
+test('cancel confirms before writing, sends version and reports backup failure', async () => {
+  const calls = [];
+  const {ctx, controls} = fixture(async (url, options) => {
+    calls.push({url, options}); return {message: '已取消', backup_status: 'failed'};
+  });
+  ctx.confirm = () => false;
+  await ctx.deleteAssignment(7, row.version);
+  assert.equal(calls.length, 0);
+  ctx.confirm = () => true;
+  await ctx.deleteAssignment(7, row.version);
+  assert.equal(calls[0].url, '/api/assignments/7/cancel');
+  assert.equal(JSON.parse(calls[0].options.body).version, row.version);
+  assert.ok(controls.get('assignmentListFeedback').textContent.includes('雲端備份未完成'));
+  ctx.renderAssignments([{...row, status: 'cancelled'}]);
+  assert.ok(!controls.get('assignmentRows').innerHTML.includes('onclick='));
+});
+
 function fixture(api = async () => row) {
   const controls = new Map();
   const document = {getElementById(id) {

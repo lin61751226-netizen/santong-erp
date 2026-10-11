@@ -57,6 +57,7 @@ from app.models import (
 from app.schemas import (
     AssignmentCreate,
     AssignmentUpdate,
+    AssignmentCancel,
     EmployeeCreate,
     EmployeeUpdate,
     LoginAliasAdminUpdate,
@@ -123,7 +124,7 @@ from app.services.cost_workbook import (
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.spreadsheet_preview import preview_spreadsheet
 from app.services.assignment_settings import (
-    add_assignment_audit, assignment_snapshot, serialize_assignment, update_assignment, validate_assignment,
+    add_assignment_audit, assignment_snapshot, serialize_assignment, update_assignment, validate_assignment, cancel_assignment,
 )
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
@@ -849,7 +850,7 @@ def dashboard(
     employees = _employees_for_actor(session, actor)
     worksites = _worksites_for_actor(session, actor)
     pending_leaves_stmt = select(LeaveRequest).where(LeaveRequest.status == LeaveStatus.pending)
-    assignments_stmt = select(WorkAssignment).where(WorkAssignment.work_date == date.today())
+    assignments_stmt = select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == date.today())
 
     if actor.role == Role.site_manager:
         pending_leaves_stmt = (
@@ -1553,6 +1554,19 @@ async def save_assignment_settings(
             "assignment": serialize_assignment(session, assignment), "backup_status": backup.get("status")}
 
 
+@router.post("/assignments/{assignment_id}/cancel")
+async def cancel_assignment_settings(
+    assignment_id: int,
+    payload: AssignmentCancel,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    assignment = cancel_assignment(session, actor, assignment_id, payload.version)
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "派工已刪除（取消），歷史紀錄保留", "assignment_id": assignment.id,
+            "assignment": serialize_assignment(session, assignment), "backup_status": backup.get("status")}
+
+
 @router.post("/notifications/send")
 async def send_notification(
     payload: NotificationCreate,
@@ -1819,7 +1833,7 @@ def list_calendar_events(
     events: list[dict] = []
 
     assignments = session.exec(
-        select(WorkAssignment).where(
+        select(WorkAssignment).where(WorkAssignment.status != "cancelled",
             WorkAssignment.work_date >= first_day,
             WorkAssignment.work_date <= last_day,
         ).order_by(WorkAssignment.work_date, WorkAssignment.id)
@@ -2979,7 +2993,7 @@ def _empty_journal_bucket() -> dict:
 def _gather_month_journal(session: Session, first_day: date, last_day: date) -> dict:
     """彙整整月每日每工地的派工、點檢、已保存日誌工時與簽單。"""
     assignments = session.exec(
-        select(WorkAssignment).where(
+        select(WorkAssignment).where(WorkAssignment.status != "cancelled",
             WorkAssignment.work_date >= first_day,
             WorkAssignment.work_date <= last_day,
         )
@@ -3541,7 +3555,7 @@ def list_worksite_journals(
         PhotoUploadLog.uploaded_at >= start_at,
         PhotoUploadLog.uploaded_at < end_at,
     )
-    assignment_statement = select(WorkAssignment).where(
+    assignment_statement = select(WorkAssignment).where(WorkAssignment.status != "cancelled",
         WorkAssignment.work_date == journal_date
     )
     inspection_statement = select(ForkliftInspection).where(
@@ -3982,7 +3996,7 @@ def forklift_attendance_stats(
         event_groups.setdefault(key, []).append(event)
 
     assignments = session.exec(
-        select(WorkAssignment).where(
+        select(WorkAssignment).where(WorkAssignment.status != "cancelled",
             WorkAssignment.work_date >= first_day,
             WorkAssignment.work_date <= last_day,
         )

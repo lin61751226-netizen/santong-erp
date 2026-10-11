@@ -228,7 +228,7 @@ def gather_site_day(session: Session, work_date: date, worksite_id: int) -> dict
 
     assignments = []
     for assignment in session.exec(
-        select(WorkAssignment).where(WorkAssignment.work_date == work_date, WorkAssignment.site_id == worksite_id)
+        select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == work_date, WorkAssignment.site_id == worksite_id)
         .order_by(WorkAssignment.id)
     ).all():
         members = session.exec(
@@ -1257,7 +1257,7 @@ def build_billing_rows(session: Session, month: str, workbook_rows: dict[tuple[s
         .order_by(WorkHourImportLog.id)
     ).all()
     assignments = session.exec(
-        select(WorkAssignment).where(WorkAssignment.work_date >= first, WorkAssignment.work_date <= last)
+        select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date >= first, WorkAssignment.work_date <= last)
     ).all()
     inspections = session.exec(
         select(ForkliftInspection).where(
@@ -1564,7 +1564,7 @@ def active_sites_for_day(session: Session, work_date: date) -> tuple[list[int], 
     site_ids: set[int] = set()
     unassigned = 0
     queries = [
-        select(WorkAssignment.site_id).where(WorkAssignment.work_date == work_date),
+        select(WorkAssignment.site_id).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == work_date),
         select(ForkliftInspection.site_id).where(ForkliftInspection.inspection_date == work_date),
         select(GroupTextLog.site_id).where(GroupTextLog.sent_at >= start_at, GroupTextLog.sent_at < end_at),
         select(AttendanceEvent.site_id).where(AttendanceEvent.happened_at >= start_at, AttendanceEvent.happened_at < end_at),

@@ -50,6 +50,56 @@ def edit_payload(client, assignment, **changes):
         'end_time', 'vehicle', 'equipment', 'notes', 'version')} | {'employee_codes': row['member_codes']} | changes
 
 
+def test_cancel_preserves_history_excludes_schedule_and_rejects_old_editor(ctx, monkeypatch):
+    from app.services import scheduler
+    client, session, admin, worker, _, sites, assignment, member, backup = ctx
+    assignment.work_date = date.today()
+    member.ack_status = AckStatus.arrived
+    event = AttendanceEvent(employee_id=worker.id, site_id=sites[0].id, assignment_id=assignment.id, event_type='check_in')
+    session.add_all([assignment, member, event]); session.commit()
+    payload = edit_payload(client, assignment)
+    result = client.post(f'/api/assignments/{assignment.id}/cancel', json={'version': payload['version']})
+    assert result.status_code == 200 and result.json()['backup_status'] == 'saved'
+    assert assignment.status.value == 'cancelled' and not member.is_active
+    assert session.get(AttendanceEvent, event.id) and member.ack_status == AckStatus.arrived
+    assert worker.line_user_id == 'U-kept' and worker.password_hash == 'kept'
+    assert find_assignment_for_employee(session, worker.id, date.today()) is None
+    assert client.patch(f'/api/assignments/{assignment.id}', json=payload).status_code == 409
+    assert client.patch(f'/api/assignments/{assignment.id}', json=edit_payload(client, assignment)).status_code == 409
+    assert any(r['status'] == 'cancelled' for r in client.get('/api/assignments').json())
+    journal = client.get(f'/api/worksite-journals?target_date={date.today()}').json()
+    assert not any(site['assignments'] for site in journal['sites'])
+    audit = session.exec(select(AdminAuditLog)).one()
+    assert audit.action == 'cancel' and json.loads(audit.summary)['before']['members'][0]['is_active']
+    @contextmanager
+    def scope():
+        yield session
+    monkeypatch.setattr(scheduler, 'session_scope', scope)
+    notify = AsyncMock(); monkeypatch.setattr(scheduler, 'notify_employees', notify)
+    asyncio.run(scheduler.push_daily_assignments())
+    notify.assert_not_awaited()
+    backup.return_value = {'status': 'failed'}
+    version = client.get(f'/api/assignments/{assignment.id}').json()['version']
+    repeated = client.post(f'/api/assignments/{assignment.id}/cancel', json={'version': version})
+    assert repeated.json()['backup_status'] == 'failed'
+    assert len(session.exec(select(AdminAuditLog)).all()) == 1
+
+
+def test_cancel_checks_role_scope_and_version(ctx):
+    client, session, admin, worker, _, sites, assignment, member, backup = ctx
+    url = f'/api/assignments/{assignment.id}/cancel'
+    payload = {'version': edit_payload(client, assignment)['version']}
+    app.dependency_overrides[get_current_actor] = lambda: worker
+    assert client.post(url, json=payload).status_code == 403
+    admin.role = Role.site_manager; admin.home_site_id = sites[1].id
+    app.dependency_overrides[get_current_actor] = lambda: admin
+    assert client.post(url, json=payload).status_code == 403
+    admin.home_site_id = sites[0].id
+    assert client.post(url, json={'version': '0' * 64}).status_code == 409
+    assert assignment.status.value == 'scheduled' and member.is_active
+    backup.assert_not_awaited()
+
+
 def test_modify_all_settings_and_audit_backup_after_atomic_commit(ctx):
     client, session, admin, worker, other, sites, assignment, member, backup = ctx
     before_created = assignment.created_at

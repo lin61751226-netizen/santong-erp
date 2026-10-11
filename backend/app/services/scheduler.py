@@ -163,7 +163,7 @@ async def wake_up_service() -> None:
 
 async def push_daily_assignments() -> None:
     with session_scope() as session:
-        assignments = session.exec(select(WorkAssignment).where(WorkAssignment.work_date == date.today())).all()
+        assignments = session.exec(select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == date.today())).all()
         for assignment in assignments:
             members = session.exec(
                 select(AssignmentMember).where(
