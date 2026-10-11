@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from sqlalchemy import or_
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -85,6 +86,7 @@ from app.schemas import (
     SignSlipUpdate,
     SignSlipBatch,
 )
+from app.services.nominatim import NominatimError, search_address
 from app.services.hr import (
     apply_reassignment_to_assignment,
     annotate_leave_conflicts,
@@ -742,14 +744,19 @@ async def update_worksite_location(
     if not worksite:
         raise HTTPException(status_code=404, detail="找不到工地")
     data = payload.model_dump(exclude_unset=True)
-    google_maps_url = data.get("google_maps_url", worksite.google_maps_url)
-    if isinstance(google_maps_url, str):
-        google_maps_url = google_maps_url.strip() or None
+    # 有送 Google 地圖連結時，連結裡的座標仍優先，維持既有貼上連結的存法。
+    # 地圖上點選只送緯度、經度與半徑，不重解既有連結，也不清掉連結。
+    if "google_maps_url" in data:
+        google_maps_url = data.get("google_maps_url")
+        if isinstance(google_maps_url, str):
+            google_maps_url = google_maps_url.strip() or None
         data["google_maps_url"] = google_maps_url
-    map_latitude, map_longitude = await _resolve_google_maps_coordinates(google_maps_url)
-    if map_latitude is not None:
-        data["latitude"] = map_latitude
-        data["longitude"] = map_longitude
+        map_latitude, map_longitude = await _resolve_google_maps_coordinates(google_maps_url)
+        if map_latitude is not None:
+            data["latitude"] = map_latitude
+            data["longitude"] = map_longitude
+    if ("latitude" in data) != ("longitude" in data):
+        raise HTTPException(status_code=400, detail="工地座標必須同時填寫緯度與經度")
     latitude = data.get("latitude", worksite.latitude)
     longitude = data.get("longitude", worksite.longitude)
     radius_m = data.get("geofence_radius_m", worksite.geofence_radius_m)
@@ -765,8 +772,83 @@ async def update_worksite_location(
             f"座標 {worksite.latitude},{worksite.longitude}，半徑 {worksite.geofence_radius_m or '-'} 公尺"
         ),
     )
-    await google_drive_worklog_service.backup_database()
-    return {"message": "工地位置已儲存", "id": site_id}
+    backup = await google_drive_worklog_service.backup_database()
+    return {
+        "message": "工地位置已儲存",
+        "id": site_id,
+        "latitude": worksite.latitude,
+        "longitude": worksite.longitude,
+        "geofence_radius_m": worksite.geofence_radius_m,
+        "google_maps_url": worksite.google_maps_url,
+        "backup_status": backup.get("status"),
+    }
+
+
+@router.get("/worksites/geocode")
+async def geocode_worksite_address(
+    q: str = Query(default=""),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    try:
+        results = await search_address(q)
+    except NominatimError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    return {"results": results}
+
+
+@router.get("/worksites/{site_id}/map")
+def worksite_map_context(
+    site_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    worksite = session.get(Worksite, site_id)
+    if worksite is None:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    others = []
+    for site in session.exec(select(Worksite).where(Worksite.is_active.is_(True)).order_by(Worksite.name)).all():
+        if site.id == worksite.id or site.latitude is None or site.longitude is None:
+            continue
+        others.append({
+            "id": site.id,
+            "name": site.name,
+            "latitude": site.latitude,
+            "longitude": site.longitude,
+            "geofence_radius_m": site.geofence_radius_m,
+        })
+    events = session.exec(
+        select(AttendanceEvent)
+        .where(
+            or_(AttendanceEvent.site_id == site_id, AttendanceEvent.matched_site_id == site_id),
+            AttendanceEvent.latitude.is_not(None),
+            AttendanceEvent.longitude.is_not(None),
+        )
+        .order_by(AttendanceEvent.happened_at.desc())
+        .limit(20)
+    ).all()
+    points = []
+    for event in events:
+        employee = session.get(Employee, event.employee_id)
+        points.append({
+            "latitude": event.latitude,
+            "longitude": event.longitude,
+            "event_type": event.event_type,
+            "happened_at": event.happened_at.isoformat() if event.happened_at else None,
+            "employee_name": employee.name if employee else None,
+        })
+    return {
+        "id": worksite.id,
+        "name": worksite.name,
+        "code": worksite.code,
+        "address": worksite.address,
+        "latitude": worksite.latitude,
+        "longitude": worksite.longitude,
+        "geofence_radius_m": worksite.geofence_radius_m,
+        "default_radius_m": settings.clock_site_radius_m,
+        "google_maps_url": worksite.google_maps_url,
+        "other_sites": others,
+        "clock_points": points,
+    }
 
 
 @router.get("/master-options")
