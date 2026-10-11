@@ -25,7 +25,7 @@ function loadPanels() {
   for (const match of html.matchAll(/<section\b([^>]*)>/g)) {
     const source = match[1];
     if (!source.includes('data-workspace=')) continue;
-    const title = html.slice(match.index, match.index + 900).match(/<h2>([^<]*)<\/h2>/)?.[1] || '';
+    const title = html.slice(match.index, match.index + 900).match(/<h2(?:\s[^>]*)?>([^<]*)<\/h2>/)?.[1] || '';
     panels.push({
       id: attr(source, 'id'),
       dataset: {
@@ -97,7 +97,7 @@ test('every existing function stays reachable in one of seven groups', () => {
   assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 34);
   const groups = [...navHtml.matchAll(/data-workspace-tab="([^"]+)"[^>]*>([^<]+)/g)].map((match) => match[2]);
   assert.deepEqual(groups, ['今日總覽', '人員與考勤', '派工與工地', '堆高機', '日誌與簽單', '計價與收支', '文件與設定']);
-  for (const title of keptTitles) assert.ok(html.includes(`<h2>${title}</h2>`), title);
+  for (const title of keptTitles) assert.ok(panels.some((panel) => panel.title === title), title);
   assert.ok(html.includes('id="navSearch"'));
   assert.ok(html.includes('openDocumentTask(0)'));
   assert.ok(html.includes('openDocumentTask(2)'));
@@ -168,6 +168,7 @@ test('search jumps to a function by name or alias', () => {
   assert.ok(context.searchNav('請假').some((item) => item.key === 'leave'));
   assert.ok(context.searchNav('點檢').some((item) => item.key === 'inspections'));
   assert.equal(context.searchNav('登入名稱')[0].key, 'users');
+  assert.equal(context.searchNav('修改派工設定')[0].key, 'assignment-list');
   context.renderNavSearch('簽單');
   assert.equal(controls.get('navSearchResults').hidden, false);
   assert.match(controls.get('navSearchResults').innerHTML, /當日簽單紀錄/);

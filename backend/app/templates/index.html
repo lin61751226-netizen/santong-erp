@@ -693,8 +693,8 @@
       <section class="panel span-8" data-workspace="dispatch" id="panel-assignment-create" data-panel="assignment-create" data-nav-order="0" data-legacy="operations:0" data-nav-aliases="建立派工,新增派工">
         <div class="panel-header">
           <div>
-            <h2>建立每日工作安排</h2>
-            <p class="muted">會自動檢查已核准請假的員工，避免排班衝突。</p>
+            <h2 id="assignmentHeading">建立每日工作安排</h2>
+            <p class="muted">新增派工，或從工作安排清單按「修改」帶入設定；會檢查已核准請假，避免排班衝突。</p>
           </div>
         </div>
         <form id="assignmentForm" class="form-grid">
@@ -728,6 +728,10 @@
             <input id="endTime" name="endTime" type="time">
           </div>
           <div>
+            <label for="assignmentVehicle">車輛</label>
+            <input id="assignmentVehicle" name="assignmentVehicle" maxlength="500" placeholder="例如：2.5T×1、3T×2">
+          </div>
+          <div>
             <label for="equipment">機具（可點選或輸入）</label>
             <input id="equipment" name="equipment" list="equipmentList" placeholder="預設堆高機，可選其他設備">
             <datalist id="equipmentList"></datalist>
@@ -737,10 +741,13 @@
             <textarea id="assignmentNotes" name="assignmentNotes" placeholder="例如：進場前完成安全檢查"></textarea>
           </div>
           <div class="full button-row">
-            <button type="submit">建立工作安排</button>
-            <button type="button" class="button-secondary" onclick="loadAssignments()">重新整理列表</button>
+            <button id="assignmentSaveButton" type="submit">建立工作安排</button>
+            <button id="assignmentCancelButton" type="button" class="button-secondary" onclick="resetAssignmentEditor()" hidden>返回新增</button>
+            <button type="button" class="button-secondary" onclick="openAssignmentList()">查看／修改工作安排</button>
           </div>
         </form>
+        <p class="muted">修改會保留派工編號、原始打卡、回報及照片；已有打卡或回報時，日期與工地不可變更。保存不會自動重發 LINE 通知。</p>
+        <div id="assignmentFeedback" class="notice" role="status">可在「工作安排清單」選擇派工並修改。</div>
       </section>
 
       <section class="panel span-4" data-workspace="dispatch" id="panel-notices" data-panel="notices" data-nav-order="7" data-legacy="operations:1" data-nav-aliases="臨時通知,通知">
@@ -785,11 +792,11 @@
         </form>
       </section>
 
-      <section class="panel span-12" data-workspace="dispatch" id="panel-assignment-list" data-panel="assignment-list" data-nav-order="1" data-legacy="operations:2" data-nav-aliases="派工清單,工作安排">
+      <section class="panel span-12" data-workspace="dispatch" id="panel-assignment-list" data-panel="assignment-list" data-nav-order="1" data-legacy="operations:2" data-nav-aliases="派工清單,工作安排,修改派工,修改派工設定">
         <div class="panel-header">
           <div>
             <h2>工作安排清單</h2>
-            <p class="muted">可檢視當日或指定日期的工地、人員與狀態。</p>
+            <p class="muted">查詢日期後按「修改」編輯派工；日期留空可查全部已存安排。</p>
           </div>
           <div class="button-row">
             <input id="assignmentFilterDate" type="date">
@@ -806,6 +813,7 @@
                 <th>主管</th>
                 <th>人員</th>
                 <th>狀態</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody id="assignmentRows"></tbody>
@@ -1236,6 +1244,7 @@
   <script src="/static/document_data.js"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
+  <script src="/static/assignment_settings.js"></script>
   <script>
     const state = {
       actor: null,
@@ -2066,6 +2075,7 @@
     }
 
     function renderSelectOptions() {
+      const assignmentSelections = rememberAssignmentSelections();
       const siteOptions = state.worksites.map((site) => `<option value="${site.id}">${site.name}</option>`).join("");
       const siteSelect = document.getElementById("siteId");
       if (siteSelect) siteSelect.innerHTML = siteOptions;
@@ -2107,6 +2117,7 @@
       if (workItemList) workItemList.innerHTML = dataList(state.workItemOptions);
       const equipmentList = document.getElementById("equipmentList");
       if (equipmentList) equipmentList.innerHTML = dataList(state.equipmentOptions);
+      restoreAssignmentSelections(assignmentSelections);
     }
 
     function renderEmployees(rows) {
@@ -2124,19 +2135,6 @@
           <td>${row.line_bound ? "已綁定" : "未綁定"}</td>
           <td>${escapeHtml(row.bind_token)}</td>
           <td class="table-actions"><button type="button" class="button-secondary button-compact" onclick="updateEmployee('${row.employee_code}')" ${canManageEmployees ? "" : "disabled"}>儲存</button></td>
-        </tr>
-      `).join("");
-    }
-
-    function renderAssignments(rows) {
-      document.getElementById("assignmentRows").innerHTML = rows.map((row) => `
-        <tr>
-          <td>${row.work_date}</td>
-          <td>${row.site_name}</td>
-          <td>${row.work_item}<br><span class="muted">${row.notes || ""}</span></td>
-          <td>${row.supervisor_name}</td>
-          <td>${row.members.join("、")}</td>
-          <td><span class="pill">${row.status}</span></td>
         </tr>
       `).join("");
     }
@@ -3659,32 +3657,7 @@
       }
     });
 
-    document.getElementById("assignmentForm").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const selectedEmployees = [...document.getElementById("employeeCodes").selectedOptions].map((option) => option.value);
-      const payload = {
-        work_date: document.getElementById("workDate").value,
-        site_id: Number(document.getElementById("siteId").value),
-        work_item: document.getElementById("workItem").value,
-        supervisor_code: document.getElementById("supervisorCode").value || null,
-        employee_codes: selectedEmployees,
-        start_time: document.getElementById("startTime").value || null,
-        end_time: document.getElementById("endTime").value || null,
-        vehicle: null,
-        equipment: document.getElementById("equipment").value || null,
-        notes: document.getElementById("assignmentNotes").value || null,
-      };
-      try {
-        const data = await api("/api/assignments", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-        await Promise.all([loadDashboard(), loadAssignments(), loadAttendance(), loadAttendanceExceptions()]);
-        setConsole(JSON.stringify(data, null, 2));
-      } catch (error) {
-        setConsole(error.message);
-      }
-    });
+    document.getElementById("assignmentForm").addEventListener("submit", saveAssignmentSettings);
 
     document.getElementById("notificationForm").addEventListener("submit", async (event) => {
       event.preventDefault();

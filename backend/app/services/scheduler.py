@@ -166,7 +166,10 @@ async def push_daily_assignments() -> None:
         assignments = session.exec(select(WorkAssignment).where(WorkAssignment.work_date == date.today())).all()
         for assignment in assignments:
             members = session.exec(
-                select(AssignmentMember).where(AssignmentMember.assignment_id == assignment.id)
+                select(AssignmentMember).where(
+                    AssignmentMember.assignment_id == assignment.id,
+                    AssignmentMember.is_active.is_(True),
+                )
             ).all()
             employees = [session.get(Employee, member.employee_id) for member in members]
             employees = [employee for employee in employees if employee]

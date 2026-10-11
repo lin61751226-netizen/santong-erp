@@ -56,6 +56,7 @@ from app.models import (
 )
 from app.schemas import (
     AssignmentCreate,
+    AssignmentUpdate,
     EmployeeCreate,
     EmployeeUpdate,
     LoginAliasAdminUpdate,
@@ -121,6 +122,9 @@ from app.services.cost_workbook import (
 )
 from app.services.forklift_service import INSPECTION_ITEMS, check_forklift_warnings, local_today
 from app.services.spreadsheet_preview import preview_spreadsheet
+from app.services.assignment_settings import (
+    add_assignment_audit, assignment_snapshot, serialize_assignment, update_assignment, validate_assignment,
+)
 from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
     deliver_forklift_notifications, queue_vehicle_warning,
@@ -408,43 +412,11 @@ def _filter_assignments_for_actor(session: Session, actor: Employee, target_date
     if actor.role == Role.employee:
         statement = (
             statement.join(AssignmentMember, AssignmentMember.assignment_id == WorkAssignment.id)
-            .where(AssignmentMember.employee_id == actor.id)
+            .where(AssignmentMember.employee_id == actor.id, AssignmentMember.is_active.is_(True))
         )
     assignments = session.exec(statement.order_by(WorkAssignment.work_date.desc(), WorkAssignment.id.desc())).all()
 
-    data = []
-    for assignment in assignments:
-        worksite = session.get(Worksite, assignment.site_id)
-        supervisor = session.get(Employee, assignment.supervisor_id) if assignment.supervisor_id else None
-        members = session.exec(
-            select(AssignmentMember).where(
-                AssignmentMember.assignment_id == assignment.id,
-                AssignmentMember.is_active.is_(True),
-            )
-        ).all()
-        employee_names = []
-        employee_codes = []
-        for member in members:
-            employee = session.get(Employee, member.employee_id)
-            if employee:
-                employee_names.append(employee.name)
-                employee_codes.append(employee.employee_code)
-        data.append(
-            {
-                "id": assignment.id,
-                "work_date": assignment.work_date.isoformat(),
-                "site_name": worksite.name if worksite else "-",
-                "work_item": assignment.work_item,
-                "supervisor_name": supervisor.name if supervisor else "-",
-                "start_time": assignment.start_time.isoformat() if assignment.start_time else None,
-                "end_time": assignment.end_time.isoformat() if assignment.end_time else None,
-                "notes": assignment.notes,
-                "status": assignment.status,
-                "members": employee_names,
-                "member_codes": employee_codes,
-            }
-        )
-    return data
+    return [serialize_assignment(session, assignment) for assignment in assignments]
 
 
 def _recipients_from_scope(session: Session, actor: Employee, payload: NotificationCreate) -> list[Employee]:
@@ -1523,31 +1495,17 @@ def list_assignments(
 
 
 @router.post("/assignments", status_code=status.HTTP_201_CREATED)
-def create_assignment(
+async def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
     actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
 ):
-    ensure_site_scope(actor, payload.site_id)
-    employees = _resolve_employee_codes(session, payload.employee_codes)
-    for employee in employees:
-        ensure_employee_scope(actor, employee)
-        _ensure_no_leave_conflict(session, employee, payload.work_date)
-
-    supervisor_id = None
-    if payload.supervisor_code:
-        supervisor = session.exec(select(Employee).where(Employee.employee_code == payload.supervisor_code)).first()
-        if not supervisor:
-            raise HTTPException(status_code=404, detail="找不到主管代碼")
-        ensure_employee_scope(actor, supervisor)
-        supervisor_id = supervisor.id
-    elif actor.role == Role.site_manager:
-        supervisor_id = actor.id
+    employees, supervisor_id = validate_assignment(session, actor, payload)
 
     assignment = WorkAssignment(
         work_date=payload.work_date,
         site_id=payload.site_id,
-        work_item=payload.work_item,
+        work_item=payload.work_item.strip(),
         supervisor_id=supervisor_id,
         start_time=payload.start_time,
         end_time=payload.end_time,
@@ -1557,13 +1515,42 @@ def create_assignment(
         created_by=actor.id,
     )
     session.add(assignment)
-    session.commit()
-    session.refresh(assignment)
-
+    session.flush()
     for employee in employees:
         session.add(AssignmentMember(assignment_id=assignment.id, employee_id=employee.id))
+    session.flush()
+    add_assignment_audit(session, actor, assignment, None, assignment_snapshot(session, assignment))
     session.commit()
-    return {"message": "工作安排已建立", "assignment_id": assignment.id}
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "工作安排已建立", "assignment_id": assignment.id,
+            "assignment": serialize_assignment(session, assignment), "backup_status": backup.get("status")}
+
+
+@router.get("/assignments/{assignment_id}", dependencies=[Depends(_no_store)])
+def get_assignment_settings(
+    assignment_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    assignment = session.get(WorkAssignment, assignment_id)
+    if not assignment:
+        raise HTTPException(404, "找不到工作安排")
+    ensure_site_scope(actor, assignment.site_id)
+    return serialize_assignment(session, assignment)
+
+
+@router.patch("/assignments/{assignment_id}")
+async def save_assignment_settings(
+    assignment_id: int,
+    payload: AssignmentUpdate,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    assignment, changed = update_assignment(session, actor, assignment_id, payload)
+    backup = await google_drive_worklog_service.backup_database()
+    return {"message": "工作安排已修改" if changed else "設定未變更，沒有新增修改紀錄",
+            "assignment_id": assignment.id, "changed": changed,
+            "assignment": serialize_assignment(session, assignment), "backup_status": backup.get("status")}
 
 
 @router.post("/notifications/send")
@@ -1839,7 +1826,10 @@ def list_calendar_events(
     ).all()
     for assignment in assignments:
         members = session.exec(
-            select(AssignmentMember).where(AssignmentMember.assignment_id == assignment.id)
+            select(AssignmentMember).where(
+                AssignmentMember.assignment_id == assignment.id,
+                AssignmentMember.is_active.is_(True),
+            )
         ).all()
         member_ids = {item.employee_id for item in members}
         visible = (
