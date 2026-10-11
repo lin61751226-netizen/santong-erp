@@ -77,6 +77,7 @@ class WorksiteNumberTests(unittest.IsolatedAsyncioTestCase):
             Worksite(code="53", name="齊裕53", is_active=True),
             Worksite(code="56", name="56", is_active=True),
             Worksite(code="善捷47", name="善捷47", is_active=True),
+            Worksite(code="金駿76", name="金駿76", is_active=True),
             Worksite(code="桃園29", name="桃園29", is_active=True),
             Worksite(code="新竹寶山1", name="新竹寶山1", is_active=True),
             Worksite(code="新竹寶山2", name="新竹寶山2", is_active=True),
@@ -112,6 +113,9 @@ class WorksiteNumberTests(unittest.IsolatedAsyncioTestCase):
                 "二九": "桃園29",
                 "二十九": "桃園29",
                 "五六": "56",
+                "76": "金駿76",
+                "七六": "金駿76",
+                "七十六": "金駿76",
                 "是五": "45",
                 "也標": "新竹寶山1",
             }
@@ -124,6 +128,10 @@ class WorksiteNumberTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(match_worksites(session, "十標").status, "missing")
             self.assertEqual(spoken_numbers("十五"), ["15"])
             self.assertNotIn("45", spoken_numbers("十五"))
+            self.assertEqual(spoken_numbers("十六"), ["16"])
+            self.assertNotIn("76", spoken_numbers("十六"))
+            sixteen = match_worksites(session, "十六")
+            self.assertNotEqual(getattr(sixteen.records[0], "name", None) if sixteen.records else None, "金駿76")
             self.assertIn("53", spoken_numbers("五三"))
             self.assertEqual(sites["齊裕53"].name, "齊裕53")
 

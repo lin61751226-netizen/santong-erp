@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     reset_employee_code_once: str = ""
     login_fail_limit: int = 3
     login_lock_minutes: int = 15
+    # LINE 定位打卡對照工地的距離（公尺）。工地自己的半徑若更大，以較大者為準。
+    clock_site_radius_m: int = 400
     session_expire_minutes: int = 480
     session_secret_key: str = ""
     # LINE 自然語言助理。未啟用或沒有金鑰時，維持原本的指令回覆。
@@ -112,6 +114,19 @@ class Settings(BaseSettings):
         if normalized in {"0", "false", "no", "off"}:
             return False
         return True
+
+    @field_validator("clock_site_radius_m", mode="before")
+    @classmethod
+    def coerce_clock_site_radius(cls, value):
+        if value is None or str(value).strip() == "":
+            return 400
+        try:
+            radius = int(value)
+        except (TypeError, ValueError):
+            return 400
+        if radius < 50 or radius > 5000:
+            return 400
+        return radius
 
     @field_validator("ai_ops_enabled", "ai_ops_schedule_enabled", mode="before")
     @classmethod

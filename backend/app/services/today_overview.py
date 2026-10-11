@@ -35,6 +35,7 @@ from app.models import (
     WorksiteJournalHours,
 )
 from app.services.ai_ops import local_day_bounds
+from app.services.clock_site import MISMATCH_ANOMALY, OUT_OF_RANGE_PREFIX
 from app.services.google_drive import google_drive_worklog_service
 
 CLOCK_IN = {"上班打卡", "到達工地"}
@@ -201,7 +202,12 @@ def build_today_overview(session: Session, now: datetime | None = None) -> dict:
             leave = covering[person_id]
             on_leave.append({**_person(employee), "site": site_name, "leave_type": leave.leave_type})
         if arrived is not None:
-            clocked_in.append({**_person(employee), "site": site_name, "time": _hhmm(arrived.happened_at)})
+            recorded = worksites.get(arrived.site_id) if arrived.site_id else None
+            clocked_in.append({
+                **_person(employee),
+                "site": recorded.name if recorded else site_name,
+                "time": _hhmm(arrived.happened_at),
+            })
             if assignment and assignment.start_time and _as_taipei(arrived.happened_at) > cutoff:
                 late.append({**_person(employee), "site": site_name, "time": _hhmm(arrived.happened_at)})
         if left is not None:
@@ -313,6 +319,32 @@ def build_today_overview(session: Session, now: datetime | None = None) -> dict:
             "site": site_name_of(row.site_id),
             "detail": (row.notes or "點檢有異常項目").strip(),
         })
+    site_mismatch = []
+    location_gap = []
+    for event in events:
+        note = event.note or ""
+        person = employees.get(event.employee_id)
+        if MISMATCH_ANOMALY in note:
+            site_mismatch.append({
+                "name": person.name if person else "-",
+                "code": person.employee_code if person else "",
+                "site": site_name_of(event.site_id),
+                "detail": MISMATCH_ANOMALY,
+                "time": _hhmm(event.happened_at),
+            })
+        if OUT_OF_RANGE_PREFIX in note:
+            detail = OUT_OF_RANGE_PREFIX
+            for part in note.split("；"):
+                if OUT_OF_RANGE_PREFIX in part:
+                    detail = part.strip()
+                    break
+            location_gap.append({
+                "name": person.name if person else "-",
+                "code": person.employee_code if person else "",
+                "site": site_name_of(event.site_id),
+                "detail": detail,
+                "time": _hhmm(event.happened_at),
+            })
     abnormal = []
     for row in reports:
         person = employees.get(row.employee_id)
@@ -347,6 +379,7 @@ def build_today_overview(session: Session, now: datetime | None = None) -> dict:
     anomaly_total = (
         len(missed) + len(abnormal) + len(failed) + len(drive_warnings)
         + len(missing_journals) + len(missing_slips)
+        + len(site_mismatch) + len(location_gap)
     )
     return {
         "today": today.isoformat(),
@@ -399,18 +432,24 @@ def build_today_overview(session: Session, now: datetime | None = None) -> dict:
             "drive_warning_count": len(drive_warnings),
             "missing_journal_count": len(missing_journals),
             "missing_sign_slip_count": len(missing_slips),
+            "site_mismatch_count": len(site_mismatch),
+            "location_gap_count": len(location_gap),
             "missed_inspections": _clip(missed),
             "abnormal_reports": _clip(abnormal),
             "failed_inspections": _clip(failed),
             "drive_warnings": drive_warnings,
             "missing_journals": _clip(missing_journals),
             "missing_sign_slips": _clip(missing_slips),
+            "site_mismatches": _clip(site_mismatch),
+            "location_gaps": _clip(location_gap),
             "panels": {
                 "inspection": "inspections",
                 "report": "attendance",
                 "drive": "audit",
                 "journal": "journal",
                 "sign_slip": "sign-slips",
+                "site_mismatch": "attendance",
+                "location_gap": "attendance",
             },
         },
     }

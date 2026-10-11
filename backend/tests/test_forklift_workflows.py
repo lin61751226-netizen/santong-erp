@@ -622,8 +622,10 @@ class ForkliftWorkflowTests(unittest.IsolatedAsyncioTestCase):
         result = record_attendance_event(
             self.session, self.driver, "上班打卡", latitude=24.8100, longitude=120.9900,
         )
-        self.assertTrue(any("定位超出工地範圍" in item for item in result.anomalies))
-        self.assertIn("定位超出工地範圍", result.event.note)
+        self.assertTrue(any("定位不在任何工地範圍" in item for item in result.anomalies))
+        self.assertIn("定位不在任何工地範圍", result.event.note)
+        self.assertIsNone(result.event.site_id)
+        self.assertGreater(result.event.distance_m, 400)
 
     def test_rich_menu_button_and_bundled_image_agree(self):
         payload = build_default_rich_menu_payloads("https://example.test")["tools"]

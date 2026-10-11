@@ -369,6 +369,7 @@
           <tbody id="worksiteRows"></tbody>
         </table>
       </div>
+      <p id="worksiteMissingCoords" class="notice" role="status" aria-live="polite"></p>
       <p id="worksiteFeedback" class="notice" role="status" aria-live="polite">新增或刪除工地後，相關下拉選單會自動更新。</p>
     </section>
 
@@ -1034,7 +1035,7 @@
         <div id="console" class="console"></div>
       </section>
 
-      <section class="panel span-12" data-workspace="people" id="panel-attendance" data-panel="attendance" data-nav-order="1" data-legacy="people:1" data-nav-aliases="考勤,打卡,工作回報">
+      <section class="panel span-12" data-workspace="people" id="panel-attendance" data-panel="attendance" data-nav-order="1" data-legacy="people:1" data-nav-aliases="考勤,打卡,工作回報,修正工地">
         <div class="panel-header">
           <div>
             <h2>考勤與回報查詢</h2>
@@ -1063,6 +1064,25 @@
             </thead>
             <tbody id="attendanceRows"></tbody>
           </table>
+        </div>
+        <div id="attendanceSiteCorrection" class="inline-form-card" hidden>
+          <h3>修正工地</h3>
+          <p id="attendanceSiteContext" class="muted"></p>
+          <form id="attendanceSiteForm" class="form-grid" onsubmit="return saveAttendanceSite(event)">
+            <div>
+              <label for="attendanceSiteSelect">工地</label>
+              <select id="attendanceSiteSelect" required></select>
+            </div>
+            <div class="full">
+              <label for="attendanceSiteReason">修正原因（必填）</label>
+              <input id="attendanceSiteReason" maxlength="500" placeholder="例如：人在金駿76，定位與派工工地不同">
+            </div>
+            <div class="button-row">
+              <button type="submit">保存工地修正</button>
+              <button type="button" class="button-secondary" onclick="closeAttendanceSiteForm()">取消</button>
+            </div>
+          </form>
+          <p id="attendanceSiteFeedback" class="notice" role="status" aria-live="polite"></p>
         </div>
         <div class="panel-header" style="margin-top: 1.5rem;">
           <div>
@@ -1582,6 +1602,8 @@
         ...((reviews.billing && reviews.billing.items) || []).map((row) => `計價｜${row.site_name}｜${row.explanation}`),
       ];
       const anomalyItems = [
+        ...(anomalies.site_mismatches || []).map((row) => `打卡工地與派工不符｜${row.name}｜${row.site || ""}`),
+        ...(anomalies.location_gaps || []).map((row) => `${row.detail || "定位不在任何工地範圍"}｜${row.name}`),
         ...(anomalies.missed_inspections || []).map((row) => `未點檢｜${row.name}｜${row.detail || ""}`),
         ...(anomalies.failed_inspections || []).map((row) => `點檢異常｜${row.forklift_code}｜${row.detail || ""}`),
         ...(anomalies.abnormal_reports || []).map((row) => `異常回報｜${row.name}｜${row.detail || ""}`),
@@ -2167,19 +2189,85 @@
     }
 
     function renderAttendance(rows) {
-      document.getElementById("attendanceRows").innerHTML = rows.map((row) => `
+      state.attendanceRows = rows;
+      const canCorrect = ["owner", "admin"].includes(state.actor?.role);
+      document.getElementById("attendanceRows").innerHTML = rows.map((row) => {
+        const events = (row.events || []).map((event) => {
+          const original = event.original_site_name
+            ? `<br><span class="muted">原工地：${escapeHtml(event.original_site_name)}</span>`
+            : "";
+          const distance = event.distance_m != null
+            ? `<span class="muted">約 ${Math.round(Number(event.distance_m))} 公尺</span>`
+            : "";
+          const button = canCorrect
+            ? `<button type="button" class="button-secondary button-compact" onclick="openAttendanceSiteForm(${Number(event.id)})">修正工地</button>`
+            : "";
+          return `<div>${escapeHtml(event.event_type)}｜${escapeHtml(event.site_name || "未指定")} ${distance}${original}<div class="button-row">${button}</div></div>`;
+        }).join("");
+        return `
         <tr>
-          <td>${row.employee_name}<br><span class="muted">${row.employee_code}</span></td>
-          <td>${row.work_date}</td>
-          <td>${row.site_name}</td>
-          <td><span class="pill">${row.ack_status}</span></td>
-          <td>${row.last_action || "-"}</td>
+          <td>${escapeHtml(row.employee_name)}<br><span class="muted">${escapeHtml(row.employee_code)}</span></td>
+          <td>${escapeHtml(row.work_date)}</td>
+          <td>${escapeHtml(row.site_name)}${events ? `<div>${events}</div>` : ""}</td>
+          <td><span class="pill">${escapeHtml(row.ack_status)}</span></td>
+          <td>${escapeHtml(row.last_action || "-")}</td>
           <td>${formatTW(row.last_event_at)}</td>
           <td>${row.latitude != null && row.longitude != null ? `${Number(row.latitude).toFixed(5)}, ${Number(row.longitude).toFixed(5)}` : "未定位"}</td>
-          <td>${row.anomalies.length ? row.anomalies.join("、") : "-"}</td>
-          <td>${row.note || "-"}</td>
-        </tr>
-      `).join("");
+          <td>${row.anomalies.length ? escapeHtml(row.anomalies.join("、")) : "-"}</td>
+          <td>${escapeHtml(row.note || "-")}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    async function openAttendanceSiteForm(eventId) {
+      const row = (state.attendanceRows || []).find((item) => (item.events || []).some((event) => Number(event.id) === Number(eventId)));
+      const record = row?.events?.find((event) => Number(event.id) === Number(eventId));
+      if (!row || !record) return;
+      state.attendanceCorrectionEventId = record.id;
+      const sites = await api("/api/worksites?include_inactive=true");
+      const select = document.getElementById("attendanceSiteSelect");
+      select.innerHTML = sites.map((site) =>
+        `<option value="${Number(site.id)}" ${Number(site.id) === Number(record.site_id) ? "selected" : ""}>${escapeHtml(site.name)}${site.is_active ? "" : "（已停用）"}</option>`
+      ).join("");
+      document.getElementById("attendanceSiteContext").textContent = `${row.employee_code} ${row.employee_name}｜${record.event_type}｜目前工地：${record.site_name || "未指定"}`;
+      document.getElementById("attendanceSiteReason").value = "";
+      document.getElementById("attendanceSiteFeedback").textContent = "選擇正確工地並填寫原因。保存後原本的工地會留在修正紀錄，打卡不會刪除。";
+      const box = document.getElementById("attendanceSiteCorrection");
+      box.hidden = false;
+      box.scrollIntoView({ block: "nearest" });
+    }
+
+    function closeAttendanceSiteForm() {
+      const box = document.getElementById("attendanceSiteCorrection");
+      if (box) box.hidden = true;
+      state.attendanceCorrectionEventId = null;
+    }
+
+    async function saveAttendanceSite(event) {
+      event.preventDefault();
+      const feedback = document.getElementById("attendanceSiteFeedback");
+      const reason = document.getElementById("attendanceSiteReason").value.trim();
+      if (!reason) {
+        feedback.textContent = "請填寫修正原因";
+        return false;
+      }
+      try {
+        const data = await api(`/api/attendance/${state.attendanceCorrectionEventId}/site`, {
+          method: "POST",
+          body: JSON.stringify({
+            worksite_id: Number(document.getElementById("attendanceSiteSelect").value),
+            reason,
+          }),
+        });
+        const cloud = data.backup_status === "saved"
+          ? "雲端備份已完成。"
+          : `雲端備份未完成（${data.backup_status || "未知"}）。`;
+        feedback.textContent = `已把工地改為「${data.site_name}」。原工地「${data.previous_site_name}」留在修正紀錄。${cloud}`;
+        await loadAttendance();
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+      return false;
     }
 
     function renderAttendanceExceptions(rows) {
@@ -3794,6 +3882,13 @@
           </td>
         </tr>
       `).join("") : '<tr><td colspan="9">目前沒有工地資料</td></tr>';
+      const missing = sites.filter((site) => site.is_active && (site.latitude == null || site.longitude == null));
+      const missingBox = document.getElementById("worksiteMissingCoords");
+      if (missingBox) {
+        missingBox.textContent = missing.length
+          ? `這些工地還沒有座標，打卡不會猜它們：${missing.map((site) => site.name).join("、")}。請貼上 Google 地圖連結後按儲存。`
+          : "目前啟用中的工地都已有座標，打卡會用這些座標對照。";
+      }
     }
 
     async function deleteWorksite(id) {

@@ -4,15 +4,21 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Optional
 import re
-from math import atan2, cos, radians, sin, sqrt
 
 from sqlmodel import Session, select
 
+from app.services.clock_site import (
+    anomaly_labels_from_note,
+    note_has_location_flag,
+    plan_clock_site,
+    resolve_clock_site,
+)
 from app.models import (
     AckStatus,
     AssignmentMember,
     AttendanceEvent,
     AttendanceEventType,
+    AttendanceSiteRevision,
     Employee,
     EmployeeStatus,
     LeaveRequest,
@@ -56,9 +62,11 @@ class LeavePolicyResult:
 
 @dataclass
 class AttendanceRecordResult:
-    event: AttendanceEvent
+    event: AttendanceEvent | None
     assignment: WorkAssignment | None
     anomalies: list[str]
+    needs_confirmation: bool = False
+    plan: object | None = None
 
 
 @dataclass
@@ -306,12 +314,9 @@ def _append_note(existing: Optional[str], new_note: str) -> str:
 
 def _distance_meters(latitude: float, longitude: float, site: Worksite) -> float:
     """以 Haversine 公式估算打卡位置與工地中心的距離。"""
-    earth_radius_m = 6_371_000
-    lat1, lat2 = radians(latitude), radians(site.latitude)
-    delta_lat = radians(site.latitude - latitude)
-    delta_lon = radians(site.longitude - longitude)
-    value = sin(delta_lat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(delta_lon / 2) ** 2
-    return earth_radius_m * 2 * atan2(sqrt(value), sqrt(max(0, 1 - value)))
+    from app.services.clock_site import distance_meters
+
+    return distance_meters(latitude, longitude, site.latitude, site.longitude)
 
 
 def _location_anomaly(site: Worksite | None, latitude: Optional[float], longitude: Optional[float]) -> str | None:
@@ -337,23 +342,47 @@ def record_attendance_event(
     note: Optional[str] = None,
     latitude: Optional[float] = None,
     longitude: Optional[float] = None,
+    confirmed_choice: Optional[str] = None,
 ) -> AttendanceRecordResult:
     assignment = find_assignment_for_employee(session, employee.id, date.today())
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
-    site = session.get(Worksite, assignment.site_id) if assignment else (
-        session.get(Worksite, employee.home_site_id) if employee.home_site_id else None
-    )
-    location_anomaly = _location_anomaly(site, latitude, longitude)
-    if location_anomaly:
-        note = _append_note(note, location_anomaly)
+    anomalies: list[str] = []
+    matched_site_id = None
+    distance_m = None
+    plan = None
+    if latitude is not None and longitude is not None:
+        plan = plan_clock_site(session, latitude, longitude, assignment)
+        if plan.needs_confirmation and confirmed_choice is None:
+            return AttendanceRecordResult(
+                event=None,
+                assignment=assignment,
+                anomalies=[],
+                needs_confirmation=True,
+                plan=plan,
+            )
+        site_id, matched_site_id, distance_m, gps_notes = resolve_clock_site(plan, confirmed_choice)
+        for item in gps_notes:
+            note = _append_note(note, item)
+            anomalies.append(item)
+    else:
+        site = session.get(Worksite, assignment.site_id) if assignment else (
+            session.get(Worksite, employee.home_site_id) if employee.home_site_id else None
+        )
+        location_anomaly = _location_anomaly(site, latitude, longitude)
+        if location_anomaly:
+            note = _append_note(note, location_anomaly)
+            anomalies.append(location_anomaly)
+        site_id = assignment.site_id if assignment else employee.home_site_id
     event = AttendanceEvent(
         employee_id=employee.id,
-        site_id=assignment.site_id if assignment else employee.home_site_id,
+        site_id=site_id,
         assignment_id=assignment.id if assignment else None,
         event_type=ATTENDANCE_COMMAND_MAP[command],
         note=note,
         latitude=latitude,
         longitude=longitude,
+        matched_site_id=matched_site_id,
+        distance_m=distance_m,
     )
     session.add(event)
 
@@ -369,15 +398,12 @@ def record_attendance_event(
     session.commit()
     session.refresh(event)
 
-    anomalies: list[str] = []
-    if location_anomaly:
-        anomalies.append(location_anomaly)
     if assignment and assignment.work_date.weekday() == 6:
         anomalies.append("週日出勤，需另計加班或換休。")
     if not assignment:
         anomalies.append("今日尚未排定工作，已先記錄打卡事件。")
 
-    return AttendanceRecordResult(event=event, assignment=assignment, anomalies=anomalies)
+    return AttendanceRecordResult(event=event, assignment=assignment, anomalies=anomalies, plan=plan)
 
 
 def record_named_arrival(session: Session, employee: Employee, site: Worksite) -> AttendanceEvent:
@@ -446,6 +472,53 @@ def get_covering_leave(
     ).first()
 
 
+def _day_attendance_events(session: Session, employee_id: int, target_date: date) -> list[AttendanceEvent]:
+    start_at = datetime.combine(target_date, time.min)
+    end_at = datetime.combine(target_date, time.max)
+    return list(session.exec(
+        select(AttendanceEvent)
+        .where(
+            AttendanceEvent.employee_id == employee_id,
+            AttendanceEvent.happened_at >= start_at,
+            AttendanceEvent.happened_at <= end_at,
+        )
+        .order_by(AttendanceEvent.happened_at)
+    ).all())
+
+
+def _event_payloads(session: Session, events: list[AttendanceEvent], sites: dict[int, Worksite]) -> list[dict]:
+    event_ids = [event.id for event in events if event.id is not None]
+    revisions = list(session.exec(
+        select(AttendanceSiteRevision)
+        .where(AttendanceSiteRevision.event_id.in_(event_ids))
+        .order_by(AttendanceSiteRevision.created_at)
+    ).all()) if event_ids else []
+    first_revision: dict[int, AttendanceSiteRevision] = {}
+    for revision in revisions:
+        first_revision.setdefault(revision.event_id, revision)
+    payloads = []
+    for event in events:
+        site = sites.get(event.site_id) if event.site_id else None
+        matched = sites.get(event.matched_site_id) if event.matched_site_id else None
+        original = first_revision.get(event.id)
+        original_site = sites.get(original.previous_site_id) if original and original.previous_site_id else None
+        payloads.append({
+            "id": event.id,
+            "event_type": event.event_type,
+            "site_id": event.site_id,
+            "site_name": site.name if site else "未指定",
+            "happened_at": event.happened_at.isoformat() if event.happened_at else None,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
+            "distance_m": event.distance_m,
+            "matched_site_id": event.matched_site_id,
+            "matched_site_name": matched.name if matched else None,
+            "note": event.note,
+            "original_site_name": original_site.name if original_site else (None if original is None else "未指定"),
+        })
+    return payloads
+
+
 def build_attendance_rows(
     session: Session,
     employees: list[Employee],
@@ -453,19 +526,21 @@ def build_attendance_rows(
 ) -> list[dict]:
     rows: list[dict] = []
     now = datetime.now()
+    sites = {site.id: site for site in session.exec(select(Worksite)).all() if site.id is not None}
 
     for employee in employees:
         leave = get_covering_leave(session, employee.id, target_date, {LeaveStatus.approved, LeaveStatus.pending})
         assignment = find_assignment_for_employee(session, employee.id, target_date)
         member = find_assignment_member(session, employee.id, assignment.id if assignment else None) if assignment else None
-        latest_event = get_latest_attendance_event(session, employee.id, target_date)
+        day_events = _day_attendance_events(session, employee.id, target_date)
+        latest_event = day_events[-1] if day_events else None
 
         if not assignment and not leave and not latest_event:
             continue
 
         event_site_id = latest_event.site_id if latest_event and latest_event.site_id else None
         site_id = event_site_id or (assignment.site_id if assignment else None)
-        site = session.get(Worksite, site_id) if site_id else None
+        site = sites.get(site_id) if site_id else None
         anomalies: list[str] = []
         summary_status = leave.status.value if leave else (member.ack_status.value if member else "pending")
 
@@ -477,8 +552,8 @@ def build_attendance_rows(
             anomalies.append("請假衝突")
         if latest_event:
             summary_status = latest_event.event_type
-            if latest_event.note and "定位超出工地範圍" in latest_event.note:
-                anomalies.append("定位超出工地範圍")
+        for event in day_events:
+            anomalies.extend(anomaly_labels_from_note(event.note))
         if assignment and assignment.work_date < now.date() and not latest_event and not leave:
             anomalies.append("未打卡")
         if assignment and assignment.work_date == now.date() and assignment.start_time:
@@ -493,6 +568,15 @@ def build_attendance_rows(
         if assignment and assignment.work_date.weekday() == 6 and latest_event:
             anomalies.append("週日出勤")
 
+        note_parts: list[str] = []
+        if member and member.note:
+            note_parts.append(member.note)
+        for event in day_events:
+            if event.note and note_has_location_flag(event.note) and event.note not in note_parts:
+                note_parts.append(event.note)
+        if not note_parts and leave and leave.policy_note:
+            note_parts.append(leave.policy_note)
+
         rows.append(
             {
                 "employee_code": employee.employee_code,
@@ -504,14 +588,11 @@ def build_attendance_rows(
                 "last_event_at": latest_event.happened_at.isoformat() if latest_event else None,
                 "latitude": latest_event.latitude if latest_event else None,
                 "longitude": latest_event.longitude if latest_event else None,
-                "note": (
-                    member.note if member and member.note
-                    else latest_event.note if latest_event and latest_event.note and "定位超出工地範圍" in latest_event.note
-                    else leave.policy_note if leave else None
-                ),
+                "note": "；".join(note_parts) if note_parts else None,
                 "anomalies": sorted(set(anomalies)),
                 "leave_status": leave.status.value if leave else None,
                 "leave_type": leave.leave_type if leave else None,
+                "events": _event_payloads(session, day_events, sites),
             }
         )
 
