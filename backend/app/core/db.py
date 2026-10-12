@@ -114,6 +114,14 @@ def _apply_lightweight_migrations() -> None:
                 for statement in statements:
                     connection.execute(text(statement))
 
+    if "grouptextlog" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("grouptextlog")}
+        if "site_manual" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE grouptextlog ADD COLUMN site_manual BOOLEAN DEFAULT 0"
+                ))
+
     if "financeentry" in table_names:
         columns = {column["name"] for column in inspector.get_columns("financeentry")}
         statements = []

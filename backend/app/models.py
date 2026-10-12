@@ -375,6 +375,8 @@ class GroupTextLog(SQLModel, table=True):
     sent_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     review_status: str = Field(default="pending", index=True)
     is_included: bool = Field(default=True)
+    # 工地由人工指定後鎖定，工作日誌自動重新歸類不得覆蓋。
+    site_manual: bool = Field(default=False, index=True)
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
 
 

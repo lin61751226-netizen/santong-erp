@@ -278,9 +278,11 @@ def find_assignment_for_employee(
     session: Session,
     employee_id: int,
     work_date: Optional[date] = None,
+    *,
+    include_cancelled: bool = False,
 ) -> WorkAssignment | None:
     target_date = work_date or local_today()
-    return session.exec(
+    statement = (
         select(WorkAssignment)
         .join(AssignmentMember, AssignmentMember.assignment_id == WorkAssignment.id)
         .where(
@@ -288,8 +290,100 @@ def find_assignment_for_employee(
             AssignmentMember.is_active.is_(True),
             WorkAssignment.work_date == target_date,
         )
-        .order_by(WorkAssignment.created_at.desc())
+    )
+    if not include_cancelled:
+        # 已取消派工不可作為工地歸檔依據，避免人員仍被歸到取消的工地。
+        statement = statement.where(WorkAssignment.status != "cancelled")
+    return session.exec(
+        statement.order_by(WorkAssignment.created_at.desc())
     ).first()
+
+
+# 能代表員工實際所在工地的考勤事件（均帶 site_id）。
+LOCATION_FACT_EVENT_TYPES = (
+    AttendanceEventType.arrive_site.value,
+    AttendanceEventType.check_in.value,
+    AttendanceEventType.check_out.value,
+)
+
+
+def resolve_employee_site_at(
+    session: Session,
+    employee_id: int,
+    moment_utc: datetime,
+    target_date: Optional[date] = None,
+) -> tuple[Worksite | None, str | None, WorkAssignment | None]:
+    """以「事實位置優先」解析員工在某一刻所屬工地。
+
+    判定順序：
+    1. 當地日內、訊息時間之前（含當下）最近一筆有工地的位置事件
+       （到達工地／上班打卡／下班打卡）；
+    2. 當地日內、訊息時間之後最早一筆位置事件（補足開工、到達前幾分鐘的訊息）；
+    3. 當日有效派工工地（排除已取消）；
+    4. 員工主工地（home_site）。
+
+    回傳 (工地, 判定原因, 有效派工)；找不到工地時工地為 None。
+    """
+    if not employee_id:
+        return None, None, None
+    local_moment = as_local(moment_utc)
+    day = target_date or local_moment.date()
+    start_at, end_at = utc_day_bounds(day)
+
+    def site_of(event: AttendanceEvent | None) -> Worksite | None:
+        return session.get(Worksite, event.site_id) if event and event.site_id else None
+
+    # 1. 時刻之前最近的位置事實
+    before = session.exec(
+        select(AttendanceEvent)
+        .where(
+            AttendanceEvent.employee_id == employee_id,
+            AttendanceEvent.event_type.in_(LOCATION_FACT_EVENT_TYPES),
+            AttendanceEvent.site_id.is_not(None),
+            AttendanceEvent.happened_at >= start_at,
+            AttendanceEvent.happened_at <= moment_utc,
+        )
+        .order_by(AttendanceEvent.happened_at.desc(), AttendanceEvent.id.desc())
+    ).first()
+    if before:
+        site = site_of(before)
+        if site:
+            assignment = find_assignment_for_employee(session, employee_id, day)
+            return site, "location_before", assignment
+
+    # 2. 當日稍早的位置事實（到達前就先發的訊息，事後整理也能歸正）
+    after = session.exec(
+        select(AttendanceEvent)
+        .where(
+            AttendanceEvent.employee_id == employee_id,
+            AttendanceEvent.event_type.in_(LOCATION_FACT_EVENT_TYPES),
+            AttendanceEvent.site_id.is_not(None),
+            AttendanceEvent.happened_at > moment_utc,
+            AttendanceEvent.happened_at < end_at,
+        )
+        .order_by(AttendanceEvent.happened_at.asc(), AttendanceEvent.id.asc())
+    ).first()
+    if after:
+        site = site_of(after)
+        if site:
+            assignment = find_assignment_for_employee(session, employee_id, day)
+            return site, "location_after", assignment
+
+    # 3. 當日有效派工
+    assignment = find_assignment_for_employee(session, employee_id, day)
+    if assignment:
+        site = session.get(Worksite, assignment.site_id)
+        if site:
+            return site, "assignment", assignment
+
+    # 4. 主工地
+    employee = session.get(Employee, employee_id)
+    if employee and employee.home_site_id:
+        site = session.get(Worksite, employee.home_site_id)
+        if site:
+            return site, "home_site", None
+
+    return None, None, None
 
 
 def find_assignment_member(

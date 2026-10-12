@@ -136,6 +136,11 @@ from app.services.forklift_notifications import (
     INSPECTION_REMINDER_SCOPE, INSPECTION_SCOPE, WARNING_SCOPE,
     deliver_forklift_notifications, queue_vehicle_warning,
 )
+from app.services.group_text_logs import (
+    GroupTextReassignError,
+    reassign_group_text_log,
+    reassign_group_texts_for_date,
+)
 
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -3683,6 +3688,15 @@ def list_worksite_journals(
     start_at, end_at = _local_date_utc_bounds(journal_date)
     allowed_site_id = actor.home_site_id if actor.role == Role.site_manager else None
 
+    # 整理當下先以最新考勤／派工事實自動重新歸類群組文字（老闆/管理員限定）；
+    # 修復「先發訊息後到達工地」「派工單事後補建」「只打上班卡沒點到達工地」造成的錯歸。
+    reassign_summary = None
+    if actor.role in (Role.owner, Role.admin):
+        try:
+            reassign_summary = reassign_group_texts_for_date(session, journal_date, actor)
+        except Exception as exc:
+            reassign_summary = {"error": type(exc).__name__, "detail": str(exc)[:200]}
+
     group_statement = select(GroupTextLog).where(
         GroupTextLog.sent_at >= start_at,
         GroupTextLog.sent_at < end_at,
@@ -3884,8 +3898,28 @@ def list_worksite_journals(
             journal["pricing_hours"]["sign_slip_conflict"] = True
         result.append(journal)
     result.sort(key=lambda item: (item["site_id"] is None, item["site_name"]))
-    return {"date": journal_date.isoformat(), "sites": result}
+    return {"date": journal_date.isoformat(), "sites": result, "group_text_reassign": reassign_summary}
 
+
+@router.post("/worksite-journals/group-text/{log_id}/site")
+async def move_group_text_site(
+    log_id: int,
+    payload: dict,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """人工把單筆群組文字改歸到指定工地。"""
+    try:
+        worksite_id = int((payload or {}).get("worksite_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="worksite_id 格式不正確")
+    try:
+        log = reassign_group_text_log(session, log_id, worksite_id, actor)
+    except GroupTextReassignError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    await google_drive_worklog_service.backup_database()
+    site = session.get(Worksite, worksite_id)
+    return {"message": f"已將該筆群組文字改歸至「{site.name}」", "id": log.id, "site_id": log.site_id}
 
 
 @router.get("/forklifts")

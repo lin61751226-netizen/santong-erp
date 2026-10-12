@@ -44,6 +44,7 @@ from app.services.hr import (
     get_latest_attendance_event,
     get_today_arrival_site,
     record_attendance_event,
+    resolve_employee_site_at,
     record_named_arrival,
     record_work_report_event,
 )
@@ -547,24 +548,6 @@ async def _backup_preserved_records() -> None:
         print(f"[record-backup] Google Drive 快照失敗，等待排程補做：{type(exc).__name__}")
 
 
-def _arrival_site_for_date(session: Session, employee_id: int, target_date: date) -> Worksite | None:
-    local_tz = ZoneInfo(settings.timezone)
-    start_at = datetime.combine(target_date, time.min, tzinfo=local_tz).astimezone(timezone.utc).replace(tzinfo=None)
-    end_at = (datetime.combine(target_date, time.min, tzinfo=local_tz) + timedelta(days=1)) \
-        .astimezone(timezone.utc).replace(tzinfo=None)
-    event = session.exec(
-        select(AttendanceEvent)
-        .where(
-            AttendanceEvent.employee_id == employee_id,
-            AttendanceEvent.event_type == AttendanceEventType.arrive_site.value,
-            AttendanceEvent.happened_at >= start_at,
-            AttendanceEvent.happened_at < end_at,
-        )
-        .order_by(AttendanceEvent.happened_at.desc())
-    ).first()
-    return session.get(Worksite, event.site_id) if event and event.site_id else None
-
-
 async def _save_group_text_log(
     session: Session,
     *,
@@ -583,13 +566,15 @@ async def _save_group_text_log(
         return
 
     event_at = _event_datetime(event)
-    target_date = event_at.astimezone(ZoneInfo(settings.timezone)).date()
-    assignment = find_assignment_for_employee(session, employee.id, target_date) if employee and employee.id else None
-    site = session.get(Worksite, assignment.site_id) if assignment else None
-    if employee and employee.id and not site:
-        site = _arrival_site_for_date(session, employee.id, target_date)
-    if employee and employee.home_site_id and not site:
-        site = session.get(Worksite, employee.home_site_id)
+    moment_utc = event_at.astimezone(timezone.utc).replace(tzinfo=None)
+    if employee and employee.id:
+        # 事實位置（到達工地／上下班打卡）優先，其次有效派工，最後才是主工地；
+        # 可正確處理「只有 GPS 上班打卡沒點到達工地」與「派工稍晚才建立」的情境。
+        site, _site_reason, assignment = resolve_employee_site_at(
+            session, employee.id, moment_utc
+        )
+    else:
+        site, assignment = None, None
 
     source_type = str(source.get("type") or "group")
     source_id = str(source.get("groupId") or source.get("roomId") or "unknown")
@@ -701,13 +686,18 @@ async def _handle_image_message(
 
     assignment = find_assignment_for_employee(session, employee.id)
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
-    site = group_site
-    if not site and assignment:
-        site = session.get(Worksite, assignment.site_id)
-    elif not site:
-        site = get_today_arrival_site(session, employee.id)
-        if not site and employee.home_site_id:
-            site = session.get(Worksite, employee.home_site_id)
+    if group_site:
+        # 群組名稱已明確對應工地（如善捷47群組），維持群組優先，避免錯掛派工工地。
+        site = group_site
+    else:
+        # 事實位置（到達工地／上下班打卡）優先，補上「只有 GPS 上班打卡」的情境。
+        photo_moment = _event_datetime(event).astimezone(timezone.utc).replace(tzinfo=None)
+        site, _site_reason, resolved_assignment = resolve_employee_site_at(
+            session, employee.id, photo_moment
+        )
+        if resolved_assignment:
+            assignment = resolved_assignment
+            member = find_assignment_member(session, employee.id, assignment.id)
     photo_assignment = assignment if assignment and site and assignment.site_id == site.id else None
     photo_member = member if photo_assignment else None
 

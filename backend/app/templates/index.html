@@ -1730,8 +1730,13 @@
       const assignmentRows = (site.assignments || []).map((item, itemIndex) => `
         <li><time><label class="journal-choice"><input type="checkbox" ${item._selected !== false ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'assignments', ${itemIndex}, this.checked)"><span>${escapeHtml(item.start_time || "全天")}</span></label></time><strong>${escapeHtml(item.supervisor_name || "未指定主管")}</strong><span>${escapeHtml(item.work_item)}｜人員：${escapeHtml((item.member_names || []).join("、") || "未指定")}${item.equipment ? `｜機具：${escapeHtml(item.equipment)}` : ""}</span></li>
       `).join("") || '<li class="muted">尚無當日派工</li>';
+      const canMoveGroupText = ["owner", "admin"].includes(state.actor?.role);
+      const moveSiteOptions = (state.worksites || [])
+        .filter((candidate) => candidate.is_active && Number(candidate.id) !== Number(site.site_id))
+        .map((candidate) => `<option value="${Number(candidate.id)}">${escapeHtml(candidate.name)}</option>`)
+        .join("");
       const groupTexts = (site.group_texts || []).map((item, itemIndex) => `
-        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'group_texts', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.sent_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}</span></li>
+        <li><time><label class="journal-choice"><input type="checkbox" ${item._selected ? "checked" : ""} onchange="setJournalSelection(${siteIndex}, 'group_texts', ${itemIndex}, this.checked)"><span>${escapeHtml(formatTWTime(item.sent_at))}</span></label></time><strong>${escapeHtml(item.employee_name)}</strong><span>${escapeHtml(item.content)}${canMoveGroupText && moveSiteOptions ? ` <select class="journal-move-site" title="把此則改歸其他工地" onchange="moveJournalGroupText(${siteIndex}, ${itemIndex}, this.value)"><option value="">改工地…</option>${moveSiteOptions}</select>` : ""}</span></li>
       `).join("") || '<li class="muted">尚無群組文字</li>';
       const attendance = (site.attendance || []).map((item, itemIndex) => {
         const mapLink = item.latitude != null && item.longitude != null
@@ -1809,7 +1814,10 @@
           return sum;
         }, {assignments: 0, texts: 0, attendance: 0, inspections: 0, photos: 0});
         const savedSlipCount = data.sites.reduce((sum, site) => sum + (site.sign_slips || []).length, 0);
-        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜派工 ${totals.assignments} 筆｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張｜已存簽單 ${savedSlipCount} 張。請從下拉選單切換工地；取消勾選只影響新製作的簽單。`;
+        const reassignNote = data.group_text_reassign && data.group_text_reassign.updated_count
+          ? `　已依考勤／派工自動修正 ${data.group_text_reassign.updated_count} 則群組文字的工地。`
+          : "";
+        feedback.textContent = `${data.date}｜${data.sites.length} 個工地｜派工 ${totals.assignments} 筆｜群組文字 ${totals.texts} 則｜打卡 ${totals.attendance} 筆｜點檢 ${totals.inspections} 筆｜照片 ${totals.photos} 張｜已存簽單 ${savedSlipCount} 張。請從下拉選單切換工地；取消勾選只影響新製作的簽單。${reassignNote}`;
         if (!data.sites.length) {
           siteSelect.disabled = true;
           siteSelect.innerHTML = '<option value="">所選日期沒有工地日誌</option>';
@@ -1832,6 +1840,31 @@
         siteSelect.disabled = true;
         siteSelect.innerHTML = '<option value="">讀取失敗</option>';
         cards.innerHTML = "";
+      }
+    }
+
+    async function moveJournalGroupText(siteIndex, itemIndex, worksiteId) {
+      if (!worksiteId) return;
+      const site = state.worksiteJournals?.sites?.[siteIndex];
+      const item = site?.group_texts?.[itemIndex];
+      if (!item) return;
+      const target = (state.worksites || []).find((candidate) => Number(candidate.id) === Number(worksiteId));
+      if (!window.confirm(`把「${item.employee_name}：${item.content}」改歸到「${target?.name || "目標工地"}」？`)) {
+        await renderSelectedWorksiteJournal();
+        return;
+      }
+      const feedback = document.getElementById("journalFeedback");
+      feedback.textContent = "正在變更該則群組文字的工地。";
+      try {
+        const data = await api(`/api/worksite-journals/group-text/${Number(item.id)}/site`, {
+          method: "POST",
+          body: JSON.stringify({ worksite_id: Number(worksiteId) }),
+        });
+        feedback.textContent = data.message || "已變更工地，重新整理日誌。";
+        await loadWorksiteJournals();
+      } catch (error) {
+        feedback.textContent = error.message;
+        await renderSelectedWorksiteJournal();
       }
     }
 

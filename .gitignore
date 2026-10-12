@@ -9,3 +9,8 @@ backend/data/
 backend/.env
 deploy/cloudflared/*.json
 backend/tools/*.exe
+
+# 正式庫唯讀快照與工作中繼目錄（含個資，勿提交）
+_grouptext_fix/
+_app_manual_work/
+.codex-tmp/

@@ -369,6 +369,18 @@ input[hidden] { display: none; }
   font-variant-numeric: tabular-nums;
 }
 
+.journal-move-site {
+  display: inline-block;
+  margin: 2px 0 0 6px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  vertical-align: text-bottom;
+}
+
 .journal-empty {
   padding: 28px;
   border: 1px dashed var(--line);
