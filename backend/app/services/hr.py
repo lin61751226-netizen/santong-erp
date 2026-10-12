@@ -7,6 +7,8 @@ import re
 
 from sqlmodel import Session, select
 
+from app.core.local_time import as_local, local_now, local_today, utc_day_bounds
+
 from app.services.clock_site import (
     anomaly_labels_from_note,
     note_has_location_flag,
@@ -146,7 +148,7 @@ def evaluate_leave_policy(
 ) -> LeavePolicyResult:
     errors: list[str] = []
     notes: list[str] = []
-    requested_on = requested_on or date.today()
+    requested_on = requested_on or local_today()
 
     overlap_rows = session.exec(
         select(LeaveRequest).where(
@@ -238,14 +240,13 @@ def get_latest_attendance_event(
     employee_id: int,
     target_date: date,
 ) -> AttendanceEvent | None:
-    start_at = datetime.combine(target_date, time.min)
-    end_at = datetime.combine(target_date, time.max)
+    start_at, end_at = utc_day_bounds(target_date)
     return session.exec(
         select(AttendanceEvent)
         .where(
             AttendanceEvent.employee_id == employee_id,
             AttendanceEvent.happened_at >= start_at,
-            AttendanceEvent.happened_at <= end_at,
+            AttendanceEvent.happened_at < end_at,
         )
         .order_by(AttendanceEvent.happened_at.desc())
     ).first()
@@ -256,16 +257,15 @@ def get_today_arrival_site(
     employee_id: int,
 ) -> Worksite | None:
     """取得員工今日最近一次「到達工地」打卡的工地。"""
-    target_date = date.today()
-    start_at = datetime.combine(target_date, time.min)
-    end_at = datetime.combine(target_date, time.max)
+    target_date = local_today()
+    start_at, end_at = utc_day_bounds(target_date)
     event = session.exec(
         select(AttendanceEvent)
         .where(
             AttendanceEvent.employee_id == employee_id,
             AttendanceEvent.event_type == AttendanceEventType.arrive_site.value,
             AttendanceEvent.happened_at >= start_at,
-            AttendanceEvent.happened_at <= end_at,
+            AttendanceEvent.happened_at < end_at,
         )
         .order_by(AttendanceEvent.happened_at.desc())
     ).first()
@@ -279,7 +279,7 @@ def find_assignment_for_employee(
     employee_id: int,
     work_date: Optional[date] = None,
 ) -> WorkAssignment | None:
-    target_date = work_date or date.today()
+    target_date = work_date or local_today()
     return session.exec(
         select(WorkAssignment)
         .join(AssignmentMember, AssignmentMember.assignment_id == WorkAssignment.id)
@@ -344,7 +344,7 @@ def record_attendance_event(
     longitude: Optional[float] = None,
     confirmed_choice: Optional[str] = None,
 ) -> AttendanceRecordResult:
-    assignment = find_assignment_for_employee(session, employee.id, date.today())
+    assignment = find_assignment_for_employee(session, employee.id, local_today())
     member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
     anomalies: list[str] = []
     matched_site_id = None
@@ -436,7 +436,7 @@ def record_work_report_event(
     site_id: int | None = None,
 ) -> WorkReportEvent:
     """保存一筆不可覆寫的工作回報，並保留與當日派工及工地的關聯。"""
-    assignment = assignment or find_assignment_for_employee(session, employee.id, date.today())
+    assignment = assignment or find_assignment_for_employee(session, employee.id, local_today())
     resolved_site_id = site_id
     if resolved_site_id is None:
         resolved_site_id = assignment.site_id if assignment else employee.home_site_id
@@ -473,14 +473,13 @@ def get_covering_leave(
 
 
 def _day_attendance_events(session: Session, employee_id: int, target_date: date) -> list[AttendanceEvent]:
-    start_at = datetime.combine(target_date, time.min)
-    end_at = datetime.combine(target_date, time.max)
+    start_at, end_at = utc_day_bounds(target_date)
     return list(session.exec(
         select(AttendanceEvent)
         .where(
             AttendanceEvent.employee_id == employee_id,
             AttendanceEvent.happened_at >= start_at,
-            AttendanceEvent.happened_at <= end_at,
+            AttendanceEvent.happened_at < end_at,
         )
         .order_by(AttendanceEvent.happened_at)
     ).all())
@@ -525,7 +524,7 @@ def build_attendance_rows(
     target_date: date,
 ) -> list[dict]:
     rows: list[dict] = []
-    now = datetime.now()
+    now = local_now()
     sites = {site.id: site for site in session.exec(select(Worksite)).all() if site.id is not None}
 
     for employee in employees:
@@ -557,11 +556,11 @@ def build_attendance_rows(
         if assignment and assignment.work_date < now.date() and not latest_event and not leave:
             anomalies.append("未打卡")
         if assignment and assignment.work_date == now.date() and assignment.start_time:
-            late_cutoff = datetime.combine(target_date, assignment.start_time) + timedelta(minutes=15)
+            late_cutoff = datetime.combine(target_date, assignment.start_time, tzinfo=now.tzinfo) + timedelta(minutes=15)
             if latest_event and latest_event.event_type in {
                 AttendanceEventType.check_in.value,
                 AttendanceEventType.arrive_site.value,
-            } and latest_event.happened_at > late_cutoff:
+            } and as_local(latest_event.happened_at) > late_cutoff:
                 anomalies.append("遲到")
             elif now > late_cutoff and not latest_event and not leave:
                 anomalies.append("未打卡")

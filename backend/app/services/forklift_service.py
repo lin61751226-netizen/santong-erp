@@ -108,6 +108,30 @@ def build_forklift_quick_replies(session: Session, site_id: int) -> list[tuple[s
     return build_all_forklift_quick_replies(session)
 
 
+def selection_message(title: str, choices: list[tuple[str, str]], page_command: str, page: int = 0) -> dict:
+    # Reserve three of LINE's 13 buttons for previous, next and cancel.
+    page_size = 10
+    last_page = max(0, (len(choices) - 1) // page_size)
+    page = min(max(page, 0), last_page)
+    items = [
+        {"type": "action", "action": {"type": "message", "label": label[:20], "text": command}}
+        for label, command in choices[page * page_size:(page + 1) * page_size]
+    ]
+    if page > 0:
+        items.append({"type": "action", "action": {
+            "type": "message", "label": "上一頁", "text": f"{page_command}:{page - 1}",
+        }})
+    if page < last_page:
+        items.append({"type": "action", "action": {
+            "type": "message", "label": "下一頁", "text": f"{page_command}:{page + 1}",
+        }})
+    items.append({"type": "action", "action": {
+        "type": "message", "label": "取消點檢", "text": "取消點檢",
+    }})
+    suffix = f"\n（第 {page + 1}/{last_page + 1} 頁）" if last_page else ""
+    return {"type": "text", "text": title + suffix, "quickReply": {"items": items}}
+
+
 def get_current_item(session_state: InspectionSession) -> Optional[dict[str, Any]]:
     """取得目前正在點檢的項目。"""
     if session_state.current_item_index < len(INSPECTION_ITEMS):

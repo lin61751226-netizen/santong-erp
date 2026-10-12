@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.local_time import local_today
 from app.models import (
     AckStatus,
     AssignmentMember,
@@ -274,7 +275,7 @@ async def _confirm_clock_site(
             await line_service.reply_text(reply_token, "此 LINE 帳號尚未綁定員工身分，請先完成綁定。")
         return
     if choice == "assigned":
-        assignment = find_assignment_for_employee(session, employee.id, date.today())
+        assignment = find_assignment_for_employee(session, employee.id, local_today())
         if assignment is None:
             if reply_token:
                 await line_service.reply_text(reply_token, "今日沒有派工工地可改記。請選擇是否在最近工地，或輸入「取消定位打卡」。")
@@ -924,7 +925,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
         active_inspection = forklift_service.get_session(line_user_id)
         inspection_command = text in {"點檢", "堆高機點檢", "開始點檢", "取消點檢"} or (
             active_inspection and (
-                text in {"正常", "異常"} or text.startswith(("點檢工地:", "點檢堆高機:"))
+                text in {"正常", "異常"} or text.startswith(("點檢工地:", "點檢堆高機:", "點檢工地頁:", "點檢堆高機頁:"))
             )
         )
         if not inspection_command:
@@ -993,14 +994,10 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
                 return
             await line_service.reply_messages(
                 reply_token,
-                [{
-                    "type": "text",
-                    "text": f"🚜 堆高機每日點檢\n\n工地：{arrival_site.name}（自動帶入今日打卡工地）\n\n請選擇今日開的堆高機：",
-                    "quickReply": {"items": [
-                        {"type": "action", "action": {"type": "message", "label": label, "text": text}}
-                        for label, text in forklift_items
-                    ]},
-                }],
+                [forklift_service.selection_message(
+                    f"🚜 堆高機每日點檢\n\n工地：{arrival_site.name}（自動帶入今日打卡工地）\n\n請選擇今日開的堆高機：",
+                    forklift_items, "點檢堆高機頁",
+                )],
             )
         else:
             # 沒有打卡記錄，顯示工地列表讓員工選擇
@@ -1011,15 +1008,37 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
                 return
             await line_service.reply_messages(
                 reply_token,
-                [{
-                    "type": "text",
-                    "text": "🚜 堆高機每日點檢\n\n今日尚未打卡到達工地，請先選擇工地：",
-                    "quickReply": {"items": [
-                        {"type": "action", "action": {"type": "message", "label": label, "text": text}}
-                        for label, text in site_items
-                    ]},
-                }],
+                [forklift_service.selection_message(
+                    "🚜 堆高機每日點檢\n\n今日尚未打卡到達工地，請先選擇工地：",
+                    site_items, "點檢工地頁",
+                )],
             )
+        return
+
+    if text.startswith(("點檢工地頁:", "點檢堆高機頁:")):
+        session_state = forklift_service.get_session(line_user_id)
+        is_site_page = text.startswith("點檢工地頁:")
+        expected_step = "select_site" if is_site_page else "select_forklift"
+        if not session_state or session_state.step != expected_step:
+            await line_service.reply_text(reply_token, "請重新輸入「點檢」，再選擇工地及堆高機。")
+            return
+        try:
+            page = int(text.split(":", 1)[1])
+        except ValueError:
+            await line_service.reply_text(reply_token, "頁碼無效，請重新輸入「點檢」。")
+            return
+        choices = (
+            forklift_service.build_site_quick_replies(session) if is_site_page
+            else forklift_service.build_all_forklift_quick_replies(session)
+        )
+        if not choices:
+            forklift_service.clear_session(line_user_id)
+            await line_service.reply_text(reply_token, "目前沒有可用的工地或堆高機，請聯絡管理員。")
+            return
+        await line_service.reply_messages(reply_token, [forklift_service.selection_message(
+            "請選擇工地：" if is_site_page else "請選擇今日開的堆高機：",
+            choices, "點檢工地頁" if is_site_page else "點檢堆高機頁", page,
+        )])
         return
 
     if text.startswith("點檢工地:"):
@@ -1048,14 +1067,10 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
             return
         await line_service.reply_messages(
             reply_token,
-            [{
-                "type": "text",
-                "text": f"工地：{site.name}\n\n請選擇今日開的堆高機：",
-                "quickReply": {"items": [
-                    {"type": "action", "action": {"type": "message", "label": label, "text": text}}
-                    for label, text in forklift_items
-                ]},
-            }],
+            [forklift_service.selection_message(
+                f"工地：{site.name}\n\n請選擇今日開的堆高機：",
+                forklift_items, "點檢堆高機頁",
+            )],
         )
         return
 
@@ -1156,7 +1171,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     if text == "我的打卡":
         assignment = find_assignment_for_employee(session, employee.id)
         member = find_assignment_member(session, employee.id, assignment.id if assignment else None)
-        latest_event = get_latest_attendance_event(session, employee.id, date.today())
+        latest_event = get_latest_attendance_event(session, employee.id, local_today())
         await line_service.reply_text(
             reply_token,
             _build_my_attendance_summary(employee, assignment, member, latest_event),
@@ -1173,7 +1188,7 @@ async def process_webhook_event(session: Session, event: dict[str, Any]) -> None
     if text.startswith("請假 "):
         parts = text.split(" ", 4)
         if len(parts) == 2 and parts[1] in {leave_type.value for leave_type in LeaveType}:
-            today_iso = date.today().isoformat()
+            today_iso = local_today().isoformat()
             await line_service.reply_text(
                 reply_token,
                 f"已選擇：{parts[1]}\n請輸入：請假 {parts[1]} 開始日 結束日 原因\n範例：請假 {parts[1]} {today_iso} {today_iso} 家中有事",

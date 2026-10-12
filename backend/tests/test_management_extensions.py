@@ -224,13 +224,14 @@ class ManagementExtensionTests(unittest.TestCase):
             employee_id=self.employee.id,
             site_id=self.site.id,
             event_type="上班打卡",
-            happened_at=datetime.combine(target, time(8)),
+            # Stored timestamps are UTC: 00:00 UTC is 08:00 in Taiwan.
+            happened_at=datetime.combine(target, time(0)),
         ))
         self.session.add(AttendanceEvent(
             employee_id=self.employee.id,
             site_id=self.site.id,
             event_type="下班打卡",
-            happened_at=datetime.combine(target, time(17)),
+            happened_at=datetime.combine(target, time(9)),
         ))
         self.session.commit()
 
@@ -242,7 +243,7 @@ class ManagementExtensionTests(unittest.TestCase):
         self.assertEqual(data["summary"]["records"], 1)
         self.assertEqual(data["summary"]["total_hours"], 9.0)
         self.assertEqual(data["rows"][0]["forklift_code"], "1號")
-        self.assertEqual(data["rows"][0]["check_in"], datetime.combine(target, time(8)).isoformat())
+        self.assertEqual(data["rows"][0]["check_in"], datetime.combine(target, time(0)).isoformat())
 
 
 if __name__ == "__main__":

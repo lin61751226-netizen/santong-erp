@@ -23,6 +23,7 @@ from sqlmodel import Session, select
 
 from app.core.db import get_session
 from app.core.config import settings
+from app.core.local_time import as_local, local_today, utc_day_bounds
 from app.deps import ensure_employee_scope, ensure_site_scope, get_current_actor, require_roles
 from app.models import (
     AssignmentMember,
@@ -471,7 +472,7 @@ def _attendance_history_dates(session: Session, employees: list[Employee]) -> li
     attendance_events = session.exec(
         select(AttendanceEvent).where(AttendanceEvent.employee_id.in_(employee_ids))
     ).all()
-    dates.update(event.happened_at.date() for event in attendance_events if event.happened_at)
+    dates.update(as_local(event.happened_at).date() for event in attendance_events if event.happened_at)
 
     assignments = session.exec(
         select(WorkAssignment)
@@ -936,7 +937,7 @@ def dashboard(
     employees = _employees_for_actor(session, actor)
     worksites = _worksites_for_actor(session, actor)
     pending_leaves_stmt = select(LeaveRequest).where(LeaveRequest.status == LeaveStatus.pending)
-    assignments_stmt = select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == date.today())
+    assignments_stmt = select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == local_today())
 
     if actor.role == Role.site_manager:
         pending_leaves_stmt = (
@@ -952,12 +953,12 @@ def dashboard(
         )
 
     attendance_exceptions = [
-        row for row in _attendance_rows_for_actor(session, actor, date.today()) if row["anomalies"]
+        row for row in _attendance_rows_for_actor(session, actor, local_today()) if row["anomalies"]
     ]
 
     return {
         "app_name": "三通工程自動化管理系統",
-        "today": date.today().isoformat(),
+        "today": local_today().isoformat(),
         "employee_count": len(employees),
         "worksite_count": len(worksites),
         "today_assignment_count": len(session.exec(assignments_stmt).all()),
@@ -2127,11 +2128,11 @@ def list_work_reports(
     statement = select(WorkReportEvent).where(WorkReportEvent.employee_id.in_(employee_ids))
     if date_from:
         statement = statement.where(
-            WorkReportEvent.reported_at >= datetime.combine(date_from, datetime.min.time())
+            WorkReportEvent.reported_at >= utc_day_bounds(date_from)[0]
         )
     if date_to:
         statement = statement.where(
-            WorkReportEvent.reported_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+            WorkReportEvent.reported_at < utc_day_bounds(date_to)[1]
         )
     if actor.role == Role.site_manager and actor.home_site_id:
         statement = statement.where(WorkReportEvent.site_id == actor.home_site_id)
@@ -2150,7 +2151,7 @@ def list_work_reports(
             "employee_code": employee.employee_code if employee else None,
             "employee_name": employee.name if employee else None,
             "work_date": assignment.work_date.isoformat() if assignment else (
-                report.reported_at.date().isoformat() if report.reported_at else None
+                as_local(report.reported_at).date().isoformat() if report.reported_at else None
             ),
             "site_name": worksite.name if worksite else None,
             "event_type": report.event_type,
@@ -2167,7 +2168,7 @@ def list_attendance_exceptions(
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
-    rows = _attendance_rows_for_actor(session, actor, target_date or date.today())
+    rows = _attendance_rows_for_actor(session, actor, target_date or local_today())
     return [row for row in rows if row["anomalies"]]
 
 
@@ -2177,7 +2178,7 @@ def my_schedule(
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
-    return _filter_assignments_for_actor(session, actor, target_date or date.today())
+    return _filter_assignments_for_actor(session, actor, target_date or local_today())
 
 
 @router.get("/me/attendance")
@@ -2186,7 +2187,7 @@ def my_attendance(
     session: Session = Depends(get_session),
     actor: Employee = Depends(get_current_actor),
 ):
-    return _attendance_rows_for_actor(session, actor, target_date or date.today(), actor.employee_code)
+    return _attendance_rows_for_actor(session, actor, target_date or local_today(), actor.employee_code)
 
 
 @router.get("/me/leaves")
@@ -4096,8 +4097,8 @@ def forklift_attendance_stats(
     actor: Employee = Depends(get_current_actor),
 ):
     """依每日點檢、定位打卡與派工彙整堆高機出勤，原始紀錄完全保留。"""
-    first_day = date_from or date.today().replace(day=1)
-    last_day = date_to or date.today()
+    first_day = date_from or local_today().replace(day=1)
+    last_day = date_to or local_today()
     if last_day < first_day:
         raise HTTPException(status_code=422, detail="起始日期不可晚於結束日期")
     if (last_day - first_day).days > 366:
@@ -4125,13 +4126,13 @@ def forklift_attendance_stats(
     attendance_events = session.exec(
         select(AttendanceEvent).where(
             AttendanceEvent.employee_id.in_(operator_ids or [-1]),
-            AttendanceEvent.happened_at >= datetime.combine(first_day, time.min),
-            AttendanceEvent.happened_at < datetime.combine(last_day + timedelta(days=1), time.min),
+            AttendanceEvent.happened_at >= utc_day_bounds(first_day)[0],
+            AttendanceEvent.happened_at < utc_day_bounds(last_day)[1],
         )
     ).all()
     event_groups: dict[tuple[int, date, Optional[int]], list[AttendanceEvent]] = {}
     for event in attendance_events:
-        key = (event.employee_id, event.happened_at.date(), event.site_id)
+        key = (event.employee_id, as_local(event.happened_at).date(), event.site_id)
         event_groups.setdefault(key, []).append(event)
 
     assignments = session.exec(

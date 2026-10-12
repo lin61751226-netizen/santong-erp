@@ -9,6 +9,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import session_scope
+from app.core.local_time import local_today
 from app.models import (
     AssignmentMember,
     AttendanceEvent,
@@ -24,7 +25,6 @@ from app.models import (
 from app.services.ai_ops import prepare_evening_drafts
 from app.services.line import _build_schedule_summary, line_service, notify_employees
 from app.services.forklift_notifications import deliver_forklift_notifications, process_forklift_alerts, queue_inspection_reminders
-from app.services.forklift_service import local_today
 from app.services.google_drive import google_drive_worklog_service
 
 
@@ -163,7 +163,7 @@ async def wake_up_service() -> None:
 
 async def push_daily_assignments() -> None:
     with session_scope() as session:
-        assignments = session.exec(select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == date.today())).all()
+        assignments = session.exec(select(WorkAssignment).where(WorkAssignment.status != "cancelled", WorkAssignment.work_date == local_today())).all()
         for assignment in assignments:
             members = session.exec(
                 select(AssignmentMember).where(
