@@ -1141,7 +1141,7 @@
         <div class="panel-header">
           <div>
             <h2>工作相片上傳記錄</h2>
-            <p class="muted">完整保留 LINE 工作相片上傳記錄，可依員工或日期查詢 Google Drive 儲存結果。</p>
+            <p class="muted">保留 LINE 與相簿匯入紀錄，依原施工日期查詢；實際上傳時間另行保留。</p>
           </div>
           <div class="button-row">
             <input id="photoFilterEmployee" placeholder="員工代碼">
@@ -1150,14 +1150,35 @@
             <button type="button" class="button-secondary" onclick="loadPhotoUploads()">查詢</button>
           </div>
         </div>
+        <details class="photo-import-box" id="photoAlbumImport">
+          <summary>相簿照片批次匯入</summary>
+          <p class="muted">先從 LINE 相簿下載照片，再多選匯入。不同工地或施工日請分批；不會自動讀取 LINE 相簿。</p>
+          <form id="photoImportForm" class="form-grid">
+            <div><label for="photoImportSite">工地（必選）</label><select id="photoImportSite" required></select></div>
+            <div><label for="photoImportDate">原施工日期（必選）</label><input id="photoImportDate" type="date" required></div>
+            <div><label for="photoImportGroup">來源群組</label><input id="photoImportGroup" maxlength="120" value="47&amp;76工地照片"></div>
+            <div><label for="photoImportAlbum">相簿名稱（選填）</label><input id="photoImportAlbum" maxlength="120" placeholder="方便日後追查"></div>
+            <div class="full"><label for="photoImportFiles">照片（每批最多 100 張，每張 10 MB）</label><input id="photoImportFiles" type="file" multiple accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></div>
+            <div class="button-row full">
+              <button type="submit" id="photoImportStart">開始匯入 Google Drive</button>
+              <button type="button" class="button-secondary" id="photoImportStop" hidden>停止後續上傳</button>
+              <button type="button" class="button-secondary" id="photoImportReset">開始新一批</button>
+            </div>
+          </form>
+          <p class="muted">歸檔：工地 → 年月 → 日期。同工地、同日、相同內容會略過重複；照片不新增公開分享權限，仍依公司 Drive 資料夾權限存取。</p>
+          <p id="photoImportStatus" role="status" aria-live="polite">尚未選取照片。</p>
+          <ol id="photoImportResults" class="photo-import-results"></ol>
+        </details>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
+                <th>施工日期</th>
                 <th>上傳時間</th>
-                <th>員工</th>
+                <th>員工／匯入人</th>
                 <th>工地</th>
                 <th>檔名</th>
+                <th>來源群組／相簿</th>
                 <th>連結</th>
               </tr>
             </thead>
@@ -1303,6 +1324,7 @@
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
+  <script src="/static/photo_import.js"></script>
   <script>
     const state = {
       actor: null,
@@ -2799,6 +2821,8 @@
       state.actor = data.actor;
       state.employees = data.employees;
       state.worksites = data.worksites;
+      PhotoAlbumImport.configure({ sites: state.worksites, actor: state.actor, api,
+        today: todayString(), refresh: loadPhotoUploads });
       state.workItemOptions = data.work_item_options || [];
       state.equipmentOptions = data.equipment_options || [];
       state.forkliftOptions = data.forklift_options || [];
@@ -4815,18 +4839,20 @@
         const data = await api('/api/photo-uploads?' + params.toString());
         const rows = document.getElementById('photoUploadRows');
         if (data.length === 0) {
-          rows.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888;">無上傳記錄</td></tr>';
+          rows.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;">無上傳記錄</td></tr>';
           return;
         }
         rows.innerHTML = data.map((item) => {
           const link = item.drive_url
-            ? '<a href="' + item.drive_url + '" target="_blank">檢視</a>'
+            ? '<a href="' + escapeHtml(item.drive_url) + '" target="_blank" rel="noopener noreferrer">檢視</a>'
             : '-';
           return `<tr>
+            <td>${escapeHtml(item.work_date || '-')}</td>
             <td>${formatTW(item.uploaded_at)}</td>
-            <td>${item.employee_name || item.employee_code || '-'}</td>
-            <td>${item.site_name || '-'}</td>
-            <td>${item.file_name || '-'}</td>
+            <td>${escapeHtml(item.employee_name || item.employee_code || '-')}${item.is_album_import ? '（匯入人）' : ''}</td>
+            <td>${escapeHtml(item.site_name || '-')}</td>
+            <td>${escapeHtml(item.original_file_name || item.file_name || '-')}</td>
+            <td>${escapeHtml([item.source_group, item.album_name].filter(Boolean).join(' / ') || 'LINE 即時照片')}</td>
             <td>${link}</td>
           </tr>`;
         }).join("");

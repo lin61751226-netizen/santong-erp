@@ -268,6 +268,20 @@ class PhotoUploadLog(SQLModel, table=True):
     drive_url: str
     uploaded_at: datetime = Field(default_factory=datetime.utcnow, index=True)
     note: Optional[str] = Field(default=None, sa_column=Column(Text))
+    work_date: Optional[date] = Field(default=None, index=True)
+    original_file_name: Optional[str] = None
+    source_group: Optional[str] = None
+    album_name: Optional[str] = None
+    import_key: Optional[str] = Field(default=None, unique=True, index=True)
+
+
+class PhotoImportJob(SQLModel, table=True):
+    """Durable per-photo reservation; a retry reuses the same Google Drive ID."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    import_key: str = Field(unique=True, index=True)
+    status: str = Field(default="processing")
+    drive_file_id: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ManagedDocument(SQLModel, table=True):

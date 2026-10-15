@@ -157,6 +157,20 @@ def _apply_lightweight_migrations() -> None:
     # PostgreSQL 需 DROP NOT NULL；SQLite 不強制既有 NOT NULL 且重建表成本高，故略過。
     if "photouploadlog" in table_names:
         photo_columns = {column["name"]: column for column in inspector.get_columns("photouploadlog")}
+        additions = {
+            "work_date": "DATE", "original_file_name": "VARCHAR",
+            "source_group": "VARCHAR", "album_name": "VARCHAR", "import_key": "VARCHAR",
+        }
+        with engine.begin() as connection:
+            for name, column_type in additions.items():
+                if name not in photo_columns:
+                    connection.execute(text(f"ALTER TABLE photouploadlog ADD COLUMN {name} {column_type}"))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_photouploadlog_import_key ON photouploadlog (import_key)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_photouploadlog_work_date ON photouploadlog (work_date)"
+            ))
         employee_column = photo_columns.get("employee_id")
         if (
             employee_column is not None

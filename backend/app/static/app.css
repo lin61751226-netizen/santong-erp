@@ -1048,3 +1048,9 @@ body.map-open { overflow: hidden; }
   .reader-toolbar { gap: 10px; margin: 10px 0; }
   .reader-pagination button { padding: 8px 10px; font-size: 14px; }
 }
+.photo-import-box { margin: 0 0 22px; padding: 18px; border: 1px solid var(--line, #ddd5c7); border-radius: 14px; background: #faf8f2; }
+.photo-import-box summary { cursor: pointer; font-size: 1.15rem; font-weight: 700; }
+.photo-import-box .form-grid { margin-top: 16px; }
+.photo-import-results { max-height: 280px; overflow: auto; padding-left: 24px; overflow-wrap: anywhere; }
+.photo-import-results li { margin: 7px 0; }
+.photo-import-results [data-status="failed"], .photo-import-results [data-status="backup-warning"] { color: #a13926; }

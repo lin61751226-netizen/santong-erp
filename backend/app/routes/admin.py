@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -2467,9 +2467,13 @@ def list_photo_uploads(
         if employee:
             statement = statement.where(PhotoUploadLog.employee_id == employee.id)
     if date_from:
-        statement = statement.where(PhotoUploadLog.uploaded_at >= date_from)
+        start_at, _ = utc_day_bounds(date_from)
+        statement = statement.where(or_(PhotoUploadLog.work_date >= date_from, and_(
+            PhotoUploadLog.work_date.is_(None), PhotoUploadLog.uploaded_at >= start_at)))
     if date_to:
-        statement = statement.where(PhotoUploadLog.uploaded_at < date_to + timedelta(days=1))
+        _, end_at = utc_day_bounds(date_to)
+        statement = statement.where(or_(PhotoUploadLog.work_date <= date_to, and_(
+            PhotoUploadLog.work_date.is_(None), PhotoUploadLog.uploaded_at < end_at)))
     if actor.role == Role.site_manager and actor.home_site_id:
         statement = statement.where(PhotoUploadLog.site_id == actor.home_site_id)
     elif actor.role == Role.employee:
@@ -2491,6 +2495,11 @@ def list_photo_uploads(
             "drive_url": log.drive_url,
             "uploaded_at": log.uploaded_at.isoformat() if log.uploaded_at else None,
             "note": log.note,
+            "work_date": (log.work_date or as_local(log.uploaded_at).date()).isoformat(),
+            "original_file_name": log.original_file_name,
+            "source_group": log.source_group,
+            "album_name": log.album_name,
+            "is_album_import": bool(log.import_key),
         })
     return result
 
@@ -3706,8 +3715,10 @@ def list_worksite_journals(
         AttendanceEvent.happened_at < end_at,
     )
     photo_statement = select(PhotoUploadLog).where(
-        PhotoUploadLog.uploaded_at >= start_at,
-        PhotoUploadLog.uploaded_at < end_at,
+        or_(PhotoUploadLog.work_date == journal_date, and_(
+            PhotoUploadLog.work_date.is_(None),
+            PhotoUploadLog.uploaded_at >= start_at, PhotoUploadLog.uploaded_at < end_at,
+        )),
     )
     assignment_statement = select(WorkAssignment).where(WorkAssignment.status != "cancelled",
         WorkAssignment.work_date == journal_date
@@ -3831,11 +3842,15 @@ def list_worksite_journals(
         bucket_for(photo.site_id)["photos"].append({
             "id": photo.id,
             "employee_code": employee.employee_code if employee else None,
-            "employee_name": employee.name if employee else "未綁定 LINE 使用者",
+            "employee_name": (f"{employee.name}（匯入人）" if photo.import_key and employee
+                              else employee.name if employee else "未綁定 LINE 使用者"),
             "file_name": photo.file_name,
             "drive_url": photo.drive_url,
             "uploaded_at": photo.uploaded_at.isoformat() if photo.uploaded_at else None,
             "note": photo.note,
+            "work_date": (photo.work_date or as_local(photo.uploaded_at).date()).isoformat(),
+            "original_file_name": photo.original_file_name,
+            "source_group": photo.source_group,
         })
 
     for slip in sign_slips:

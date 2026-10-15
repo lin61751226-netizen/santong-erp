@@ -14,6 +14,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -287,13 +288,16 @@ def gather_site_day(session: Session, work_date: date, worksite_id: int) -> dict
     for photo in session.exec(
         select(PhotoUploadLog).where(
             PhotoUploadLog.site_id == worksite_id,
-            PhotoUploadLog.uploaded_at >= start_at,
-            PhotoUploadLog.uploaded_at < end_at,
+            or_(PhotoUploadLog.work_date == work_date, and_(
+                PhotoUploadLog.work_date.is_(None),
+                PhotoUploadLog.uploaded_at >= start_at, PhotoUploadLog.uploaded_at < end_at,
+            )),
         ).order_by(PhotoUploadLog.uploaded_at, PhotoUploadLog.id)
     ).all():
         photos.append({
             "id": photo.id,
-            "employee_name": person(photo.employee_id) or "未綁定",
+            "employee_name": ((person(photo.employee_id) or "後台") + "（匯入人）" if photo.import_key
+                              else person(photo.employee_id) or "未綁定"),
             "file_name": _clean(photo.file_name, 120),
             "note": _clean(photo.note, 160),
             "drive_url": photo.drive_url,
@@ -1568,7 +1572,10 @@ def active_sites_for_day(session: Session, work_date: date) -> tuple[list[int], 
         select(ForkliftInspection.site_id).where(ForkliftInspection.inspection_date == work_date),
         select(GroupTextLog.site_id).where(GroupTextLog.sent_at >= start_at, GroupTextLog.sent_at < end_at),
         select(AttendanceEvent.site_id).where(AttendanceEvent.happened_at >= start_at, AttendanceEvent.happened_at < end_at),
-        select(PhotoUploadLog.site_id).where(PhotoUploadLog.uploaded_at >= start_at, PhotoUploadLog.uploaded_at < end_at),
+        select(PhotoUploadLog.site_id).where(or_(PhotoUploadLog.work_date == work_date, and_(
+            PhotoUploadLog.work_date.is_(None),
+            PhotoUploadLog.uploaded_at >= start_at, PhotoUploadLog.uploaded_at < end_at,
+        ))),
         select(WorkReportEvent.site_id).where(WorkReportEvent.reported_at >= start_at, WorkReportEvent.reported_at < end_at),
     ]
     for statement in queries:

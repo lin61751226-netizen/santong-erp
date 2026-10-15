@@ -12,7 +12,7 @@ import sqlite3
 import tempfile
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -59,6 +59,7 @@ PRESERVED_DATABASE_TABLES = (
     "attendancesiterevision",
     "workreportevent",
     "photouploadlog",
+    "photoimportjob",
     "grouptextlog",
     "linelinksession",
     "loginlog",
@@ -647,6 +648,7 @@ class GoogleDriveWorklogService:
         folder_name: str,
         public_share: bool | None = None,
         folder_path: tuple[str, ...] | None = None,
+        file_id: str | None = None,
     ) -> DriveUploadResult:
         last_exception = None
         for attempt in range(1, MAX_UPLOAD_RETRIES + 1):
@@ -658,26 +660,46 @@ class GoogleDriveWorklogService:
                     if folder_path
                     else self._find_or_create_date_folder(folder_name, client=client)
                 )
+                # Imports reserve an ID before uploading, so a timed-out create can
+                # be recovered without making a second copy on Google Drive.
+                if file_id:
+                    try:
+                        existing = client.files().get(
+                            fileId=file_id, fields="id,name,parents,webViewLink,trashed",
+                            supportsAllDrives=True,
+                        ).execute()
+                    except HttpError as exc:
+                        if exc.resp.status != 404:
+                            raise
+                    else:
+                        if (existing.get("trashed") or existing.get("name") != file_name
+                                or folder_id not in existing.get("parents", [])):
+                            raise GoogleDriveWorklogError("匯入檔案位置已被變更，請管理員核對，避免重複上傳")
+                        return DriveUploadResult(
+                            file_id=file_id, file_name=file_name, folder_id=folder_id,
+                            file_url=existing.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view",
+                            date_folder_name=folder_name, content_type=content_type,
+                        )
                 stream = io.BytesIO(content)
                 media = MediaIoBaseUpload(stream, mimetype=content_type, resumable=False)
                 created = (
                     client.files()
                     .create(
-                        body={"name": file_name, "parents": [folder_id]},
+                        body={"name": file_name, "parents": [folder_id], **({"id": file_id} if file_id else {})},
                         media_body=media,
                         fields="id,webViewLink",
                         supportsAllDrives=True,
                     )
                     .execute()
                 )
-                file_id = created["id"]
-                logger.info(f"檔案上傳成功: {file_name} (ID: {file_id})")
+                created_file_id = created["id"]
+                logger.info(f"檔案上傳成功: {file_name} (ID: {created_file_id})")
 
                 should_share_publicly = settings.google_drive_public_share if public_share is None else public_share
                 if should_share_publicly:
                     try:
                         client.permissions().create(
-                            fileId=file_id,
+                            fileId=created_file_id,
                             body={"type": "anyone", "role": "reader"},
                             fields="id",
                             supportsAllDrives=True,
@@ -687,12 +709,12 @@ class GoogleDriveWorklogService:
 
                 metadata = (
                     client.files()
-                    .get(fileId=file_id, fields="id,webViewLink", supportsAllDrives=True)
+                    .get(fileId=created_file_id, fields="id,webViewLink", supportsAllDrives=True)
                     .execute()
                 )
-                file_url = metadata.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"
+                file_url = metadata.get("webViewLink") or f"https://drive.google.com/file/d/{created_file_id}/view"
                 return DriveUploadResult(
-                    file_id=file_id,
+                    file_id=created_file_id,
                     file_name=file_name,
                     file_url=file_url,
                     folder_id=folder_id,
@@ -773,6 +795,28 @@ class GoogleDriveWorklogService:
         )
         logger.info(f"LINE 相片上傳完成: {file_name} -> {result.file_url}")
         return result
+
+    async def reserve_photo_file_id(self) -> str:
+        def reserve():
+            try:
+                return self._build_client(for_upload=True).files().generateIds(count=1, space="drive").execute()["ids"][0]
+            except Exception as exc:
+                raise GoogleDriveWorklogError(self._friendly_upload_error(exc)) from exc
+        return await asyncio.to_thread(reserve)
+
+    async def upload_album_photo(
+        self, *, content: bytes, content_type: str, extension: str,
+        work_date: date, site_name: str, import_key: str, file_id: str,
+    ) -> DriveUploadResult:
+        if not self.is_configured():
+            raise GoogleDriveWorklogError("Google Drive 工作相片上傳尚未完成設定")
+        safe_site = site_name.strip().replace("/", "-").replace("\\", "-")
+        folder_path = (safe_site, work_date.strftime("%Y-%m"), work_date.isoformat())
+        return await asyncio.to_thread(
+            self._upload_bytes, file_name=f"相簿_{work_date:%Y%m%d}_{import_key}{extension}",
+            content=content, content_type=content_type, folder_path=folder_path,
+            folder_name="/".join(folder_path), public_share=False, file_id=file_id,
+        )
 
     async def upload_management_document(
         self,
