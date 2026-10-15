@@ -1169,6 +1169,23 @@
           <p id="photoImportStatus" role="status" aria-live="polite">尚未選取照片。</p>
           <ol id="photoImportResults" class="photo-import-results"></ol>
         </details>
+        <details class="photo-import-box" id="drivePhotoIndex">
+          <summary>已在 Google Drive 的相簿 → 建立後台紀錄</summary>
+          <p class="muted">只讀取原檔位置並建立索引，不搬移、不改名、不重傳。施工日取自 LINE_ALBUM_47-20260907_… 的完整八位日期；其他工地與不完整日期會略過。</p>
+          <form id="drivePhotoIndexForm" class="form-grid">
+            <div class="full"><label for="drivePhotoFolder">Google Drive 資料夾連結</label><input id="drivePhotoFolder" type="url" required placeholder="https://drive.google.com/drive/folders/…"></div>
+            <div><label for="drivePhotoSite">歸屬工地</label><select id="drivePhotoSite" required></select></div>
+            <div><label for="drivePhotoCode">檔名工地代碼</label><input id="drivePhotoCode" required value="47" maxlength="20" pattern="[A-Za-z0-9]+"></div>
+            <div class="full"><label for="drivePhotoGroup">來源群組</label><input id="drivePhotoGroup" value="47&amp;76工地照片" maxlength="120"></div>
+            <div class="button-row full">
+              <button type="submit" id="drivePhotoPreview">第1步：讀取與預覽</button>
+              <button type="button" id="drivePhotoApply" disabled>第2步：保存後台紀錄</button>
+            </div>
+          </form>
+          <p id="drivePhotoFeedback" role="status" aria-live="polite">先預覽日期、張數與例外，再保存；沒有完整日期的照片不會猜測歸檔。</p>
+          <div class="table-wrap"><table><thead><tr><th>原施工日期</th><th>將新增照片</th></tr></thead><tbody id="drivePhotoDates"></tbody></table></div>
+          <p id="drivePhotoExceptions" class="muted"></p>
+        </details>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1325,6 +1342,7 @@
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
   <script src="/static/photo_import.js"></script>
+  <script src="/static/drive_photo_index.js"></script>
   <script>
     const state = {
       actor: null,
@@ -2823,6 +2841,7 @@
       state.worksites = data.worksites;
       PhotoAlbumImport.configure({ sites: state.worksites, actor: state.actor, api,
         today: todayString(), refresh: loadPhotoUploads });
+      DrivePhotoIndex.configure({ sites: state.worksites, actor: state.actor, api, refresh: loadPhotoUploads });
       state.workItemOptions = data.work_item_options || [];
       state.equipmentOptions = data.equipment_options || [];
       state.forkliftOptions = data.forklift_options || [];

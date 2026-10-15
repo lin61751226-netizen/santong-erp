@@ -1054,3 +1054,4 @@ body.map-open { overflow: hidden; }
 .photo-import-results { max-height: 280px; overflow: auto; padding-left: 24px; overflow-wrap: anywhere; }
 .photo-import-results li { margin: 7px 0; }
 .photo-import-results [data-status="failed"], .photo-import-results [data-status="backup-warning"] { color: #a13926; }
+#drivePhotoExceptions { max-height: 180px; overflow: auto; overflow-wrap: anywhere; }

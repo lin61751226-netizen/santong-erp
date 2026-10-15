@@ -804,6 +804,45 @@ class GoogleDriveWorklogService:
                 raise GoogleDriveWorklogError(self._friendly_upload_error(exc)) from exc
         return await asyncio.to_thread(reserve)
 
+    def _list_existing_photo_tree_sync(self, folder_id: str) -> dict:
+        """Read metadata only; shortcuts are not followed outside this folder tree."""
+        client = self._build_client()
+        root = client.files().get(fileId=folder_id, fields="id,name,mimeType,trashed", supportsAllDrives=True).execute()
+        if root.get("trashed") or root.get("mimeType") != FOLDER_MIME_TYPE:
+            raise GoogleDriveWorklogError("來源必須是有效的 Google Drive 資料夾")
+        queue, seen, files = [(folder_id, root["name"], 0)], set(), []
+        while queue:
+            parent_id, album_name, depth = queue.pop(0)
+            if parent_id in seen:
+                continue
+            if len(seen) >= 200 or depth > 4:
+                raise GoogleDriveWorklogError("資料夾超過 200 個或深度超過 4 層，請縮小範圍，未寫入任何照片紀錄")
+            seen.add(parent_id)
+            page_token = None
+            while True:
+                response = client.files().list(
+                    q=f"'{self._escape_drive_query(parent_id)}' in parents and trashed = false",
+                    fields="nextPageToken,files(id,name,mimeType,createdTime,md5Checksum)",
+                    pageSize=1000, pageToken=page_token, supportsAllDrives=True, includeItemsFromAllDrives=True,
+                ).execute()
+                for item in response.get("files", []):
+                    if item.get("mimeType") == FOLDER_MIME_TYPE:
+                        queue.append((item["id"], item["name"], depth + 1))
+                    else:
+                        files.append({**item, "parent_id": parent_id, "album_name": album_name})
+                        if len(files) > 10000:
+                            raise GoogleDriveWorklogError("檔案超過 10,000 個，請分資料夾處理，未寫入任何照片紀錄")
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+        return {"folder_id": folder_id, "folder_name": root["name"], "folder_count": len(seen), "files": files}
+
+    async def list_existing_photo_tree(self, folder_id: str) -> dict:
+        try:
+            return await asyncio.to_thread(self._list_existing_photo_tree_sync, folder_id)
+        except Exception as exc:
+            raise GoogleDriveWorklogError(self._friendly_upload_error(exc)) from exc
+
     async def upload_album_photo(
         self, *, content: bytes, content_type: str, extension: str,
         work_date: date, site_name: str, import_key: str, file_id: str,
