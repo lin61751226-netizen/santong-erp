@@ -160,6 +160,7 @@ def _apply_lightweight_migrations() -> None:
         additions = {
             "work_date": "DATE", "original_file_name": "VARCHAR",
             "source_group": "VARCHAR", "album_name": "VARCHAR", "import_key": "VARCHAR",
+            "source_group_id": "VARCHAR", "source_event_at": "TIMESTAMP", "classification_text_id": "INTEGER",
         }
         with engine.begin() as connection:
             for name, column_type in additions.items():
@@ -170,6 +171,9 @@ def _apply_lightweight_migrations() -> None:
             ))
             connection.execute(text(
                 "CREATE INDEX IF NOT EXISTS ix_photouploadlog_work_date ON photouploadlog (work_date)"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_photouploadlog_source_group_id ON photouploadlog (source_group_id)"
             ))
         employee_column = photo_columns.get("employee_id")
         if (

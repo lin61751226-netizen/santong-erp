@@ -299,9 +299,18 @@ async def push_forklift_alerts() -> None:
         await process_forklift_alerts(session)
 
 
+async def reconcile_group_photos() -> None:
+    from app.services.photo_classification import reconcile_pending_classification
+    with session_scope() as session:
+        await reconcile_pending_classification(session)
+
+
 def start_scheduler() -> None:
     if scheduler.running:
         return
+    scheduler.add_job(reconcile_group_photos, "interval", minutes=5,
+                      id="photo-text-classification", replace_existing=True,
+                      coalesce=True, max_instances=1)
     scheduler.add_job(
         push_forklift_alerts,
         "cron",

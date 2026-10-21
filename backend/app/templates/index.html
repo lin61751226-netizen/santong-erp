@@ -1186,6 +1186,19 @@
           <div class="table-wrap"><table><thead><tr><th>原施工日期</th><th>將新增照片</th></tr></thead><tbody id="drivePhotoDates"></tbody></table></div>
           <p id="drivePhotoExceptions" class="muted"></p>
         </details>
+        <details class="photo-import-box" id="photoTextClassification" hidden>
+          <summary>47＆76照片 → 依LINE文字分類</summary>
+          <p class="muted">依同一群組、同一發送者的「47-2026/10/19」或「76-2026/10/19」決定工地及施工日。只處理未分類照片；移動原檔到工地／月份／施工日，保留檔名與連結。先預覽再執行，不依上傳日猜施工日。</p>
+          <form id="photoTextForm" class="form-grid">
+            <div><label for="photoTextFrom">上傳日期起</label><input type="date" id="photoTextFrom" required></div>
+            <div><label for="photoTextTo">上傳日期迄</label><input type="date" id="photoTextTo" required></div>
+            <label class="span-2"><input type="checkbox" id="photoTextLegacy">包含舊紀錄（沒有群組ID；僅依同一發送者與鄰近文字配對，請核對預覽）</label>
+            <div class="button-row span-2"><button id="photoTextPreview" type="submit">預覽文字分類</button><button id="photoTextApply" type="button" disabled>依文字歸檔原照片</button><button id="photoTextStop" type="button" disabled>停止後續批次</button><button id="photoTextBackup" type="button">重試分類資料備份</button></div>
+          </form>
+          <p id="photoTextStatus" role="status" aria-live="polite">文字在照片前2小時內有效；照片先傳時，可接續同一發送者10分鐘內的文字。沒有明確配對則留在未分類。</p>
+          <div class="table-wrap"><table><thead><tr><th>工地</th><th>施工日期</th><th>照片張數</th></tr></thead><tbody id="photoTextSummary"></tbody></table></div>
+          <div class="table-wrap" style="max-height:320px"><table><thead><tr><th>照片</th><th>依據文字</th><th>比對方式</th></tr></thead><tbody id="photoTextRows"></tbody></table></div>
+        </details>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1343,6 +1356,7 @@
   <script src="/static/assignment_settings.js"></script>
   <script src="/static/photo_import.js"></script>
   <script src="/static/drive_photo_index.js"></script>
+  <script src="/static/photo_classification.js"></script>
   <script>
     const state = {
       actor: null,
@@ -2842,6 +2856,7 @@
       PhotoAlbumImport.configure({ sites: state.worksites, actor: state.actor, api,
         today: todayString(), refresh: loadPhotoUploads });
       DrivePhotoIndex.configure({ sites: state.worksites, actor: state.actor, api, refresh: loadPhotoUploads });
+      PhotoTextClassification.configure({actor:state.actor, api, refresh:loadPhotoUploads, today:todayString()});
       state.workItemOptions = data.work_item_options || [];
       state.equipmentOptions = data.equipment_options || [];
       state.forkliftOptions = data.forklift_options || [];

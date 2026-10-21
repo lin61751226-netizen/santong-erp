@@ -768,6 +768,7 @@ class GoogleDriveWorklogService:
         employee_name: str,
         happened_at: datetime,
         site_name: str | None = None,
+        work_date: date | None = None,
     ) -> DriveUploadResult:
         logger.info(f"開始處理 LINE 相片上傳: message_id={message_id}, 員工={employee_name}")
         if not self.is_configured():
@@ -778,7 +779,8 @@ class GoogleDriveWorklogService:
         logger.info(f"已從 LINE 取得相片內容: {len(content)} bytes, 類型: {content_type}")
         local_dt = happened_at.astimezone(ZoneInfo(settings.timezone))
         safe_site = (site_name or "").strip().replace("/", "-").replace("\\", "-") or "未分類工地"
-        folder_path = (safe_site, local_dt.strftime("%Y-%m"), local_dt.strftime("%Y-%m-%d"))
+        folder_day = work_date or local_dt.date()
+        folder_path = (safe_site, folder_day.strftime("%Y-%m"), folder_day.isoformat())
         folder_name = "/".join(folder_path)
         extension = mimetypes.guess_extension(content_type or "") or ".jpg"
         safe_name = employee_name.strip().replace("/", "-").replace("\\", "-")
@@ -795,6 +797,40 @@ class GoogleDriveWorklogService:
         )
         logger.info(f"LINE 相片上傳完成: {file_name} -> {result.file_url}")
         return result
+
+    async def move_classified_photo(self, *, file_id: str, expected_parent: str,
+                                    original_day: date, site_name: str, work_date: date) -> str:
+        """Move the original file only inside the configured photo root; retries keep its ID."""
+        def move():
+            client = self._build_client(for_upload=True)
+            info = client.files().get(fileId=file_id, fields="id,parents,trashed", supportsAllDrives=True).execute()
+            if info.get("trashed") or len(info.get("parents", [])) != 1:
+                raise GoogleDriveWorklogError("原照片已移除或位置不明，未移動")
+            current_parent = info["parents"][0]
+            # A timed-out prior move may already be in the exact destination.
+            def path_matches(day, site):
+                parent = current_parent
+                for name in (day.isoformat(), day.strftime("%Y-%m"), site):
+                    folder = client.files().get(fileId=parent, fields="name,parents,trashed", supportsAllDrives=True).execute()
+                    if folder.get("trashed") or folder.get("name") != name or len(folder.get("parents", [])) != 1:
+                        return False
+                    parent = folder["parents"][0]
+                return parent == settings.google_drive_worklog_folder_id.strip()
+            if path_matches(work_date, site_name):
+                return current_parent
+            if current_parent != expected_parent or not path_matches(original_day, "未分類工地"):
+                raise GoogleDriveWorklogError("照片不在原未分類資料夾，請核對；不移動其他位置的檔案")
+            target = self._find_or_create_photo_folder(
+                (site_name, work_date.strftime("%Y-%m"), work_date.isoformat()), client=client)
+            changed = client.files().update(fileId=file_id, addParents=target, removeParents=current_parent,
+                                           fields="id,parents", supportsAllDrives=True).execute()
+            if changed.get("parents") != [target]:
+                raise GoogleDriveWorklogError("原檔移動位置未確認，請重試核對，不需重傳")
+            return target
+        try:
+            return await asyncio.to_thread(move)
+        except Exception as exc:
+            raise GoogleDriveWorklogError(self._friendly_upload_error(exc)) from exc
 
     async def reserve_photo_file_id(self) -> str:
         def reserve():

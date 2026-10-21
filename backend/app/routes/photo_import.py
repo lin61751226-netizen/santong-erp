@@ -2,20 +2,80 @@ import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlmodel import Session
+from sqlmodel import Session, select
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import get_session
 from app.core.local_time import local_today
 from app.deps import require_roles
-from app.models import Employee, Role, Worksite
+from app.models import Employee, Role, Worksite, GroupTextLog
 from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service as drive
 from app.services.photo_import import MAX_PHOTO_BYTES, PhotoImportError, import_photo
 from app.services.drive_photo_index import folder_id_from_url, plan_drive_index, public_plan, apply_drive_index
+from app.services.photo_classification import (
+    classification_plan, classification_lock, apply_classification, is_mixed_photo_group,
+)
+from app.services.line_platform import line_platform_service
 
 router = APIRouter(prefix="/api/photo-uploads", tags=["photo-import"])
 logger = logging.getLogger(__name__)
+
+
+class ClassifyRequest(BaseModel):
+    date_from: date
+    date_to: date
+    allow_legacy: bool = False
+    digest: str = ""
+
+
+async def _caption_plan(payload: ClassifyRequest, session: Session):
+    if payload.date_from > payload.date_to or (payload.date_to - payload.date_from).days > 31:
+        raise HTTPException(400, "請選擇不超過31天的上傳日期範圍")
+    ids = session.exec(select(GroupTextLog.source_id).where(GroupTextLog.source_type == "group").distinct()).all()
+    matches = []
+    for group_id in ids:
+        name = await line_platform_service.get_group_display_name({"type": "group", "groupId": group_id})
+        if is_mixed_photo_group(name):
+            matches.append(group_id)
+    if len(matches) != 1:
+        raise HTTPException(409, "無法唯一確認47&76工地照片群組，未異動照片")
+    return classification_plan(session, group_id=matches[0], date_from=payload.date_from,
+                               date_to=payload.date_to, allow_legacy=payload.allow_legacy)
+
+
+def _public_caption_plan(plan):
+    return {"digest": plan["digest"], "count": plan["count"], "legacy_count": plan["legacy_count"],
+            "summary": plan["summary"], "photos": [{k: r[k] for k in ("id", "file_name", "caption", "site_name", "work_date", "legacy")} for r in plan["rows"]]}
+
+
+@router.post("/classify/preview")
+async def preview_caption_classification(payload: ClassifyRequest, session: Session = Depends(get_session),
+                                        actor: Employee = Depends(require_roles(Role.owner, Role.admin))):
+    return _public_caption_plan(await _caption_plan(payload, session))
+
+
+@router.post("/classify/backup")
+async def retry_classification_backup(actor: Employee = Depends(require_roles(Role.owner, Role.admin))):
+    return await drive.backup_database()
+
+
+@router.post("/classify/apply")
+async def apply_caption_classification(payload: ClassifyRequest, session: Session = Depends(get_session),
+                                      actor: Employee = Depends(require_roles(Role.owner, Role.admin))):
+    async with classification_lock:
+        session.expire_all()
+        plan = await _caption_plan(payload, session)
+        if payload.digest != plan["digest"]:
+            raise HTTPException(409, "文字或照片已異動，請重新預覽；未執行歸檔")
+        if not plan["rows"]:
+            return {"saved": 0, "results": [], "backup_status": "not_needed"}
+        if (await drive.backup_database()).get("status") != "saved":
+            raise HTTPException(503, "原資料雲端備份未完成，暫停歸檔")
+        plan["rows"] = plan["rows"][:20]
+        result = await apply_classification(session, plan, actor=actor)
+        backup = await drive.backup_database()
+        return {**result, "backup_status": backup.get("status", "failed")}
 
 
 class DriveIndexRequest(BaseModel):

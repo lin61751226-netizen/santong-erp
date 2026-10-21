@@ -273,6 +273,9 @@ class PhotoUploadLog(SQLModel, table=True):
     source_group: Optional[str] = None
     album_name: Optional[str] = None
     import_key: Optional[str] = Field(default=None, unique=True, index=True)
+    source_group_id: Optional[str] = Field(default=None, index=True)
+    source_event_at: Optional[datetime] = None
+    classification_text_id: Optional[int] = Field(default=None, foreign_key="grouptextlog.id")
 
 
 class PhotoImportJob(SQLModel, table=True):

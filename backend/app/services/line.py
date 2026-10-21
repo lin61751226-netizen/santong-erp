@@ -49,6 +49,10 @@ from app.services.hr import (
     record_work_report_event,
 )
 from app.services import forklift_service
+from app.services.photo_classification import (
+    is_mixed_photo_group, parse_caption, choose_caption, group_labels,
+    classification_plan, apply_classification, classification_lock, SITE_NAMES,
+)
 from app.services.line_platform import (
     LinePlatformError,
     bind_employee_line_user,
@@ -600,6 +604,21 @@ async def _save_group_text_log(
         print(f"[group-text-log] 群組文字保存失敗：{type(exc).__name__}")
         return
     await _backup_preserved_records()
+    if source_type == "group" and parse_caption(content):
+        name = await line_platform_service.get_group_display_name(source)
+        if is_mixed_photo_group(name):
+            # Photos may precede their caption by a few minutes. Only new records
+            # carrying the exact group ID can be moved automatically.
+            async with classification_lock:
+                plan = classification_plan(session, group_id=source_id,
+                    date_from=local_today() - timedelta(days=1), date_to=local_today())
+                current_ids = {x.id for x in group_labels(session, source_id) if x.source_message_id == message_id}
+                plan["rows"] = [r for r in plan["rows"] if r["text_id"] in current_ids][:50]
+                if plan["rows"]:
+                    backup = await google_drive_worklog_service.backup_database()
+                    if backup.get("status") == "saved":
+                        await apply_classification(session, plan)
+                        await _backup_preserved_records()
 
 
 async def _handle_image_message(
@@ -620,6 +639,12 @@ async def _handle_image_message(
 
     source = event.get("source", {})
     group_site = None
+    group_name = None
+    caption = None
+    photo_day = None
+    event_at = _event_datetime(event).astimezone(timezone.utc).replace(tzinfo=None)
+    if session.exec(select(PhotoUploadLog).where(PhotoUploadLog.source_message_id == message_id)).first():
+        return
     if str(source.get("type") or "").strip() == "group":
         group_name = await line_platform_service.get_group_display_name(source)
         normalized_group_name = "".join(str(group_name or "").split())
@@ -630,6 +655,19 @@ async def _handle_image_message(
                     Worksite.name == "善捷47",
                 )
             ).first()
+        if is_mixed_photo_group(group_name):
+            caption = choose_caption(group_labels(session, source.get("groupId", "")),
+                                     user_id=line_user_id, moment=event_at, allow_following=True)
+            if caption:
+                code, photo_day = parse_caption(caption.content)
+                group_site = session.exec(select(Worksite).where(
+                    Worksite.is_active.is_(True), Worksite.name == SITE_NAMES[code])).first()
+                if not group_site:
+                    caption, photo_day = None, None
+    photo_metadata = {"source_group": group_name, "source_group_id": source.get("groupId"),
+                      "source_event_at": event_at, "work_date": photo_day,
+                      "classification_text_id": caption.id if caption else None}
+    upload_options = {"work_date": photo_day} if photo_day else {}
 
     if not employee:
         display_name = await line_platform_service.get_source_display_name(event.get("source", {}))
@@ -641,6 +679,7 @@ async def _handle_image_message(
                 employee_name=uploader_name,
                 happened_at=_event_datetime(event),
                 site_name=group_site.name if group_site else None,
+                **upload_options,
             )
         except (GoogleDriveWorklogError, LinePlatformError) as exc:
             await line_service.reply_text(
@@ -662,6 +701,7 @@ async def _handle_image_message(
                     drive_file_id=upload.file_id,
                     drive_folder_id=upload.folder_id,
                     drive_url=upload.file_url,
+                    **photo_metadata,
                     note=(
                         f"未綁定員工上傳（LINE 顯示名稱：{uploader_name}；"
                         f"群組工地：{group_site.name}）"
@@ -689,6 +729,9 @@ async def _handle_image_message(
     if group_site:
         # 群組名稱已明確對應工地（如善捷47群組），維持群組優先，避免錯掛派工工地。
         site = group_site
+    elif is_mixed_photo_group(group_name):
+        # A mixed group's dated caption, never the uploader's other dispatch, decides its site.
+        site = None
     else:
         # 事實位置（到達工地／上下班打卡）優先，補上「只有 GPS 上班打卡」的情境。
         photo_moment = _event_datetime(event).astimezone(timezone.utc).replace(tzinfo=None)
@@ -707,6 +750,7 @@ async def _handle_image_message(
             employee_name=employee.name,
             happened_at=_event_datetime(event),
             site_name=site.name if site else None,
+            **upload_options,
         )
     except (GoogleDriveWorklogError, LinePlatformError) as exc:
         await line_service.reply_text(reply_token, f"已收到照片，但上傳 Google 雲端硬碟失敗：{exc}")
@@ -735,6 +779,7 @@ async def _handle_image_message(
             drive_folder_id=upload.folder_id,
             drive_url=upload.file_url,
             note="line image upload",
+            **photo_metadata,
         )
     )
     session.commit()
