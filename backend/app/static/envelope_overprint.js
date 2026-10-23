@@ -93,67 +93,64 @@ export function applySenderLayout(original, sample) {
   return { ...original, fields };
 }
 
-function numberRuns(text) {
-  return String(text || '').matchAll(/[0-9０-９]+(?:[-－—–][0-9０-９]+)*/g);
-}
-
-// House numbers are one upright cell per digit (1em + the column letter-spacing).
-// text-combine-upright draws 385 wider than one em and paints over 路／巷／號／樓.
-// A hyphenated run such as the phone rotates 90° as one string.
-const UPRIGHT_ADVANCE_EM = 1.2;
-
-function isUprightDigitRun(run) {
-  return /^[0-9０-９]{1,4}$/.test(run);
-}
+// One upright cell per character. writing-mode mixes digit and CJK advances,
+// which is what stacked 3 onto 路 and 6 onto 巷. Cell height is the only gap.
+export const GLYPH_EM = 1.15;
+const PHONE_GAP_EM = 0.45;
 
 function isHyphen(ch) {
   return ch === '-' || ch === '－' || ch === '—' || ch === '–';
 }
 
-export function verticalAdvanceEm(text) {
-  const source = String(text || '');
-  let em = 0;
-  let index = 0;
-  for (const match of numberRuns(source)) {
-    em += Array.from(source.slice(index, match.index)).length * UPRIGHT_ADVANCE_EM;
-    const run = match[0];
-    if (isUprightDigitRun(run)) {
-      em += Array.from(run).length * UPRIGHT_ADVANCE_EM;
-    } else {
-      let runEm = 0.12;
-      for (const ch of run) runEm += isHyphen(ch) ? 0.45 : 0.65;
-      em += runEm;
-    }
-    index = match.index + run.length;
-  }
-  em += Array.from(source.slice(index)).length * UPRIGHT_ADVANCE_EM;
+function normalizeSenderText(text) {
+  return String(text ?? '').replace(/電話\s*[:：]/g, '電話：');
+}
+
+export function columnParts(text, { sidewaysPhone = false } = {}) {
+  const source = normalizeSenderText(text);
+  if (!sidewaysPhone) return { glyphs: Array.from(source), phone: '' };
+  const match = source.match(/^(.*?)([0-9０-９][0-9０-９\-－—–]*)$/);
+  if (!match || !match[2]) return { glyphs: Array.from(source), phone: '' };
+  return { glyphs: Array.from(match[1]), phone: match[2] };
+}
+
+function phoneAdvanceEm(phone) {
+  let em = PHONE_GAP_EM + 0.25;
+  for (const ch of phone) em += isHyphen(ch) ? 0.45 : 0.62;
   return em;
 }
 
-export function verticalColumnHtml(text) {
-  const source = String(text ?? '');
-  let html = '';
-  let index = 0;
-  for (const match of numberRuns(source)) {
-    html += esc(source.slice(index, match.index));
-    const run = match[0];
-    html += isUprightDigitRun(run)
-      ? esc(run)
-      : `<span class="num-run sideways">${esc(run)}</span>`;
-    index = match.index + run.length;
+export function verticalAdvanceEm(text, options = {}) {
+  const { glyphs, phone } = columnParts(text, options);
+  let em = glyphs.length * GLYPH_EM;
+  if (phone) em += phoneAdvanceEm(phone);
+  return em;
+}
+
+function glyphSpan(ch) {
+  const shown = ch === ' ' ? '\u00a0' : ch;
+  return `<span class="glyph">${esc(shown)}</span>`;
+}
+
+// Shared by the on-screen preview and print (print shows this same DOM).
+export function verticalColumnHtml(text, options = {}) {
+  const { glyphs, phone } = columnParts(text, options);
+  let html = glyphs.map(glyphSpan).join('');
+  if (phone) {
+    const height = phoneAdvanceEm(phone) - PHONE_GAP_EM;
+    html += `<span class="phone-run" style="height:${height.toFixed(2)}em"><span class="phone-text">${esc(phone)}</span></span>`;
   }
-  html += esc(source.slice(index));
   return html;
 }
 
-// Fit upright columns into the field, leaving the 4mm bottom inset unused.
-export function verticalFontSize(text, heightMm, maxPt) {
-  const em = verticalAdvanceEm(text);
+// Shrink the whole column by one ratio when it would pass the field height.
+export function verticalFontSize(text, heightMm, maxPt, options = {}) {
+  const em = verticalAdvanceEm(text, options);
   const cap = Number(maxPt);
   if (!em || !(Number(heightMm) > 0) || !Number.isFinite(cap)) return cap;
-  const usable = Math.max(1, Number(heightMm) - 4);
+  const usable = Math.max(1, Number(heightMm) - 1);
   const fitted = usable / (em * 0.3528);
-  return Math.round(Math.min(cap, Math.max(5, fitted)) * 10) / 10;
+  return Math.round(Math.min(cap, fitted) * 10) / 10;
 }
 
 function fontSizeFor(key, layout) {
@@ -185,11 +182,11 @@ export function positionedElements(layout, draft, lines) {
     });
   }
 
-  function addVertical(key, text, { oneColumn = false } = {}) {
+  function addVertical(key, text, { oneColumn = false, sidewaysPhone = false } = {}) {
     const field = layout.fields[key];
     if (!text || !field) return;
     const fontSize = oneColumn
-      ? verticalFontSize(text, field.height, fontSizeFor(key, layout))
+      ? verticalFontSize(text, field.height, fontSizeFor(key, layout), { sidewaysPhone })
       : fontSizeFor(key, layout);
     out.push({
       key, text,
@@ -197,8 +194,9 @@ export function positionedElements(layout, draft, lines) {
       y: Number((field.y + oy).toFixed(2)),
       width: field.width,
       height: field.height,
-      vertical: true,
+      vertical: !oneColumn,
       oneColumn,
+      sidewaysPhone,
       fontSize,
     });
   }
@@ -211,7 +209,7 @@ export function positionedElements(layout, draft, lines) {
   // Address is one vertical column. Name and phone share the other column;
   // sender_phone is not drawn again.
   addVertical('sender_address', lines.sender_address, { oneColumn: true });
-  addVertical('sender_name', lines.sender_name, { oneColumn: true });
+  addVertical('sender_name', lines.sender_name, { oneColumn: true, sidewaysPhone: true });
   return out;
 }
 
@@ -317,9 +315,11 @@ function renderPreview() {
       return `<div class="sheet-field postcode-char" data-key="${esc(el.key)}"
         style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
     }
-    const column = el.oneColumn ? ' one-column' : '';
-    const body = el.oneColumn ? verticalColumnHtml(el.text) : esc(el.text);
-    return `<div class="sheet-field${el.vertical ? ' vertical' : ''}${column}" data-key="${esc(el.key)}"
+    const kind = el.oneColumn ? ' stack-column' : (el.vertical ? ' vertical' : '');
+    const body = el.oneColumn
+      ? verticalColumnHtml(el.text, { sidewaysPhone: !!el.sidewaysPhone })
+      : esc(el.text);
+    return `<div class="sheet-field${kind}" data-key="${esc(el.key)}"
       style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${body}</div>`;
   }).join('');
 }
