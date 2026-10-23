@@ -360,6 +360,56 @@ function restorePrint() {
   $('printBtn').disabled = false;
 }
 
+async function downloadPdf(calibration) {
+  const button = $(calibration ? 'downloadCalibrationPdfBtn' : 'downloadPdfBtn');
+  const layout = gatherLayout();
+  const body = { layout, calibration: Boolean(calibration) };
+  if (!calibration) {
+    const ok = await validateDraft();
+    if (!ok) {
+      alert('請先填齊收件人地址與姓名。');
+      return;
+    }
+    if (!validatePaper()) {
+      alert('仍有欄位超出紙張，請先修正。');
+      return;
+    }
+    body.draft = gatherDraft();
+  }
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/envelope-print/pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const detail = typeof data.detail === 'string' ? data.detail : 'PDF 產生失敗';
+      setFeedback(detail, 'error');
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const width = layout.paper_width || 100;
+    const height = layout.paper_height || 200;
+    link.download = calibration
+      ? `信封白紙校正-${width}x${height}.pdf`
+      : `信封套印-${width}x${height}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setFeedback(calibration ? '已下載白紙校正 PDF。請用檢視器以實際大小列印。' : '已下載信封 PDF。請用檢視器以實際大小列印，紙張選 100×200。');
+  } catch (error) {
+    setFeedback('PDF 下載失敗，請稍後再試。', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function printSheet() {
   if (state.printing) return;
   if (!state.testPrint) {
@@ -443,6 +493,8 @@ async function init() {
     renderPreview();
   });
   $('printBtn').addEventListener('click', printSheet);
+  $('downloadPdfBtn').addEventListener('click', () => downloadPdf(false));
+  $('downloadCalibrationPdfBtn').addEventListener('click', () => downloadPdf(true));
   window.addEventListener('afterprint', restorePrint);
   $('sampleLayout').addEventListener('click', () => {
     state.layout = { ...sample, offset_x: state.layout.offset_x, offset_y: state.layout.offset_y };

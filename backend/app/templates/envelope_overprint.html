@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>直式信封套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/envelope_overprint.css?v=sender-cells-20261023">
+  <link rel="stylesheet" href="/static/envelope_overprint.css?v=envelope-print-pdf-20261023">
 </head>
 <body data-page="envelope-overprint">
   <header class="topbar">
@@ -142,9 +142,9 @@
       <div class="layout-note">
         <strong>列印前於瀏覽器列印視窗確認：</strong>
         <ol>
-          <li>印表機：請選「<strong>Brother 直式信封 100x200mm</strong>」（MP盤放信封，長邊進紙、直向）。</li>
-          <li>紙張尺寸：自動（網頁指定100×200）；配置方式：<strong>實際大小／100%</strong>，不要用「符合頁面大小」。</li>
-          <li>邊界：無／0；關閉頁首頁尾；背景圖形關閉。</li>
+          <li>印表機：請選「<strong>Brother 直式信封 100x200mm</strong>」（MP匣、直向、100%）。正式紙張請手動選「<strong>100×200</strong>」。</li>
+          <li>縮放：<strong>實際大小／100%</strong>。邊界無／0；關閉頁首頁尾與背景圖形。</li>
+          <li>列印視窗若被改成 A4，這一頁不應再多出第二頁，但對不準信封。請改選 100×200，或改按「下載信封 PDF」用檢視器以實際大小列印。</li>
           <li>請先用白紙（裁成100×200）試印，再對信封調整X／Y與各欄座標。</li>
         </ol>
       </div>
@@ -160,12 +160,14 @@
       <div class="warning" id="validation" role="alert"></div>
       <div class="button-row">
         <button type="button" id="printBtn">列印</button>
+        <button type="button" id="downloadPdfBtn" class="button-secondary no-print">下載信封 PDF（單頁 100×200mm，不含按鈕）</button>
+        <button type="button" id="downloadCalibrationPdfBtn" class="button-secondary no-print">下載白紙校正 PDF</button>
         <button type="button" id="saveLayout" class="button-secondary">保存定位</button>
         <button type="button" id="saveDraft" class="button-secondary">存草稿</button>
         <button type="button" id="loadDraft" class="button-secondary">載入草稿</button>
         <button type="button" id="retryBackup" class="button-secondary">重試雲端備份</button>
       </div>
-      <p class="muted" id="printHint">每次都會開啟瀏覽器列印視窗；可重複列印。</p>
+      <p class="muted" id="printHint">網頁列印只送出這一頁信封。Chrome 若把紙張改成 A4，請改下載 PDF，用檢視器選實際大小、紙張 100×200。PDF 內嵌文鼎明體，逐字位置與畫面預覽相同。</p>
     </section>
 
     <section class="card">
@@ -179,6 +181,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/envelope_overprint.js?v=sender-cells-20261023"></script>
+  <script type="module" src="/static/envelope_overprint.js?v=envelope-print-pdf-20261023"></script>
 </body>
 </html>

@@ -11,6 +11,7 @@ from app.core.db import get_session
 from app.deps import require_roles
 from app.models import AdminAuditLog, Employee, InvoicePrintRevision, Role
 from app.services.google_drive import google_drive_worklog_service as drive
+from app.services.envelope_pdf import render_envelope_pdf
 from app.services.envelope_print import EnvelopeDraft, EnvelopeLayout, render_lines
 
 router = APIRouter()
@@ -108,6 +109,28 @@ def validate_draft(payload: dict, actor: Employee = Depends(admin)):
         return {"ok": True, "lines": render_lines(draft)}
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.post("/api/envelope-print/pdf")
+def download_envelope_pdf(payload: dict, actor: Employee = Depends(admin)):
+    """One-page envelope PDF. Does not save a layout, a draft, or a backup."""
+    try:
+        layout = EnvelopeLayout(**(payload.get("layout") or {}))
+        calibration = bool(payload.get("calibration"))
+        draft = None if calibration else EnvelopeDraft(**(payload.get("draft") or {}))
+        pdf = render_envelope_pdf(layout, draft, calibration=calibration)
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise HTTPException(422, detail=f"PDF 內容不正確：{exc}") from exc
+    kind = "calibration" if calibration else "envelope"
+    filename = f"{kind}-{layout.paper_width:g}x{layout.paper_height:g}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/api/envelope-print/drafts")
