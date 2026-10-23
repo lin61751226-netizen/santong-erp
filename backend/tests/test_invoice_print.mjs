@@ -47,3 +47,9 @@ test('sample changes only paper and buyer/tax coordinates, not other calibration
   assert.deepEqual(result.fields.note,original.fields.note);
   assert.equal(original.fields.buyer.y,22);
 });
+
+test('updated layout loads versioned CSS and module rather than cached old assets',()=>{
+  const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=195x103-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=195x103-20261023"/);
+});
