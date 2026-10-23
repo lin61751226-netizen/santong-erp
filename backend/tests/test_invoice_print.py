@@ -65,7 +65,9 @@ def test_default_layout_get_is_read_only(ctx):
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store'
     data = response.json(); assert data['revision'] == 0
-    assert data['content']['fields']['buyer']['x'] == 27
+    assert data['content']['fields']['buyer']['x'] == 35
+    assert data['content']['fields']['buyer']['y'] == 13.5
+    assert (data['content']['paper_width'],data['content']['paper_height']) == (195,103)
     assert data['content']['fields']['uppercase']['y'] == 82
     assert session.exec(select(InvoicePrintRevision)).all() == []
     assert not backup.called
@@ -171,3 +173,47 @@ def test_draft_pagination(ctx):
     first = client.get('/api/invoice-print/drafts').json();second=client.get('/api/invoice-print/drafts?offset=50').json()
     assert len(first['items']) == 50 and first['has_more']
     assert len(second['items']) == 1 and not second['has_more']
+
+
+def test_legacy_layout_read_does_not_resize_or_rewrite(ctx):
+    client,session,actor,backup=ctx
+    old=PrintLayout().model_dump();old.pop('paper_width');old.pop('paper_height')
+    old['fields']['buyer'].update(x=27,y=22);old['fields']['tax_id'].update(x=30,y=12)
+    row=InvoicePrintRevision(kind='layout',record_key='shared',revision=1,content=deepcopy(old),created_by_id=actor.id)
+    session.add(row);session.commit()
+    result=client.get('/api/invoice-print/template').json()
+    assert (result['content']['paper_width'],result['content']['paper_height']) == (190,105)
+    assert result['content']['fields']['buyer']['y']==22
+    session.refresh(row);assert row.content==old and not backup.called
+    assert client.put('/api/invoice-print/template',json={'expected_revision':1,'content':old}).status_code==422
+    assert len(session.exec(select(InvoicePrintRevision)).all())==1
+
+
+def test_sample_is_private_read_only_and_buyer_above_tax_id(ctx):
+    client,session,actor,backup=ctx
+    sample=client.get('/api/invoice-print/sample-layout')
+    assert sample.status_code==200 and sample.headers['cache-control']=='no-store'
+    content=sample.json()
+    assert (content['paper_width'],content['paper_height'])==(195,103)
+    assert content['fields']['buyer']['y'] < content['fields']['tax_id']['y']
+    assert not session.exec(select(InvoicePrintRevision)).all() and not backup.called
+    app.dependency_overrides.pop(get_current_actor)
+    assert client.get('/api/invoice-print/sample-layout').status_code==401
+
+
+@pytest.mark.parametrize('patch', [{'paper_width':79},{'paper_height':298},{'paper_height':90},{'paper_width':'NaN'}])
+def test_paper_dimensions_validate_with_fields(ctx,patch):
+    client,session,actor,backup=ctx
+    content={**PrintLayout().model_dump(),**patch}
+    assert client.put('/api/invoice-print/template',json={'expected_revision':0,'content':content}).status_code==422
+    assert not session.exec(select(InvoicePrintRevision)).all() and not backup.called
+
+
+def test_explicit_resize_keeps_old_revision(ctx):
+    client,session,actor,backup=ctx
+    old=PrintLayout().model_dump();old.update(paper_width=190,paper_height=105)
+    assert client.put('/api/invoice-print/template',json={'expected_revision':0,'content':old}).status_code==200
+    new=PrintLayout().model_dump()
+    assert client.put('/api/invoice-print/template',json={'expected_revision':1,'content':new}).json()['revision']==2
+    rows=session.exec(select(InvoicePrintRevision).order_by(InvoicePrintRevision.id)).all()
+    assert rows[0].content['paper_width']==190 and rows[1].content['paper_width']==195

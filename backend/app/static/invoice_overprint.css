@@ -1,4 +1,4 @@
-:root { --ink:#223631; --muted:#69766f; --line:#d6ddd5; --paper:#fffdf8; --accent:#226452; }
+:root { --ink:#223631; --muted:#69766f; --line:#d6ddd5; --paper:#fffdf8; --accent:#226452; --paper-width:195mm; --paper-height:103mm; }
 * { box-sizing:border-box; }
 body { margin:0; color:var(--ink); background:radial-gradient(at 10% 0%,#e0e9df,transparent 55%),#f3f1e9; font-family:"Microsoft JhengHei",sans-serif; }
 header,main,.toolbar,.message,.preview-heading { max-width:1200px; margin:20px auto; padding:0 24px; }
@@ -19,13 +19,13 @@ td input { min-width:78px; } td:first-child input { min-width:170px; } #fieldPos
 .message { min-height:27px; font-weight:bold; } .totals { background:#e7eee7; padding:16px; border-radius:6px; }.actions { margin:14px 0; } summary { cursor:pointer; padding:12px 0; font-weight:bold; }
 #draftList button { display:block; width:100%; text-align:left; margin:8px 0; } .error { color:#a53023; }
 .paper-viewport { overflow-x:auto; padding:4px 24px 32px; }
-#sheet { position:relative; width:190mm; height:105mm; margin:0 auto; background-color:white; background-image:linear-gradient(#dae4dc 1px,transparent 1px),linear-gradient(90deg,#dae4dc 1px,transparent 1px); background-size:5mm 5mm; outline:1px solid #abb9ad; color:black; }
+#sheet { position:relative; width:var(--paper-width); height:var(--paper-height); margin:0 auto; background-color:white; background-image:linear-gradient(#dae4dc 1px,transparent 1px),linear-gradient(90deg,#dae4dc 1px,transparent 1px); background-size:5mm 5mm; outline:1px solid #abb9ad; color:black; }
 .print-field { position:absolute; line-height:1.2; white-space:nowrap; } .print-field.numeric { text-align:right; } .print-field.bad { outline:2px solid #c34a33; }
 #testMark { position:absolute; top:2mm; left:4mm; font:9pt "Microsoft JhengHei",sans-serif; color:#687c6a; }
 @media(max-width:850px) { main { grid-template-columns:1fr; } h1 { font-size:29px; }.card { padding:18px; } .form-grid { grid-template-columns:1fr; } .toolbar { position:static; } }
-@page { size:190mm 105mm; margin:0; }
+@page { size:195mm 103mm; margin:0; }
 @media print {
-  html,body { margin:0!important; padding:0!important; width:190mm; height:105mm; background:white!important; }
+  html,body { margin:0!important; padding:0!important; width:var(--paper-width); height:var(--paper-height); background:white!important; }
   .no-print { display:none!important; } .paper-viewport { padding:0; margin:0; overflow:visible; }
   #sheet { margin:0; outline:0; background:none; break-inside:avoid; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
   #testMark { display:none; } body.test-print #testMark { display:block; }

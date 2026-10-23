@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/invoice_overprint.js',import.meta.url),'utf8');
-const {taipeiDate,positionedFields,backupMessage}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 test('Taipei date crosses UTC date correctly',()=>{
   assert.equal(taipeiDate(new Date('2026-10-22T17:00:00Z')),'2026-10-23');
@@ -22,10 +22,28 @@ test('backup failure never says cloud saved',()=>{
 });
 test('print is content-only at exact physical size and guarded',()=>{
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
-  assert.match(css,/@page\s*\{\s*size:190mm 105mm;\s*margin:0/);
+  assert.match(css,/@page\s*\{\s*size:195mm 103mm;\s*margin:0/);
   assert.match(css,/body:not\(\.print-armed\)/);
   assert.match(source,/element\.textContent=field\.text/);
   assert.doesNotMatch(source,/innerHTML|document\.write/);
   assert.match(source,/window\.addEventListener\('afterprint'/);
   assert.match(source,/sequence!==state\.sequence/);
+});
+
+test('paper dimensions drive CSS page size with safe legacy fallback',()=>{
+  assert.deepEqual(paperGeometry({}),{width:190,height:105,pageRule:'@page { size:190mm 105mm; margin:0; }'});
+  assert.deepEqual(paperGeometry({paper_width:195,paper_height:103}),{width:195,height:103,pageRule:'@page { size:195mm 103mm; margin:0; }'});
+  for(const value of [NaN,Infinity,0,79,298,'195; color:red'])assert.throws(()=>paperGeometry({paper_width:value,paper_height:103}));
+  assert.match(source,/sheet\.width\/paper\.width/);
+  assert.match(source,/field\.y\+rect\.height\/scale>paper\.height/);
+});
+
+test('sample changes only paper and buyer/tax coordinates, not other calibration',()=>{
+  const original={paper_width:190,paper_height:105,font_size:12,offset_x:1,offset_y:-2,fields:{buyer:{x:27,y:22,width:70},tax_id:{x:30,y:12,width:65},note:{x:12,y:94,width:165}}};
+  const sample={paper_width:195,paper_height:103,fields:{buyer:{x:35,y:13.5,width:70},tax_id:{x:35,y:20,width:65}}};
+  const result=applySampleLayout(original,sample);
+  assert.equal(result.paper_height,103);assert.equal(result.fields.buyer.y,13.5);
+  assert.equal(result.font_size,12);assert.equal(result.offset_x,1);
+  assert.deepEqual(result.fields.note,original.fields.note);
+  assert.equal(original.fields.buyer.y,22);
 });

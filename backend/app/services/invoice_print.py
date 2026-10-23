@@ -2,7 +2,7 @@
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -10,14 +10,14 @@ class StrictModel(BaseModel):
 
 
 class Position(StrictModel):
-    x: float = Field(ge=0, le=189)
-    y: float = Field(ge=0, le=104)
-    width: float = Field(gt=0, le=190)
+    x: float = Field(ge=0, le=296)
+    y: float = Field(ge=0, le=296)
+    width: float = Field(gt=0, le=297)
 
 
 def default_fields():
     coordinates = {
-        "buyer": (27, 22, 70), "tax_id": (30, 12, 65),
+        "buyer": (35, 13.5, 70), "tax_id": (35, 20, 65),
         "year": (125, 22, 12), "month": (145, 22, 8), "day": (160, 22, 8),
         "description": (12, 38, 80), "quantity": (96, 38, 13), "unit": (112, 38, 9),
         "unit_price": (124, 38, 24), "amount": (151, 38, 27),
@@ -28,6 +28,8 @@ def default_fields():
 
 
 class PrintLayout(StrictModel):
+    paper_width: float = Field(default=195, ge=80, le=297)
+    paper_height: float = Field(default=103, ge=80, le=297)
     offset_x: float = Field(default=0, ge=-20, le=20)
     offset_y: float = Field(default=0, ge=-20, le=20)
     font: Literal["PMingLiU", "Microsoft JhengHei"] = "PMingLiU"
@@ -41,9 +43,13 @@ class PrintLayout(StrictModel):
     def exact_fields(cls, fields):
         if set(fields) != set(default_fields()):
             raise ValueError("欄位清單不完整")
-        if any(p.x + p.width > 190 for p in fields.values()):
-            raise ValueError("欄位超出紙張寬度")
         return fields
+
+    @model_validator(mode="after")
+    def paper_bounds(self):
+        if any(p.x + p.width > self.paper_width or p.y >= self.paper_height for p in self.fields.values()):
+            raise ValueError("欄位超出目前紙張範圍")
+        return self
 
 
 class PrintItem(StrictModel):

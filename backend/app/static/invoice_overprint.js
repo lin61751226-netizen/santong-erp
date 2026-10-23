@@ -1,6 +1,19 @@
 const LABELS = {buyer:'買受人',tax_id:'統一編號',year:'民國年',month:'月',day:'日',description:'品名',quantity:'數量',unit:'單位',unit_price:'單價',amount:'明細金額',subtotal:'未稅小計',tax:'稅額',total:'數字總計',uppercase:'國字總計',note:'備註'};
 const NUMERIC = new Set(['quantity','unit_price','amount','subtotal','tax','total']);
 
+export function paperGeometry(layout) {
+  const width=layout.paper_width ?? 190, height=layout.paper_height ?? 105;
+  if(!Number.isFinite(width)||!Number.isFinite(height)||width<80||width>297||height<80||height>297)throw new Error('紙張寬高須為80至297mm。');
+  return {width,height,pageRule:`@page { size:${width}mm ${height}mm; margin:0; }`};
+}
+
+export function applySampleLayout(layout, sample) {
+  const next=structuredClone(layout);
+  next.paper_width=sample.paper_width;next.paper_height=sample.paper_height;
+  for(const key of ['buyer','tax_id'])next.fields[key]=structuredClone(sample.fields[key]);
+  return next;
+}
+
 export function taipeiDate(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
   const p = Object.fromEntries(parts.map(x=>[x.type,x.value]));
@@ -44,7 +57,7 @@ if (typeof document !== 'undefined') {
   }
   function readLayout() {
     const content = structuredClone(state.layout);
-    for (const key of ['offset_x','offset_y','font_size','tax_id_spacing','row_pitch']) content[key]=Number($(key).value);
+    for (const key of ['paper_width','paper_height','offset_x','offset_y','font_size','tax_id_spacing','row_pitch']) content[key]=Number($(key).value);
     content.font=$('font').value;
     for (const input of $('fieldPositions').querySelectorAll('input')) content.fields[input.dataset.field][input.dataset.axis]=Number(input.value);
     return content;
@@ -75,12 +88,13 @@ if (typeof document !== 'undefined') {
   }
   function fillLayout(content) {
     state.layout=structuredClone(content);
-    for (const key of ['offset_x','offset_y','font','font_size','tax_id_spacing','row_pitch']) $(key).value=content[key];
+    const paper=paperGeometry(content);state.layout.paper_width=paper.width;state.layout.paper_height=paper.height;
+    for (const key of ['paper_width','paper_height','offset_x','offset_y','font','font_size','tax_id_spacing','row_pitch']) $(key).value=state.layout[key];
     $('fieldPositions').replaceChildren();
     for (const [key,p] of Object.entries(content.fields)) {
       const tr=document.createElement('tr');tr.insertCell().textContent=LABELS[key];
       for (const axis of ['x','y','width']) {
-        const input=document.createElement('input');input.type='number';input.step='0.1';input.min=axis==='width'?'0.1':'0';input.max=axis==='y'?'104':axis==='x'?'189':'190';input.required=true;input.value=p[axis];input.dataset.field=key;input.dataset.axis=axis;input.setAttribute('aria-label',`${LABELS[key]} ${axis} mm`);tr.insertCell().append(input);
+        const input=document.createElement('input');input.type='number';input.step='0.1';input.min=axis==='width'?'0.1':'0';input.max='297';input.required=true;input.value=p[axis];input.dataset.field=key;input.dataset.axis=axis;input.setAttribute('aria-label',`${LABELS[key]} ${axis} mm`);tr.insertCell().append(input);
       }
       $('fieldPositions').append(tr);
     }
@@ -94,6 +108,13 @@ if (typeof document !== 'undefined') {
     }
     const draft=readDraft(), layout=readLayout();
     try {
+      const paper=paperGeometry(layout);
+      document.documentElement.style.setProperty('--paper-width',`${paper.width}mm`);
+      document.documentElement.style.setProperty('--paper-height',`${paper.height}mm`);
+      $('paperStyle').textContent=paper.pageRule;
+      $('paperSummary').textContent=`${paper.width} × ${paper.height} mm${paper.width>=paper.height?' 橫式':''}`;
+      $('sheet').setAttribute('aria-label',`${paper.width}乘${paper.height}公厘套印預覽`);
+      $('paperHint').textContent=`版面${paper.width}×${paper.height}mm。Brother短邊進紙${Math.min(paper.width,paper.height)}×${Math.max(paper.width,paper.height)}mm，方向${paper.width>=paper.height?'橫向':'直向'}；紙張含裝訂邊，不再加邊。`;
       const calculated=await api('calculate',{method:'POST',body:JSON.stringify(draft)});
       if(sequence!==state.sequence)return false;
       $('totals').textContent=`未稅 ${calculated.subtotal.toLocaleString()} ＋ 稅額 ${calculated.tax.toLocaleString()} ＝ 總計 ${calculated.total.toLocaleString()} 元 ／ ${calculated.uppercase}`;
@@ -101,7 +122,7 @@ if (typeof document !== 'undefined') {
       $('addItem').disabled=draft.items.length>=5;
       $('printFields').replaceChildren();
       $('sheet').style.fontFamily=`"${layout.font}", serif`; $('sheet').style.fontSize=`${layout.font_size}pt`;
-      const invalid=[], boxes=[];const sheet=$('sheet').getBoundingClientRect(); const scale=sheet.width/190;
+      const invalid=[], boxes=[];const sheet=$('sheet').getBoundingClientRect(); const scale=sheet.width/paper.width;
       for (const field of positionedFields(layout,draft,calculated)) {
         const element=document.createElement('div');element.className='print-field'+(field.numeric?' numeric':'');element.textContent=field.text;
         element.style.left=`${field.x}mm`;element.style.top=`${field.y}mm`;element.style.width=`${field.width}mm`;element.title=LABELS[field.key];
@@ -109,7 +130,7 @@ if (typeof document !== 'undefined') {
         $('printFields').append(element);
         const rect=element.getBoundingClientRect();
         if(field.text)boxes.push({key:field.key,element,rect});
-        if(field.text && (field.x<0||field.y<0||field.x+field.width>190.01||field.y+rect.height/scale>105.01||element.scrollWidth>element.clientWidth+1)) {
+        if(field.text && (field.x<0||field.y<0||field.x+field.width>paper.width+.01||field.y+rect.height/scale>paper.height+.01||element.scrollWidth>element.clientWidth+1)) {
           invalid.push(LABELS[field.key]);element.classList.add('bad');
         }
       }
@@ -175,6 +196,15 @@ if (typeof document !== 'undefined') {
     message(`草稿版本${result.revision}已保存至資料庫。${backupMessage(result.backup)}${state.draftDirty?'保存期間另有修改，請再保存。':''}`);
   },'savingDraft');
   $('newDraft').onclick=newDraft;
+  $('sampleLayout').onclick=()=>action($('sampleLayout'),async()=>{
+    if(state.savingLayout)throw new Error('印模正在保存，請稍候。');
+    if(!$('layoutForm').reportValidity())return;
+    const sample=await api('sample-layout');
+    if(state.savingLayout)throw new Error('印模正在保存，請稍候。');
+    if(!window.confirm('只套用195×103mm紙張與買受人／統編位置；其他欄位、字型、位移與金額不變。套用後仍須按保存。'))return;
+    fillLayout(applySampleLayout(readLayout(),sample));state.layoutDirty=true;schedule();
+    message('已套用照片估算位置：買受人在上、統編在下；尚未保存，仍需白紙試印。');
+  });
   $('reloadLayout').onclick=()=>action($('reloadLayout'),loadLayout);
   $('reloadDrafts').onclick=()=>action($('reloadDrafts'),()=>listDrafts());
   $('moreDrafts').onclick=()=>action($('moreDrafts'),()=>listDrafts(state.draftOffset+50));
@@ -186,8 +216,7 @@ if (typeof document !== 'undefined') {
   });
   async function print(test) {
     if(!test&&!$('aligned').checked)return;
-    const aligned=$('aligned').checked;
-    if(!await refresh()||(!test&&!aligned))return;
+    if(!await refresh()||(!test&&!$('aligned').checked))return;
     if(!test&&(!readDraft().buyer||!readDraft().tax_id)){message('正式套印前請填寫買受人與8位統編。',true);return;}
     document.body.classList.toggle('test-print',test);document.body.classList.add('print-armed');window.print();
   }
@@ -195,7 +224,7 @@ if (typeof document !== 'undefined') {
   window.addEventListener('afterprint',()=>document.body.classList.remove('print-armed','test-print'));
   window.addEventListener('beforeunload',event=>{if(state.draftDirty||state.layoutDirty||state.savingDraft||state.savingLayout){event.preventDefault();event.returnValue='';}});
   (async()=>{
-    try { await loadLayout();newDraft();$('saveLayout').disabled=false;$('saveDraft').disabled=false; }
+    try { await loadLayout();newDraft();$('saveLayout').disabled=false;$('saveDraft').disabled=false;$('sampleLayout').disabled=false; }
     catch(error){message(error.message,true);}
   })();
 }

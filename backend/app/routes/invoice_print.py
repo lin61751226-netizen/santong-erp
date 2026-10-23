@@ -41,7 +41,12 @@ def latest(session, kind, key):
 
 
 def encode(row):
-    return {"record_key": row.record_key, "revision": row.revision, "content": row.content,
+    content = dict(row.content)
+    if row.kind == "layout":
+        # Earlier layouts had an implicit 190 x 105 mm sheet. Never silently resize them.
+        content.setdefault("paper_width", 190)
+        content.setdefault("paper_height", 105)
+    return {"record_key": row.record_key, "revision": row.revision, "content": content,
             "created_at": row.created_at.isoformat() + "Z"}
 
 
@@ -86,7 +91,14 @@ def template(session: Session = Depends(get_session), actor: Employee = Depends(
 
 @router.put("/api/invoice-print/template")
 async def save_template(payload: LayoutSave, session: Session = Depends(get_session), actor: Employee = Depends(admin)):
+    if not {"paper_width", "paper_height"}.issubset(payload.content.model_fields_set):
+        raise HTTPException(422, "請重新整理套印頁並確認紙張寬高；本次未變更印模")
     return await save(session, actor, "layout", "shared", payload.expected_revision, payload.content.model_dump(mode="json"))
+
+
+@router.get("/api/invoice-print/sample-layout")
+def sample_layout(actor: Employee = Depends(admin)):
+    return PrintLayout().model_dump()
 
 
 @router.post("/api/invoice-print/calculate")
