@@ -511,6 +511,59 @@ function restorePrint() {
   $('printBtn').disabled = false;
 }
 
+function pdfFilename(calibration, layout) {
+  const mode = layout?.feed_mode || 'portrait_cw';
+  const portrait = mode === 'portrait_cw' || mode === 'portrait_ccw';
+  const size = portrait ? '103x195' : '195x103';
+  return calibration ? `發票白紙校正-${size}.pdf` : `發票套印-${size}.pdf`;
+}
+
+async function downloadPdf(calibration) {
+  const button = $(calibration ? 'downloadCalibrationPdfBtn' : 'downloadPdfBtn');
+  const layout = gatherLayout();
+  const body = { layout, calibration: Boolean(calibration) };
+  if (!calibration) {
+    refresh();
+    if (!state.calc) {
+      alert('金額或日期不正確，無法產生正式發票 PDF。');
+      return;
+    }
+    if (!printAllowed(false, validatePaper(), !$('validation').hidden, false)) {
+      alert('仍有欄位超出紙張，請先修正。');
+      return;
+    }
+    body.draft = gatherDraft();
+  }
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/invoice-print/pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const detail = typeof data.detail === 'string' ? data.detail : 'PDF 產生失敗';
+      setFeedback(detail, 'error');
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = pdfFilename(calibration, layout);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setFeedback(calibration ? '已下載白紙校正 PDF。請用檢視器以實際大小列印。' : '已下載發票 PDF。請用檢視器以實際大小列印，紙張選 103×195。');
+  } catch (error) {
+    setFeedback('PDF 下載失敗，請稍後再試。', 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function printSheet() {
   if (state.printing) return;
   const paperOk = validatePaper();
@@ -670,6 +723,8 @@ async function init() {
   $('showPhoto').addEventListener('change', renderPreview);
   bindPhotoEditing();
   $('printBtn').addEventListener('click', printSheet);
+  $('downloadPdfBtn').addEventListener('click', () => downloadPdf(false));
+  $('downloadCalibrationPdfBtn').addEventListener('click', () => downloadPdf(true));
   window.addEventListener('afterprint', restorePrint);
   window.addEventListener('keydown', (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'p') {
