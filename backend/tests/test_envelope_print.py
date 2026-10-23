@@ -67,7 +67,7 @@ def test_default_sender_is_santong():
     assert draft.sender_phone == '0978-909-078'
     lines = render_lines(draft)
     assert lines['receiver_name'] == '王大明收'
-    assert lines['sender_name'] == '三通工程行 林金生緘  電話：0978-909-078'
+    assert lines['sender_name'] == '三通工程行 林金生緘 電話：0978-909-078'
     assert lines['sender_phone'] == ''
     assert '0978-909-0781' not in lines['sender_name']
     assert lines['sender_address'] == '桃園市桃園區永安路385巷6號8樓之3'
@@ -79,8 +79,9 @@ def test_sender_is_two_vertical_columns_and_postcode_stays():
     name = layout.fields['sender_name']
     phone = layout.fields['sender_phone']
     assert address.x > name.x
-    assert address.y == name.y == 32
-    assert address.height == name.height == 140
+    assert address.y == name.y == 25
+    assert address.height == name.height == 150
+    assert address.y + address.height == 175
     assert address.width <= 12 and name.width <= 12
     assert phone.x == name.x and phone.y == name.y
     postcode = layout.fields['sender_postcode']

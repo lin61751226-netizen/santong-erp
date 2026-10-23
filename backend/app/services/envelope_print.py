@@ -54,12 +54,14 @@ def default_envelope_fields() -> dict[str, FieldSpec]:
         "receiver_name": FieldSpec(x=30, y=40, width=24, height=112),
         # Sender zone on the left. Postcode boxes stay put.
         # Address is the right-hand vertical column (read first); name+phone
-        # is the left-hand column. The phone field is kept for saved layouts
-        # but is not printed on its own — see sender_column_text().
+        # is the left-hand column. Columns run Y25–175 so a full address and
+        # the sideways phone string fit above the postcode (Y178). The phone
+        # field is kept for saved layouts but is not printed on its own —
+        # see sender_column_text().
         "sender_postcode": FieldSpec(x=8, y=178, width=30, height=7),
-        "sender_address": FieldSpec(x=18, y=32, width=10, height=140),
-        "sender_name": FieldSpec(x=6, y=32, width=10, height=140),
-        "sender_phone": FieldSpec(x=6, y=32, width=10, height=140),
+        "sender_address": FieldSpec(x=18, y=25, width=10, height=150),
+        "sender_name": FieldSpec(x=6, y=25, width=10, height=150),
+        "sender_phone": FieldSpec(x=6, y=25, width=10, height=150),
     }
 
 
@@ -189,12 +191,15 @@ class EnvelopeDraft(BaseModel):
 
 
 def sender_column_text(draft: EnvelopeDraft) -> str:
-    """One vertical line: 「姓名＋後綴  電話：號碼」. No phone label when blank."""
+    """One vertical line: 「姓名＋後綴 電話：號碼」.
+
+    A single space sits between the suffix and 電話. No phone label when blank.
+    """
     head = f"{draft.sender_name}{draft.sender_suffix or ''}".strip()
     phone = (draft.sender_phone or "").strip()
     if not phone:
         return head
-    return f"{head}  電話：{phone}"
+    return f"{head} 電話：{phone}"
 
 
 def render_lines(draft: EnvelopeDraft) -> dict:

@@ -93,13 +93,62 @@ export function applySenderLayout(original, sample) {
   return { ...original, fields };
 }
 
-// Upright vertical advance is one em plus the 0.02em letter-spacing on .one-column.
+function numberRuns(text) {
+  return String(text || '').matchAll(/[0-9０-９]+(?:[-－—–][0-9０-９]+)*/g);
+}
+
+// Short digit groups stay upright via text-combine-upright (one em).
+// Longer runs and anything with a hyphen rotate 90° as one string.
+function isCompactUprightRun(run) {
+  return /^[0-9０-９]{1,4}$/.test(run);
+}
+
+function isHyphen(ch) {
+  return ch === '-' || ch === '－' || ch === '—' || ch === '–';
+}
+
+export function verticalAdvanceEm(text) {
+  const source = String(text || '');
+  let em = 0;
+  let index = 0;
+  for (const match of numberRuns(source)) {
+    em += Array.from(source.slice(index, match.index)).length * 1.02;
+    const run = match[0];
+    if (isCompactUprightRun(run)) {
+      em += 1.02;
+    } else {
+      let runEm = 0.12;
+      for (const ch of run) runEm += isHyphen(ch) ? 0.45 : 0.65;
+      em += runEm;
+    }
+    index = match.index + run.length;
+  }
+  em += Array.from(source.slice(index)).length * 1.02;
+  return em;
+}
+
+export function verticalColumnHtml(text) {
+  const source = String(text ?? '');
+  let html = '';
+  let index = 0;
+  for (const match of numberRuns(source)) {
+    html += esc(source.slice(index, match.index));
+    const run = match[0];
+    const kind = isCompactUprightRun(run) ? 'tcy' : 'sideways';
+    html += `<span class="num-run ${kind}">${esc(run)}</span>`;
+    index = match.index + run.length;
+  }
+  html += esc(source.slice(index));
+  return html;
+}
+
+// Fit upright columns into the field, leaving the 4mm bottom inset unused.
 export function verticalFontSize(text, heightMm, maxPt) {
-  const count = Array.from(String(text || '')).length;
+  const em = verticalAdvanceEm(text);
   const cap = Number(maxPt);
-  if (!count || !(Number(heightMm) > 0) || !Number.isFinite(cap)) return cap;
-  const advanceMmPerPt = 0.3528 * 1.06;
-  const fitted = Number(heightMm) / (count * advanceMmPerPt);
+  if (!em || !(Number(heightMm) > 0) || !Number.isFinite(cap)) return cap;
+  const usable = Math.max(1, Number(heightMm) - 4);
+  const fitted = usable / (em * 0.3528);
   return Math.round(Math.min(cap, Math.max(5, fitted)) * 10) / 10;
 }
 
@@ -265,8 +314,9 @@ function renderPreview() {
         style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
     }
     const column = el.oneColumn ? ' one-column' : '';
+    const body = el.oneColumn ? verticalColumnHtml(el.text) : esc(el.text);
     return `<div class="sheet-field${el.vertical ? ' vertical' : ''}${column}" data-key="${esc(el.key)}"
-      style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
+      style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${body}</div>`;
   }).join('');
 }
 
@@ -404,7 +454,7 @@ async function init() {
     renderFieldEditor();
     validatePaper();
     renderPreview();
-    setFeedback('已套用寄件兩行直書：地址一行、姓名與電話一行，郵遞區號方格未改。尚未保存，確認後再按「保存定位」。');
+    setFeedback('已套用寄件兩欄完整直書：地址一行、姓名與電話一行（數字橫排），欄位 Y25／高150。尚未保存，確認後再按「保存定位」。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();
