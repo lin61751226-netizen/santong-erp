@@ -42,26 +42,41 @@ VERTICAL_FIELDS = {
 }
 POSTCODE_FIELDS = {"receiver_postcode", "sender_postcode"}
 
+# Measured on the 2026-10-23 printed 100×200 envelope (photo 846×1933 px).
+# Sender postcode is six preprinted squares, three then a gap then three.
+# 33059 fills the first five; the sixth stays empty. Pitch is 6.4 mm, not the
+# receiver's 6.5 mm, so the top postcode (already aligned) is left alone.
+SENDER_POSTCODE_SPACING = 6.4
+SENDER_POSTCODE_GAP = 3.0
+# x, y, width, height of each red square. y is the top edge.
+SENDER_POSTCODE_BOXES = (
+    (9.10, 182.4, 5.20, 7.8),
+    (15.60, 182.4, 5.08, 7.8),
+    (21.99, 182.4, 5.08, 7.8),
+    (31.44, 182.4, 5.08, 7.8),
+    (37.83, 182.4, 5.08, 7.8),
+    (44.21, 182.4, 5.08, 7.8),
+)
+# Preprinted stamp rectangle, top-left.
+STAMP_GUIDE = (6.7, 15.5, 20.9, 18.4)
+
 
 def default_envelope_fields() -> dict[str, FieldSpec]:
     """Coordinates for a 100 x 200 mm vertical Chinese envelope."""
     return {
-        # Recipient postcode five boxes, top-right (3+2 with a small gap).
+        # Recipient postcode five boxes, top-right (3+2). Already on the printed squares.
         "receiver_postcode": FieldSpec(x=52, y=9.5, width=42, height=7),
-        # Recipient company (rightmost column, reading order), address, name.
-        "receiver_company": FieldSpec(x=84, y=34, width=12, height=118),
-        "receiver_address": FieldSpec(x=58, y=34, width=24, height=118),
-        "receiver_name": FieldSpec(x=30, y=40, width=24, height=112),
-        # Sender zone on the left. Postcode boxes stay put.
-        # Address is the right-hand vertical column (read first); name+phone
-        # is the left-hand column. Columns run Y25–175 so a full address and
-        # the sideways phone string fit above the postcode (Y178). The phone
-        # field is kept for saved layouts but is not printed on its own —
-        # see sender_column_text().
-        "sender_postcode": FieldSpec(x=8, y=178, width=30, height=7),
-        "sender_address": FieldSpec(x=18, y=25, width=10, height=150),
-        "sender_name": FieldSpec(x=6, y=25, width=10, height=150),
-        "sender_phone": FieldSpec(x=6, y=25, width=10, height=150),
+        # Company and name drop 20 mm. Address drops 30 mm. X and size stay.
+        "receiver_company": FieldSpec(x=84, y=54, width=12, height=118),
+        "receiver_address": FieldSpec(x=58, y=64, width=24, height=118),
+        "receiver_name": FieldSpec(x=30, y=60, width=24, height=112),
+        # Sender columns start at Y52 so they clear the stamp (bottom ~Y34)
+        # and stop at Y179, above the postcode squares (top Y182.4).
+        # Digits sit on Y184.5, centered in the first five of six squares.
+        "sender_postcode": FieldSpec(x=8.5, y=184.5, width=42, height=8),
+        "sender_address": FieldSpec(x=18, y=52, width=10, height=127),
+        "sender_name": FieldSpec(x=6, y=52, width=10, height=127),
+        "sender_phone": FieldSpec(x=6, y=52, width=10, height=127),
     }
 
 

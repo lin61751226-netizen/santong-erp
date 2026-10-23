@@ -79,14 +79,20 @@ def test_sender_is_two_vertical_columns_and_postcode_stays():
     name = layout.fields['sender_name']
     phone = layout.fields['sender_phone']
     assert address.x > name.x
-    assert address.y == name.y == 25
-    assert address.height == name.height == 150
-    assert address.y + address.height == 175
+    assert address.y == name.y == 52
+    assert address.height == name.height == 127
+    assert address.y + address.height == 179
     assert address.width <= 12 and name.width <= 12
     assert phone.x == name.x and phone.y == name.y
     postcode = layout.fields['sender_postcode']
-    assert (postcode.x, postcode.y) == (8, 178)
-    assert name.y + name.height <= postcode.y
+    assert (postcode.x, postcode.y) == (8.5, 184.5)
+    assert name.y + name.height < postcode.y
+    assert layout.fields['receiver_postcode'].y == 9.5
+    assert layout.fields['receiver_company'].y == 54
+    assert layout.fields['receiver_address'].y == 64
+    assert layout.fields['receiver_name'].y == 60
+    assert layout.fields['receiver_address'].y + layout.fields['receiver_address'].height <= 200
+    assert layout.fields['receiver_name'].y + layout.fields['receiver_name'].height <= 200
     no_phone = EnvelopeDraft(receiver_address='臺北市測試路1號', receiver_name='王大明', sender_phone='')
     assert sender_column_text(no_phone) == '三通工程行 林金生緘'
     assert '電話' not in sender_column_text(no_phone)
@@ -251,3 +257,55 @@ def test_envelope_pdf_is_one_page_and_glyphs_do_not_overlap(ctx):
     assert client.post('/api/envelope-print/pdf', json={'layout': layout.model_dump(), 'calibration': False}).status_code == 422
     direct = render_envelope_pdf(layout, content)
     assert _page_count(direct) == 1
+
+
+def _rect(x, y, w, h):
+    return {'x': x, 'y': y, 'w': w, 'h': h}
+
+
+def test_photo_columns_miss_stamp_frame_and_land_in_sender_boxes():
+    """Digits sit in the six preprinted squares. Columns clear the stamp and the red frame."""
+    from app.services.envelope_pdf import layout_boxes
+    from app.services.envelope_print import SENDER_POSTCODE_BOXES, STAMP_GUIDE
+    layout = EnvelopeLayout()
+    draft = EnvelopeDraft(
+        receiver_postcode='31046',
+        receiver_address='台北市中山區樂群二路267號9樓',
+        receiver_company='齊裕營造股份有限公司',
+        receiver_name='採發－黃曼婷#2925',
+        receiver_suffix='收',
+        sender_postcode='33059',
+        sender_address='桃園市桃園區永安路385巷6號8樓之3',
+        sender_name='三通工程行 林金生',
+        sender_suffix='緘',
+        sender_phone='810-606-8260',
+    )
+    boxes = layout_boxes(layout, draft)
+    digits = [box for box in boxes if abs(box['y'] - 184.5) < 0.05 and box['text'].isdigit()]
+    assert [box['text'] for box in digits] == list('33059')
+    for digit, guide in zip(digits, SENDER_POSTCODE_BOXES[:5]):
+        assert abs((digit['x'] + digit['w'] / 2) - (guide[0] + guide[2] / 2)) < 0.15
+        assert abs((digit['y'] + digit['h'] / 2) - (guide[1] + guide[3] / 2)) < 0.4
+        assert _intersects(digit, _rect(*guide))
+    stamp = _rect(*STAMP_GUIDE)
+    frame = (35.58, 24.83, 33.57, 152.51)
+    borders = [
+        _rect(frame[0], frame[1], 0.9, frame[3]),
+        _rect(frame[0] + frame[2] - 0.9, frame[1], 0.9, frame[3]),
+        _rect(frame[0], frame[1], frame[2], 0.9),
+        _rect(frame[0], frame[1] + frame[3] - 0.9, frame[2], 0.9),
+    ]
+    guides = [_rect(*guide) for guide in SENDER_POSTCODE_BOXES]
+    for box in boxes:
+        if box['text'].strip() == '':
+            continue
+        assert not _intersects(box, stamp), box
+        for border in borders:
+            assert not _intersects(box, border), (box, border)
+        if box['y'] < 180:
+            for guide in guides:
+                assert not _intersects(box, guide), (box, guide)
+    sender = [box for box in boxes if box['x'] < 30 and box['y'] >= 52 and box['y'] < 180]
+    assert sender
+    assert min(box['y'] for box in sender) >= 52
+    assert max(box['y'] + box['h'] for box in sender) < SENDER_POSTCODE_BOXES[0][1]
