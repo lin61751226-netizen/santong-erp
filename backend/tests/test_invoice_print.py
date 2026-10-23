@@ -108,7 +108,10 @@ def test_default_layout_get_is_read_only(ctx):
     assert 'address' in data['content']['fields']
     assert 'unit' not in data['content']['fields']
     assert data['content']['fields']['note']['height'] > 0
-    assert data['content']['fields']['uppercase']['y'] == 89
+    assert data['content']['fields']['uppercase']['x'] == 26.7
+    assert data['content']['fields']['uppercase']['y'] == 85.9
+    assert data['content']['fields']['uppercase']['width'] == 81
+    assert data['content']['tax_id_spacing'] == 6.5
     assert session.exec(select(InvoicePrintRevision)).all() == []
     assert not backup.called
     assert client.get('/invoice-overprint').headers['cache-control'] == 'no-store'
@@ -255,7 +258,7 @@ def test_sample_is_private_read_only_and_buyer_above_tax_id(ctx):
     assert client.get('/api/invoice-print/sample-layout').status_code==401
 
 
-@pytest.mark.parametrize('patch', [{'paper_width':79},{'paper_height':298},{'paper_height':90},{'paper_width':'NaN'}])
+@pytest.mark.parametrize('patch', [{'paper_width':79},{'paper_height':298},{'paper_height':87},{'paper_width':'NaN'}])
 def test_paper_dimensions_validate_with_fields(ctx,patch):
     client,session,actor,backup=ctx
     content={**PrintLayout().model_dump(),**patch}

@@ -15,7 +15,7 @@ const FIELD_LABELS = {
 };
 const VERTICAL_FIELDS = new Set([
   'receiver_company', 'receiver_address', 'receiver_name',
-  'sender_address', 'sender_name', 'sender_phone',
+  'sender_address', 'sender_name',
 ]);
 const POSTCODE_FIELDS = new Set(['receiver_postcode', 'sender_postcode']);
 
@@ -85,6 +85,14 @@ function gatherLayout() {
   };
 }
 
+export function applySenderLayout(original, sample) {
+  const fields = { ...original.fields };
+  for (const key of ['sender_address', 'sender_name', 'sender_phone']) {
+    fields[key] = { ...sample.fields[key] };
+  }
+  return { ...original, fields };
+}
+
 function fontSizeFor(key, layout) {
   if (key === 'receiver_name') return layout.name_font_size;
   if (key.startsWith('sender') || key === 'sender_postcode') return layout.small_font_size;
@@ -123,7 +131,7 @@ export function positionedElements(layout, draft, lines) {
       y: Number((field.y + oy).toFixed(2)),
       width: field.width,
       height: field.height,
-      vertical: true,
+      vertical: VERTICAL_FIELDS.has(key),
       fontSize: fontSizeFor(key, layout),
     });
   }
@@ -241,7 +249,7 @@ function renderPreview() {
       return `<div class="sheet-field postcode-char" data-key="${esc(el.key)}"
         style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
     }
-    return `<div class="sheet-field vertical" data-key="${esc(el.key)}"
+    return `<div class="sheet-field${el.vertical ? ' vertical' : ''}" data-key="${esc(el.key)}"
       style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
   }).join('');
 }
@@ -373,6 +381,14 @@ async function init() {
     validatePaper();
     renderPreview();
     setFeedback('已重設為100×200標準定位；請白紙試印後再保存。');
+  });
+  $('senderLayout').addEventListener('click', () => {
+    state.layout = applySenderLayout(gatherLayout(), sample);
+    syncControls();
+    renderFieldEditor();
+    validatePaper();
+    renderPreview();
+    setFeedback('已在畫面套用新版寄件區位置，寄件人與電話不重疊；尚未保存。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();

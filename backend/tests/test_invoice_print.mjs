@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/invoice_overprint.js',import.meta.url),'utf8');
 const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout,
-       printAllowed,normalizeLayout,moveFieldWithinPaper,esc}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+       applyRequestedCalibration,printAllowed,normalizeLayout,moveFieldWithinPaper,esc}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 const FIELD_ORDER=['buyer','tax_id','address','year','month','day','description','quantity',
   'unit_price','amount','subtotal','tax','total','uppercase','note'];
@@ -28,6 +28,8 @@ test('all positions receive global offset, detail rows receive row pitch; no uni
   const result=positionedFields(layout(),draft,calc);
   const keys=new Set(result.map(x=>x.key));
   assert.ok(keys.has('address') && !keys.has('unit'));
+  assert.ok(!keys.has('year')); // already printed on the paper stock
+  assert.ok(keys.has('month') && keys.has('day'));
   assert.equal(result.find(x=>x.key==='buyer').x,28);
   assert.equal(result.find(x=>x.key==='address').x,28);
   const descriptions=result.filter(x=>x.key==='description');
@@ -101,6 +103,17 @@ test('sample layout resets all fields, paper and feed but keeps font/offset',()=
   assert.deepEqual(Object.keys(result.fields).sort(),FIELD_ORDER.slice().sort());
 });
 
+test('requested calibration changes only tax spacing and uppercase box',()=>{
+  const original=layout();
+  const snapshot=JSON.stringify(original);
+  const result=applyRequestedCalibration(original);
+  assert.equal(result.tax_id_spacing,6.5);
+  assert.equal(result.fields.tax_id.width,52);
+  assert.deepEqual(result.fields.uppercase,{...original.fields.uppercase,x:26.7,y:85.9,width:81,font_size:11});
+  assert.deepEqual(result.fields.buyer,original.fields.buyer);
+  assert.equal(JSON.stringify(original),snapshot);
+});
+
 test('legacy layouts are normalized read-only (unit hidden, address added, feed set)',()=>{
   const sample=layout();
   globalThis.window=globalThis.window||{};
@@ -122,8 +135,8 @@ test('legacy layouts are normalized read-only (unit hidden, address added, feed 
 test('photo drag assets keep the original photo out of print',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=photo-amount-slots-20261023"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=photo-amount-slots-20261023"/);
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=invoice-calibration-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=invoice-calibration-20261023"/);
   assert.match(html,/src="\/api\/invoice-print\/reference-image"/);
   assert.match(html,/id="showCoordinates" checked/);
   assert.match(html,/id="showPhoto" checked/);
@@ -134,6 +147,7 @@ test('photo drag assets keep the original photo out of print',()=>{
   assert.match(css,/grid-template-columns: repeat\(9, minmax\(0, 1fr\)\)/);
   assert.match(source,/result\.uppercase_digits/);
   assert.match(source,/setUppercaseReference/);
+  assert.match(html,/id="requestedCalibration"/);
 });
 
 test('per-field type size and drag stays inside paper',()=>{

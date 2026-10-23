@@ -6,7 +6,7 @@ const FIELD_ORDER = [
 ];
 const FIELD_LABELS = {
   buyer: '買受人', tax_id: '統一編號', address: '買受人地址',
-  year: '年（民國）', month: '月', day: '日',
+  year: '年（紙本預印，不套印）', month: '月', day: '日',
   description: '品名', quantity: '數量', unit_price: '單價', amount: '金額',
   subtotal: '銷售額合計', tax: '營業稅', total: '總計',
   uppercase: '中文大寫', note: '備註（右側直欄）',
@@ -107,12 +107,12 @@ export function positionedFields(layout, draft, result) {
       base.key = 'tax_id';
       base.numeric = true;
       base.x = Number((fields.tax_id.x + Number(layout.offset_x || 0)
-        + index * Number(layout.tax_id_spacing || 6)).toFixed(2));
-      base.width = Number(layout.tax_id_spacing || 6);
+        + index * Number(layout.tax_id_spacing ?? 6.5)).toFixed(2));
+      base.width = Number(layout.tax_id_spacing ?? 6.5);
     });
   }
   add('address', draft.address);
-  add('year', String(roc.year));
+  // The ROC year is already printed on this invoice stock.
   add('month', String(roc.month));
   add('day', String(roc.day));
   draft.items.forEach((item, index) => {
@@ -172,6 +172,14 @@ function renderFieldEditor() {
   const editor = $('fieldEditor');
   editor.innerHTML = FIELD_ORDER.map((key) => {
     const field = state.layout.fields[key];
+    if (key === 'year') {
+      return `<div hidden>
+        <input type="hidden" data-field="year" data-dim="x" value="${field.x}">
+        <input type="hidden" data-field="year" data-dim="y" value="${field.y}">
+        <input type="hidden" data-field="year" data-dim="width" value="${field.width}">
+        <input type="hidden" data-field="year" data-dim="font_size" value="${field.font_size ?? ''}">
+      </div>`;
+    }
     const height = field.height ? `<label>高<input type="number" step="0.1" data-field="${key}" data-dim="height" value="${field.height}"></label>` : '';
     const fontSize = field.font_size ?? '';
     return `<div class="field-row"><strong>${FIELD_LABELS[key]}</strong>
@@ -358,7 +366,7 @@ function renderCoordinates(paper) {
   if (!visible) return;
   const offsetX = Number(state.layout.offset_x || 0);
   const offsetY = Number(state.layout.offset_y || 0);
-  const fields = FIELD_ORDER.filter((key) => state.layout.fields[key]);
+  const fields = FIELD_ORDER.filter((key) => key !== 'year' && state.layout.fields[key]);
   let html = '<span class="coordinate-origin">0,0</span>';
   for (let x = 20; x < paper.width; x += 20) {
     html += `<span class="coordinate-x" style="left:${x}mm">X ${x}</span>`;
@@ -470,12 +478,12 @@ function bindPhotoEditing() {
   });
   $('setUppercaseReference').addEventListener('click', () => {
     const key = 'uppercase';
-    for (const [dim, value] of Object.entries({ x: 33, y: 89, width: 90, font_size: 11 })) {
+    for (const [dim, value] of Object.entries({ x: 26.7, y: 85.9, width: 81, font_size: 11 })) {
       document.querySelector(`[data-field="${key}"][data-dim="${dim}"]`).value = value;
     }
     liveRefresh();
     selectField(key);
-    setFeedback('已在畫面套用大寫九格參考位置；請對照相片調整，確認後才按「保存定位」。');
+    setFeedback('已在畫面套用大寫九格 X26.7／Y85.9、較窄間距；對照相片後再按「保存定位」。');
   });
 }
 
@@ -560,6 +568,18 @@ export function applySampleLayout(original, sample) {
     tax_id_spacing: sample.tax_id_spacing,
     row_pitch: sample.row_pitch,
     fields,
+  };
+}
+
+export function applyRequestedCalibration(original) {
+  return {
+    ...original,
+    tax_id_spacing: 6.5,
+    fields: {
+      ...original.fields,
+      tax_id: { ...original.fields.tax_id, width: 52 },
+      uppercase: { ...original.fields.uppercase, x: 26.7, y: 85.9, width: 81, font_size: 11 },
+    },
   };
 }
 
@@ -653,6 +673,14 @@ async function init() {
     $('legacyWarning').hidden = true;
     refresh();
     setFeedback('已套用真實發票195×103定位；請白紙試印，確認後再保存。');
+  });
+  $('requestedCalibration').addEventListener('click', () => {
+    state.layout = applyRequestedCalibration(gatherLayout());
+    syncLayoutControls();
+    renderFieldEditor();
+    renderPreview();
+    validatePaper();
+    setFeedback('已預填本次統編6.5mm及中文大寫X26.7／Y85.9／寬81mm；尚未保存，請先核對底圖。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>直式信封套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/envelope_overprint.css?v=env-20261023">
+  <link rel="stylesheet" href="/static/envelope_overprint.css?v=sender-20261023">
 </head>
 <body data-page="envelope-overprint">
   <header class="topbar">
@@ -59,11 +59,11 @@
       <div class="form-grid">
         <div>
           <label for="senderPostcode">寄件人郵遞區號（最多5碼）</label>
-          <input id="senderPostcode" inputmode="numeric" autocomplete="off" maxlength="5" value="330">
+          <input id="senderPostcode" inputmode="numeric" autocomplete="off" maxlength="5" value="33059">
         </div>
         <div>
           <label for="senderName">寄件公司／姓名</label>
-          <input id="senderName" autocomplete="off" maxlength="120" value="三通工程行">
+          <input id="senderName" autocomplete="off" maxlength="120" value="三通工程行 林金生">
         </div>
         <div>
           <label for="senderSuffix">姓名後綴</label>
@@ -71,7 +71,7 @@
         </div>
         <div>
           <label for="senderPhone">電話（可留空）</label>
-          <input id="senderPhone" inputmode="tel" autocomplete="off" maxlength="120">
+          <input id="senderPhone" inputmode="tel" autocomplete="off" maxlength="120" value="0978-909-078">
         </div>
         <div class="full">
           <label for="senderAddress">寄件人地址（不含郵遞區號）</label>
@@ -124,6 +124,7 @@
       </div>
       <div class="button-row">
         <button type="button" id="sampleLayout" class="button-secondary">重設為100×200標準定位</button>
+        <button type="button" id="senderLayout" class="button-secondary">套用新版寄件區定位（尚未保存）</button>
       </div>
       <div class="warning" id="paperWarning" hidden></div>
     </section>
@@ -178,6 +179,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/envelope_overprint.js?v=env-20261023"></script>
+  <script type="module" src="/static/envelope_overprint.js?v=sender-20261023"></script>
 </body>
 </html>

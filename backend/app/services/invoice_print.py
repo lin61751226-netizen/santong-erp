@@ -237,7 +237,7 @@ def real_invoice_fields() -> dict[str, FieldSpec]:
     """Coordinates measured from the real 336251 sample (195 x 103 mm)."""
     return {
         "buyer": FieldSpec(x=35, y=15.5, width=70),
-        "tax_id": FieldSpec(x=35, y=20.8, width=48),
+        "tax_id": FieldSpec(x=35, y=20.8, width=52),
         "address": FieldSpec(x=35, y=24.5, width=145),
         "year": FieldSpec(x=105, y=20.8, width=8),
         "month": FieldSpec(x=120, y=20.8, width=8),
@@ -249,7 +249,7 @@ def real_invoice_fields() -> dict[str, FieldSpec]:
         "subtotal": FieldSpec(x=95, y=69, width=29),
         "tax": FieldSpec(x=95, y=75, width=29),
         "total": FieldSpec(x=95, y=81, width=29),
-        "uppercase": FieldSpec(x=33, y=89, width=90),
+        "uppercase": FieldSpec(x=26.7, y=85.9, width=81),
         # 備註 is the right column (x125-175), spanning the five item rows and
         # the stamp zone; normally left blank for the seller's invoice stamp.
         "note": FieldSpec(x=127, y=38, width=46, height=52),
@@ -265,7 +265,7 @@ class PrintLayout(BaseModel):
     font: str = "11pt PMingLiU, Microsoft JhengHei, sans-serif"
     font_size: float = 11
     row_pitch: float = 6.1
-    tax_id_spacing: float = 6.0
+    tax_id_spacing: float = 6.5
     offset_x: float = 0.0
     offset_y: float = 0.0
     fields: dict[str, FieldSpec] = Field(default_factory=real_invoice_fields)

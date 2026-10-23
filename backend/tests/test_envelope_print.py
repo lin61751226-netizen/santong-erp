@@ -61,12 +61,13 @@ def test_default_layout_is_100x200_with_sender(ctx):
 
 def test_default_sender_is_santong():
     draft = EnvelopeDraft(receiver_address='臺北市測試路1號', receiver_name='王大明')
-    assert draft.sender_postcode == '330'
-    assert draft.sender_name == '三通工程行'
+    assert draft.sender_postcode == '33059'
+    assert draft.sender_name == '三通工程行 林金生'
     assert draft.sender_address == '桃園市桃園區永安路385巷6號8樓之3'
+    assert draft.sender_phone == '0978-909-078'
     lines = render_lines(draft)
     assert lines['receiver_name'] == '王大明收'
-    assert lines['sender_name'] == '三通工程行緘'
+    assert lines['sender_name'] == '三通工程行 林金生緘'
 
 
 def test_validate_and_calculate(ctx):

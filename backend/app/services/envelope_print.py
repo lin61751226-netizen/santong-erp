@@ -54,9 +54,9 @@ def default_envelope_fields() -> dict[str, FieldSpec]:
         "receiver_name": FieldSpec(x=30, y=40, width=24, height=112),
         # Sender zone on the left.
         "sender_postcode": FieldSpec(x=8, y=178, width=30, height=7),
-        "sender_address": FieldSpec(x=8, y=44, width=20, height=92),
-        "sender_name": FieldSpec(x=8, y=120, width=20, height=28),
-        "sender_phone": FieldSpec(x=8, y=146, width=20, height=24),
+        "sender_address": FieldSpec(x=8, y=40, width=20, height=80),
+        "sender_name": FieldSpec(x=8, y=121, width=20, height=41),
+        "sender_phone": FieldSpec(x=8, y=164, width=50, height=8),
     }
 
 
@@ -151,11 +151,11 @@ class EnvelopeDraft(BaseModel):
     receiver_company: str = ""
     receiver_name: str = ""
     receiver_suffix: str = "收"
-    sender_postcode: str = "330"
+    sender_postcode: str = "33059"
     sender_address: str = "桃園市桃園區永安路385巷6號8樓之3"
-    sender_name: str = "三通工程行"
+    sender_name: str = "三通工程行 林金生"
     sender_suffix: str = "緘"
-    sender_phone: str = ""
+    sender_phone: str = "0978-909-078"
 
     @field_validator("receiver_address", "receiver_company", "receiver_name",
                      "receiver_suffix", "sender_address", "sender_name",
