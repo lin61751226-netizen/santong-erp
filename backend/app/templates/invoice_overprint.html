@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三聯式發票套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/invoice_overprint.css?v=invoice-slots-20261023">
+  <link rel="stylesheet" href="/static/invoice_overprint.css?v=invoice-print-pdf-20261023">
 </head>
 <body data-page="invoice-overprint">
   <header class="topbar">
@@ -153,10 +153,10 @@
       <div class="layout-note">
         <strong>列印前於瀏覽器列印視窗確認（每次都要檢查）：</strong>
         <ol>
-          <li>印表機：請選「<strong>Brother 三通發票 195x103mm</strong>」，不要用系統預設A4（否則會被旋轉縮小，就是「偏小」的原因）。</li>
-          <li>紙張尺寸：自動（網頁已指定103×195或195×103）；配置方式：<strong>實際大小／100%</strong>，不可用「符合頁面大小」。</li>
-          <li>邊界：無／0；關閉頁首頁尾、背景圖形關閉。</li>
-          <li>直式模式下，驅動佇列方向須設為「直向（Portrait）」，旋轉由網頁處理，驅動不要再旋轉。</li>
+          <li>印表機：請選「<strong>Brother 三通發票 195x103mm</strong>」。正式紙張請手動選「<strong>103×195</strong>」（直向）。選成 A4 時這一頁不應再多出第二頁，但位置對不準發票。</li>
+          <li>縮放：<strong>實際大小／100%</strong>，不可用「符合頁面大小」。邊界：無／0；關閉頁首頁尾與背景圖形。</li>
+          <li>直式模式下，驅動方向維持「直向（Portrait）」。文字在預覽裡呈直排是短邊進紙的旋轉，不要再讓驅動轉一次。</li>
+          <li>若 Chrome 仍自行改紙張，請改按「下載發票 PDF」，用 PDF 檢視器以實際大小列印。PDF 已是單頁 103×195mm、旋轉已處理，不含按鈕與底圖。</li>
         </ol>
         請先用白紙試印、對準發票看位置；若整體方向相反，把進紙模式在順時針／逆時針間切換即可。
       </div>
@@ -169,10 +169,12 @@
       </div>
       <div class="paper-viewport">
         <div id="sheet" class="sheet" aria-label="發票預覽">
-          <img id="referencePhoto" class="invoice-reference-photo" src="/api/invoice-print/reference-image" alt="空白發票校正底圖" draggable="false">
-          <div id="sheetContent"></div>
-          <div id="testGrid" class="test-grid" hidden></div>
-          <div id="coordinateOverlay" class="coordinate-overlay" aria-hidden="true"></div>
+          <div class="sheet-rotator">
+            <img id="referencePhoto" class="invoice-reference-photo" src="/api/invoice-print/reference-image" alt="空白發票校正底圖" draggable="false">
+            <div id="sheetContent"></div>
+            <div id="testGrid" class="test-grid" hidden></div>
+            <div id="coordinateOverlay" class="coordinate-overlay" aria-hidden="true"></div>
+          </div>
         </div>
       </div>
       <div class="form-inline">
@@ -184,12 +186,14 @@
       <div class="warning" id="validation" role="alert"></div>
       <div class="button-row">
         <button type="button" id="printBtn">列印</button>
+        <button type="button" id="downloadPdfBtn" class="button-secondary no-print">下載發票 PDF（單頁 103×195mm，旋轉已處理，不含按鈕/底圖）</button>
+        <button type="button" id="downloadCalibrationPdfBtn" class="button-secondary no-print">下載白紙校正 PDF（單頁 103×195mm）</button>
         <button type="button" id="saveLayout" class="button-secondary">保存定位（紙張、進紙、字級、位移、座標）</button>
         <button type="button" id="saveDraft" class="button-secondary">存草稿</button>
         <button type="button" id="loadDraft" class="button-secondary">載入草稿</button>
         <button type="button" id="retryBackup" class="button-secondary">重試雲端備份</button>
       </div>
-      <p class="muted" id="printHint">每次都會開啟瀏覽器列印視窗；若取消或剛列印完，可直接再按一次列印，不需重新整理。</p>
+      <p class="muted" id="printHint">網頁列印只會送出這一頁發票內容。Chrome 若把紙張改成 A4，請改下載 PDF，用檢視器選實際大小。PDF 內嵌可再散布的文鼎明體 AR PL UMing TW（微軟 PMingLiU 不能隨系統散布；Windows 畫面預覽仍優先用本機 PMingLiU）。</p>
     </section>
 
     <section class="card">
@@ -208,6 +212,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/invoice_overprint.js?v=invoice-slots-20261023"></script>
+  <script type="module" src="/static/invoice_overprint.js?v=invoice-print-pdf-20261023"></script>
 </body>
 </html>

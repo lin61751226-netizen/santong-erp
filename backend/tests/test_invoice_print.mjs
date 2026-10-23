@@ -67,11 +67,20 @@ test('backup failure never says cloud saved',()=>{
 test('print CSS uses portrait 103x195 by default with CSS-driven rotation',()=>{
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
   assert.match(css,/@page\s*\{\s*size:\s*103mm 195mm;\s*margin:\s*0/);
-  assert.match(css,/\.feed-portrait\.feed-cw\s*\{[^}]*rotate\(90deg\) translateY\(-100%\)/);
-  assert.match(css,/\.feed-portrait\.feed-ccw\s*\{[^}]*rotate\(-90deg\) translateX\(-100%\)/);
+  assert.match(css,/\.feed-cw \.sheet-rotator\s*\{[^}]*rotate\(90deg\) translateY\(-100%\)/);
+  assert.match(css,/\.feed-ccw \.sheet-rotator\s*\{[^}]*rotate\(-90deg\) translateX\(-100%\)/);
   assert.match(css,/body:not\(\.print-armed\)/);
+  const printCss=css.slice(css.lastIndexOf('@media print'));
+  assert.match(printCss,/overflow:\s*hidden !important/);
+  assert.match(printCss,/page-break-after:\s*avoid !important/);
+  assert.match(printCss,/\.form-inline,/);
+  assert.match(printCss,/\.button-row,/);
+  assert.match(printCss,/display:\s*none !important/);
+  assert.match(printCss,/width:\s*var\(--page-width\) !important/);
+  assert.match(printCss,/height:\s*var\(--page-height\) !important/);
   assert.match(source,/window\.addEventListener\('afterprint',\s*restorePrint\)/);
   assert.match(source,/if \(state\.printing\) return/);
+  assert.match(source,/\/api\/invoice-print\/pdf/);
 });
 
 test('paper geometry maps feed modes to physical page and rejects bad input',()=>{
@@ -146,8 +155,11 @@ test('legacy layouts are normalized read-only (unit hidden, address added, feed 
 test('photo drag assets keep the original photo out of print',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=invoice-slots-20261023"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=invoice-slots-20261023"/);
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=invoice-print-pdf-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=invoice-print-pdf-20261023"/);
+  assert.match(html,/id="downloadPdfBtn"/);
+  assert.match(html,/id="downloadCalibrationPdfBtn"/);
+  assert.match(html,/class="sheet-rotator"/);
   assert.match(css,/\.sheet-field\.field-uppercase span \{ text-align: center; \}/);
   assert.match(source,/field\.key === 'tax_id' \? 'center'/);
   assert.match(html,/src="\/api\/invoice-print\/reference-image"/);

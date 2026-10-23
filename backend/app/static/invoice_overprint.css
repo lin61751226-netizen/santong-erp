@@ -191,6 +191,13 @@ button:disabled {
   overflow: hidden;
 }
 
+/* Screen: fill the 195×103 sheet. Print: this inner box is what rotates,
+   so the outer .sheet can stay exactly the physical page size. */
+.sheet-rotator {
+  position: absolute;
+  inset: 0;
+}
+
 .invoice-reference-photo {
   position: absolute;
   left: 46mm;
@@ -367,60 +374,88 @@ button:disabled {
 @page { size: 103mm 195mm; margin: 0; }
 
 @media print {
-  .coordinate-overlay, .coordinate-legend, .selection-toolbar, .invoice-reference-photo { display: none !important; }
-  body {
-    background: #fff;
+  .invoice-reference-photo { display: none !important; }
+  .coordinate-overlay,
+  .coordinate-legend,
+  .selection-toolbar,
+  .invoice-reference-photo,
+  .topbar,
+  .notice,
+  .warning,
+  .section-head,
+  .layout-note,
+  .form-inline,
+  .form-grid,
+  .button-row,
+  .field-grid,
+  .table-wrap,
+  .totals,
+  .card:not(:has(.paper-viewport)),
+  .no-print,
+  #printHint {
+    display: none !important;
   }
   body:not(.print-armed) .paper-viewport {
     display: none !important;
   }
-  .topbar,
-  .card:not(:has(.paper-viewport)),
-  .layout-note,
-  .no-print {
-    display: none !important;
-  }
-  .app-main {
-    max-width: none;
-    padding: 0;
-    margin: 0;
-  }
-  .card:has(.paper-viewport) {
-    border: none;
-    padding: 0;
-    margin: 0;
-  }
   html,
-  body {
-    width: var(--page-width);
-    height: var(--page-height);
-  }
+  body,
+  .app-main,
+  .card:has(.paper-viewport),
   .paper-viewport {
-    display: block;
-    width: var(--page-width);
-    height: var(--page-height);
-    padding: 0;
-    border-radius: 0;
-    overflow: visible;
-    background: #fff;
+    width: var(--page-width) !important;
+    height: var(--page-height) !important;
+    max-width: var(--page-width) !important;
+    max-height: var(--page-height) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    page-break-before: avoid !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-before: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
   }
-  .sheet {
-    margin: 0;
-    box-shadow: none;
-    page-break-after: avoid;
+  .app-main { max-width: none !important; }
+  .paper-viewport {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
   }
-  /* Portrait short-edge feed: CSS page is 103x195, rotate the landscape
-     invoice content so it exactly fills the registered form. */
-  body.print-armed .sheet.feed-portrait {
-    position: absolute;
-    left: 0;
-    top: 0;
+  /* The outer sheet matches the physical page so Chrome cannot paginate the
+     untransformed 195mm-wide box. The inner rotator keeps the 195×103 layout
+     and applies the short-edge-feed rotation. */
+  body.print-armed .sheet {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: var(--page-width) !important;
+    height: var(--page-height) !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    transform: none !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
+  }
+  body.print-armed .sheet-rotator {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: var(--paper-width) !important;
+    height: var(--paper-height) !important;
     transform-origin: top left;
+    overflow: hidden !important;
   }
-  body.print-armed .sheet.feed-portrait.feed-cw {
-    transform: rotate(90deg) translateY(-100%);
-  }
-  body.print-armed .sheet.feed-portrait.feed-ccw {
-    transform: rotate(-90deg) translateX(-100%);
-  }
+  body.print-armed .sheet.feed-cw .sheet-rotator { transform: rotate(90deg) translateY(-100%); }
+  body.print-armed .sheet.feed-ccw .sheet-rotator { transform: rotate(-90deg) translateX(-100%); }
+  .sheet-field.selected { outline: none !important; }
 }
