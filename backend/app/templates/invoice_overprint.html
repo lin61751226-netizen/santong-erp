@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三聯式發票套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/invoice_overprint.css?v=coordinates-20261023">
+  <link rel="stylesheet" href="/static/invoice_overprint.css?v=photo-amount-slots-20261023">
 </head>
 <body data-page="invoice-overprint">
   <header class="topbar">
@@ -82,7 +82,7 @@
         <div><span>銷售額合計（不含稅）</span><strong id="subtotalText">0</strong></div>
         <div><span>營業稅</span><strong id="taxText">0</strong></div>
         <div><span>總計（含稅）</span><strong id="totalText">0</strong></div>
-        <div><span>中文大寫</span><strong id="uppercaseText">零元整</strong></div>
+        <div><span>中文大寫（九位補零）</span><strong id="uppercaseText">零億零仟零佰零拾零萬零仟零佰零拾零元</strong></div>
       </div>
     </section>
 
@@ -139,7 +139,7 @@
     <section class="card">
       <div class="section-head">
         <h2>3. 各欄座標微調（mm）</h2>
-        <span class="muted">X為左邊界、Y為文字基線、寬為右邊界；備註含高度（直欄）。</span>
+        <span class="muted">X為左邊界、Y為文字基線、寬為右邊界；備註含高度（直欄）。中文大寫只套印九個國字數字，紙本已印單位；此欄寬度可調整九格間距。</span>
       </div>
       <div class="field-grid" id="fieldEditor"></div>
       <div class="warning" id="fieldWarning" hidden></div>
@@ -159,8 +159,16 @@
         </ol>
         請先用白紙試印、對準發票看位置；若整體方向相反，把進紙模式在順時針／逆時針間切換即可。
       </div>
+      <div id="selectionToolbar" class="selection-toolbar" hidden>
+        <strong id="selectedFieldName"></strong>
+        <span>拖曳照片上的文字或編號可移動整欄</span>
+        <label>此欄字級（pt）<input id="selectedFontSize" type="number" min="8" max="24" step="0.5"></label>
+        <button type="button" id="resetFieldFont" class="button-secondary">使用全域字級</button>
+        <button type="button" id="setUppercaseReference" class="button-secondary" hidden>套用九格參考位置（尚未保存）</button>
+      </div>
       <div class="paper-viewport">
         <div id="sheet" class="sheet" aria-label="發票預覽">
+          <img id="referencePhoto" class="invoice-reference-photo" src="/api/invoice-print/reference-image" alt="空白發票校正底圖" draggable="false">
           <div id="sheetContent"></div>
           <div id="testGrid" class="test-grid" hidden></div>
           <div id="coordinateOverlay" class="coordinate-overlay" aria-hidden="true"></div>
@@ -168,6 +176,7 @@
       </div>
       <div class="form-inline">
         <label><input type="checkbox" id="testPrint"> 白紙校正測試（標題＋每2mm網格，不印正式內容）</label>
+        <label><input type="checkbox" id="showPhoto" checked> 顯示發票相片底圖（僅畫面）</label>
         <label><input type="checkbox" id="showCoordinates" checked> 畫面顯示欄位座標（不列印）</label>
       </div>
       <div id="coordinateLegend" class="coordinate-legend" aria-live="polite"></div>
@@ -198,6 +207,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/invoice_overprint.js?v=coordinates-20261023"></script>
+  <script type="module" src="/static/invoice_overprint.js?v=photo-amount-slots-20261023"></script>
 </body>
 </html>

@@ -2,6 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
+from pathlib import Path
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import func
@@ -24,6 +26,7 @@ templates = Jinja2Templates(directory="app/templates")
 admin = require_roles(Role.owner, Role.admin)
 LAYOUT_RECORD_KEY = "shared"
 DRAFT_LIMIT = 50
+REFERENCE_IMAGE = Path(__file__).resolve().parents[1] / "assets" / "invoice_reference_619151.jpg"
 
 
 def _load_content(session: Session, kind: str, record_key: str):
@@ -100,6 +103,11 @@ def invoice_overprint_page(request: Request, actor: Employee = Depends(admin)):
     response = templates.TemplateResponse("invoice_overprint.html", {"request": request})
     response.headers["Cache-Control"] = "no-store"
     return response
+
+
+@router.get("/api/invoice-print/reference-image")
+def reference_image(actor: Employee = Depends(admin)):
+    return FileResponse(REFERENCE_IMAGE, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
 
 
 @router.get("/api/invoice-print/template")

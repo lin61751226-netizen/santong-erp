@@ -48,6 +48,7 @@ const state = {
   layoutRevision: 0,
   testPrint: false,
   printing: false,
+  selectedField: null,
   sequence: 0,
 };
 
@@ -94,6 +95,7 @@ export function positionedFields(layout, draft, result) {
       y: Number(y.toFixed(2)),
       width: field.width,
       height: field.height || 0,
+      font_size: field.font_size || layout.font_size,
       numeric: NUMERIC_KEYS.has(key),
     });
   }
@@ -122,7 +124,7 @@ export function positionedFields(layout, draft, result) {
   add('subtotal', money(result.subtotal));
   add('tax', money(result.tax));
   add('total', money(result.total));
-  add('uppercase', result.uppercase);
+  add('uppercase', (result.uppercase_digits || []).join(''));
   add('note', draft.note);
   return out;
 }
@@ -149,6 +151,7 @@ function gatherLayout() {
     const key = input.dataset.field;
     const dim = input.dataset.dim;
     fields[key] = fields[key] || { x: 0, y: 0, width: 0, height: 0 };
+    if (dim === 'font_size' && input.value === '') return;
     fields[key][dim] = Number(input.value);
   });
   return {
@@ -170,10 +173,12 @@ function renderFieldEditor() {
   editor.innerHTML = FIELD_ORDER.map((key) => {
     const field = state.layout.fields[key];
     const height = field.height ? `<label>高<input type="number" step="0.1" data-field="${key}" data-dim="height" value="${field.height}"></label>` : '';
+    const fontSize = field.font_size ?? '';
     return `<div class="field-row"><strong>${FIELD_LABELS[key]}</strong>
       <label>X<input type="number" step="0.1" data-field="${key}" data-dim="x" value="${field.x}"></label>
       <label>Y<input type="number" step="0.1" data-field="${key}" data-dim="y" value="${field.y}"></label>
       <label>寬<input type="number" step="0.1" data-field="${key}" data-dim="width" value="${field.width}"></label>
+      <label>字級<input type="number" min="8" max="24" step="0.5" data-field="${key}" data-dim="font_size" value="${fontSize}" placeholder="全域"></label>
       ${height}</div>`;
   }).join('');
   editor.querySelectorAll('input').forEach((input) => input.addEventListener('input', liveRefresh));
@@ -275,7 +280,15 @@ function refresh() {
       state.calc = null;
       return;
     }
-    state.calc = await response.json();
+    const calculated = await response.json();
+    if (!Array.isArray(calculated.uppercase_digits) || calculated.uppercase_digits.length !== 9) {
+      state.calc = null;
+      $('validation').textContent = '大寫金額九個位數資料不完整，請重新整理後再試；本次不可套印。';
+      $('validation').hidden = false;
+      renderPreview();
+      return;
+    }
+    state.calc = calculated;
     $('validation').hidden = true;
     $('subtotalText').textContent = money(state.calc.subtotal);
     $('taxText').textContent = money(state.calc.tax);
@@ -294,12 +307,9 @@ function renderPreview() {
   document.documentElement.style.setProperty('--paper-height', `${paper.height}mm`);
   document.documentElement.style.setProperty('--page-width', `${paper.pageWidth}mm`);
   document.documentElement.style.setProperty('--page-height', `${paper.pageHeight}mm`);
-  const scale = Math.min(
-    ($('sheet').parentElement.clientWidth - 40) / paper.width,
-    7,
-  );
-  sheet.style.width = `${paper.width * scale}px`;
-  sheet.style.height = `${paper.height * scale}px`;
+  sheet.style.width = `${paper.width}mm`;
+  sheet.style.height = `${paper.height}mm`;
+  $('referencePhoto').hidden = state.testPrint || !$('showPhoto').checked;
   sheet.classList.toggle('feed-portrait', paper.portrait);
   sheet.classList.toggle('feed-cw', paper.mode === 'portrait_cw');
   sheet.classList.toggle('feed-ccw', paper.mode === 'portrait_ccw');
@@ -317,8 +327,7 @@ function renderPreview() {
     $('testGrid').hidden = false;
     $('coordinateOverlay').hidden = true;
     $('coordinateLegend').hidden = true;
-    renderTestGrid(paper, scale);
-    sheet.dataset.scale = scale;
+    renderTestGrid(paper);
     return;
   }
   $('testGrid').hidden = true;
@@ -326,15 +335,18 @@ function renderPreview() {
   const draft = gatherDraft();
   if (!state.calc) { content.innerHTML = ''; return; }
   content.innerHTML = positionedFields(state.layout, draft, state.calc).map((field) => {
-    const size = state.layout.font_size;
+    const size = field.font_size;
     const heightStyle = field.height ? `height:${field.height}mm;` : '';
-    const cls = field.key === 'note' ? 'sheet-field field-note' : 'sheet-field';
+    const cls = field.key === 'note' ? 'sheet-field field-note'
+      : field.key === 'uppercase' ? 'sheet-field field-uppercase' : 'sheet-field';
+    const text = field.key === 'uppercase'
+      ? [...field.text].map((digit) => `<span>${esc(digit)}</span>`).join('')
+      : esc(field.text);
     return `<div class="${cls}" data-key="${esc(field.key)}"
       style="left:${field.x}mm;top:${field.y}mm;${heightStyle}
       width:${field.width}mm;font-size:${size}pt;
-      justify-content:${field.numeric ? 'flex-end' : 'flex-start'}">${esc(field.text)}</div>`;
+      justify-content:${field.numeric ? 'flex-end' : 'flex-start'}">${text}</div>`;
   }).join('');
-  sheet.dataset.scale = scale;
 }
 
 function renderCoordinates(paper) {
@@ -358,7 +370,7 @@ function renderCoordinates(paper) {
     const field = state.layout.fields[key];
     const x = Number(field.x) + offsetX;
     const y = Number(field.y) + offsetY;
-    return `<span class="coordinate-point" style="left:${x}mm;top:${y}mm" title="${esc(FIELD_LABELS[key])} X ${x} / Y ${y}">${index + 1}</span>`;
+    return `<span class="coordinate-point" data-key="${key}" style="left:${x}mm;top:${y}mm" title="${esc(FIELD_LABELS[key])} X ${x} / Y ${y}">${index + 1}</span>`;
   }).join('');
   legend.innerHTML = `<strong>欄位起點座標（mm，左上角為 0,0）</strong><span>已含全域位移 X ${offsetX}、Y ${offsetY}；只供畫面校正，不會列印。</span><div class="coordinate-list">${fields.map((key, index) => {
     const field = state.layout.fields[key];
@@ -366,13 +378,13 @@ function renderCoordinates(paper) {
   }).join('')}</div>`;
 }
 
-function renderTestGrid(paper, scale) {
+function renderTestGrid(paper) {
   const grid = $('testGrid');
   grid.style.width = `${paper.width}mm`;
   grid.style.height = `${paper.height}mm`;
   const cellsX = Math.round(paper.width / 2);
   const cellsY = Math.round(paper.height / 2);
-  grid.style.backgroundSize = `${2 * scale}px ${2 * scale}px`;
+  grid.style.backgroundSize = '2mm 2mm';
   let html = `<div class="test-title">三通工程行｜${paper.width} × ${paper.height} mm 白紙校正 v3</div>`;
   html += `<div class="test-subtitle">${paper.mode === 'landscape' ? '橫式直出' : '直式103×195（網頁旋轉）'}／非正式發票／不可請款</div>`;
   for (let x = 0; x <= cellsX; x += 5) {
@@ -383,6 +395,88 @@ function renderTestGrid(paper, scale) {
   }
   html += '<span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>';
   grid.innerHTML = html;
+}
+
+export function moveFieldWithinPaper(field, deltaX, deltaY, paper) {
+  const round = (value) => Math.round(value * 10) / 10;
+  return {
+    x: round(Math.max(0, Math.min(paper.width - field.width, field.x + deltaX))),
+    y: round(Math.max(0, Math.min(paper.height - (field.height || 1.5), field.y + deltaY))),
+  };
+}
+
+function selectField(key) {
+  if (!state.layout?.fields[key]) return;
+  state.selectedField = key;
+  $('selectionToolbar').hidden = false;
+  $('selectedFieldName').textContent = FIELD_LABELS[key];
+  $('selectedFontSize').value = state.layout.fields[key].font_size ?? state.layout.font_size;
+  $('setUppercaseReference').hidden = key !== 'uppercase';
+  document.querySelectorAll('.sheet-field').forEach((node) => {
+    node.classList.toggle('selected', node.dataset.key === key);
+  });
+}
+
+function bindPhotoEditing() {
+  const sheet = $('sheet');
+  let drag = null;
+  sheet.addEventListener('pointerdown', (event) => {
+    if (state.testPrint || !$('showPhoto').checked) return;
+    const target = event.target.closest('.sheet-field, .coordinate-point');
+    const key = target?.dataset.key;
+    if (!key || !state.layout.fields[key]) return;
+    selectField(key);
+    drag = { key, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+      original: { ...state.layout.fields[key] } };
+    sheet.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+  sheet.addEventListener('pointermove', (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const paper = paperGeometry(state.layout);
+    const pxPerMm = sheet.getBoundingClientRect().width / paper.width;
+    const next = moveFieldWithinPaper(drag.original,
+      (event.clientX - drag.x) / pxPerMm, (event.clientY - drag.y) / pxPerMm, paper);
+    Object.assign(state.layout.fields[drag.key], next);
+    for (const dim of ['x', 'y']) {
+      const input = document.querySelector(`[data-field="${drag.key}"][data-dim="${dim}"]`);
+      if (input) input.value = next[dim];
+    }
+    renderPreview();
+    selectField(drag.key);
+  });
+  const endDrag = (event) => {
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag = null;
+    liveRefresh();
+  };
+  sheet.addEventListener('pointerup', endDrag);
+  sheet.addEventListener('pointercancel', endDrag);
+  $('selectedFontSize').addEventListener('input', (event) => {
+    const key = state.selectedField;
+    if (!key || !event.target.value) return;
+    const input = document.querySelector(`[data-field="${key}"][data-dim="font_size"]`);
+    input.value = event.target.value;
+    liveRefresh();
+    selectField(key);
+  });
+  $('resetFieldFont').addEventListener('click', () => {
+    const key = state.selectedField;
+    if (!key) return;
+    const input = document.querySelector(`[data-field="${key}"][data-dim="font_size"]`);
+    input.value = '';
+    liveRefresh();
+    selectField(key);
+  });
+  $('setUppercaseReference').addEventListener('click', () => {
+    const key = 'uppercase';
+    for (const [dim, value] of Object.entries({ x: 33, y: 89, width: 90, font_size: 11 })) {
+      document.querySelector(`[data-field="${key}"][data-dim="${dim}"]`).value = value;
+    }
+    liveRefresh();
+    selectField(key);
+    setFeedback('已在畫面套用大寫九格參考位置；請對照相片調整，確認後才按「保存定位」。');
+  });
 }
 
 export function printAllowed(testPrint, paperOk, hasValidationError, hasVisibleWarning) {
@@ -542,6 +636,8 @@ async function init() {
     renderPreview();
   });
   $('showCoordinates').addEventListener('change', renderPreview);
+  $('showPhoto').addEventListener('change', renderPreview);
+  bindPhotoEditing();
   $('printBtn').addEventListener('click', printSheet);
   window.addEventListener('afterprint', restorePrint);
   window.addEventListener('keydown', (event) => {

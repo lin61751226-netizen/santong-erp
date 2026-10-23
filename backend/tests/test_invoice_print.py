@@ -11,7 +11,25 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.models import AdminAuditLog, Employee, InvoicePrintRevision, Role
 from app.services.google_drive import PRESERVED_DATABASE_TABLES, google_drive_worklog_service as drive
-from app.services.invoice_print import PrintDraft, PrintLayout, calculate, uppercase_twd
+from app.services.invoice_print import (
+    FieldSpec, PrintDraft, PrintLayout, calculate, invoice_uppercase_digits,
+    invoice_uppercase_twd, uppercase_twd,
+)
+
+
+def test_reference_photo_is_private_and_field_font_size_is_valid(ctx):
+    client, _, _, _ = ctx
+    photo = client.get('/api/invoice-print/reference-image')
+    assert photo.status_code == 200
+    assert photo.headers['content-type'] == 'image/jpeg'
+    assert photo.headers['cache-control'] == 'private, no-store'
+    assert photo.content.startswith(b'\xff\xd8')
+    assert FieldSpec(x=1, y=2, width=3, font_size=18).font_size == 18
+    with pytest.raises(ValueError):
+        FieldSpec(x=1, y=2, width=3, font_size=25)
+
+    app.dependency_overrides.clear()
+    assert client.get('/api/invoice-print/reference-image').status_code == 401
 
 
 @pytest.fixture
@@ -51,10 +69,28 @@ def test_uppercase_invalid(value):
         uppercase_twd(value)
 
 
+@pytest.mark.parametrize('value,digits,printed', [
+    (0, '零零零零零零零零零', '零億零仟零佰零拾零萬零仟零佰零拾零元'),
+    (125475, '零零零壹貳伍肆柒伍', '零億零仟零佰壹拾貳萬伍仟肆佰柒拾伍元'),
+    (100000001, '壹零零零零零零零壹', '壹億零仟零佰零拾零萬零仟零佰零拾壹元'),
+    (999999999, '玖玖玖玖玖玖玖玖玖', '玖億玖仟玖佰玖拾玖萬玖仟玖佰玖拾玖元'),
+])
+def test_invoice_uppercase_uses_every_preprinted_slot(value, digits, printed):
+    assert ''.join(invoice_uppercase_digits(value)) == digits
+    assert invoice_uppercase_twd(value) == printed
+
+
+@pytest.mark.parametrize('value', [-1, 1.5, True, 1_000_000_000])
+def test_invoice_uppercase_rejects_out_of_range(value):
+    with pytest.raises(ValueError):
+        invoice_uppercase_digits(value)
+
+
 def test_decimal_rounding_and_roc():
     payload = draft(); payload['items'][0].update(quantity='1.5', unit_price='100.33'); payload['tax'] = 0
     assert calculate(PrintDraft(**payload)) == {'amounts': [150], 'subtotal': 150, 'tax': 0,
-        'total': 150, 'uppercase': '壹佰伍拾元整', 'roc_year': 115}
+        'total': 150, 'uppercase': '零億零仟零佰零拾零萬零仟壹佰伍拾零元',
+        'uppercase_digits': list('零零零零零零壹伍零'), 'roc_year': 115}
     payload['items'][0]['unit_price'] = '101'
     assert calculate(PrintDraft(**payload))['total'] == 152
 

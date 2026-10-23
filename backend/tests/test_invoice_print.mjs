@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/invoice_overprint.js',import.meta.url),'utf8');
 const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout,
-       printAllowed,normalizeLayout,esc}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+       printAllowed,normalizeLayout,moveFieldWithinPaper,esc}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 const FIELD_ORDER=['buyer','tax_id','address','year','month','day','description','quantity',
   'unit_price','amount','subtotal','tax','total','uppercase','note'];
@@ -16,7 +16,9 @@ function layout(overrides={}) {
 const draft={buyer:'<script>x</script>',tax_id:'12345678',address:'桃園市某路1號',
   invoice_date:'2026-10-23',note:'',
   items:[{description:'a',quantity:'1',unit_price:'1'},{description:'b',quantity:'2',unit_price:'1'}]};
-const calc={roc_year:115,subtotal:3,tax:0,total:3,uppercase:'參元整',amounts:[1,2]};
+const calc={roc_year:115,subtotal:3,tax:0,total:3,
+  uppercase:'零億零仟零佰零拾零萬零仟零佰零拾參元',
+  uppercase_digits:[...'零零零零零零零零參'],amounts:[1,2]};
 
 test('Taipei date crosses UTC date correctly',()=>{
   assert.equal(taipeiDate(new Date('2026-10-22T17:00:00Z')),'2026-10-23');
@@ -38,6 +40,7 @@ test('all positions receive global offset, detail rows receive row pitch; no uni
   // note carries its multi-line height
   const note=result.find(x=>x.key==='note');
   assert.equal(note,undefined); // empty note is not rendered
+  assert.equal(result.find(x=>x.key==='uppercase').text,'零零零零零零零零參');
 });
 
 test('note text is carried with height when present',()=>{
@@ -116,15 +119,29 @@ test('legacy layouts are normalized read-only (unit hidden, address added, feed 
   assert.equal(JSON.stringify(legacy),snapshot); // never mutated
 });
 
-test('coordinate preview assets ship with new version strings',()=>{
+test('photo drag assets keep the original photo out of print',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=coordinates-20261023"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=coordinates-20261023"/);
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=photo-amount-slots-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=photo-amount-slots-20261023"/);
+  assert.match(html,/src="\/api\/invoice-print\/reference-image"/);
   assert.match(html,/id="showCoordinates" checked/);
+  assert.match(html,/id="showPhoto" checked/);
   assert.match(source,/function renderCoordinates\(paper\)/);
   assert.match(source,/Number\(field\.x\) \+ offsetX/);
-  assert.match(css,/\.coordinate-overlay, \.coordinate-legend \{ display: none !important; \}/);
+  assert.match(css,/\.invoice-reference-photo \{ display: none !important; \}/);
+  assert.match(source,/sheet\.setPointerCapture\(event\.pointerId\)/);
+  assert.match(css,/grid-template-columns: repeat\(9, minmax\(0, 1fr\)\)/);
+  assert.match(source,/result\.uppercase_digits/);
+  assert.match(source,/setUppercaseReference/);
+});
+
+test('per-field type size and drag stays inside paper',()=>{
+  const local=layout();
+  local.fields.buyer.font_size=19;
+  assert.equal(positionedFields(local,draft,calc)[0].font_size,19);
+  assert.deepEqual(moveFieldWithinPaper({x:35,y:15,width:70,height:0},-40,200,{width:195,height:103}),{x:0,y:101.5});
+  assert.deepEqual(moveFieldWithinPaper({x:35,y:15,width:70,height:0},10.26,2.75,{width:195,height:103}),{x:45.3,y:17.8});
 });
 
 test('printAllowed blocks formal print unless paper and validation pass; test print always allowed',()=>{

@@ -88,6 +88,22 @@ def uppercase_twd(value: int) -> str:
     return result + "元整"
 
 
+INVOICE_AMOUNT_UNITS = ("億", "仟", "佰", "拾", "萬", "仟", "佰", "拾", "元")
+
+
+def invoice_uppercase_digits(value: int) -> list[str]:
+    """One capitalized digit for each preprinted amount unit on this invoice form."""
+    if type(value) is not int or not 0 <= value <= MAX_AMOUNT:
+        raise ValueError(f"總計須為0至{MAX_AMOUNT}的整數")
+    return [NUM_WORDS[int(digit)] for digit in f"{value:09d}"]
+
+
+def invoice_uppercase_twd(value: int) -> str:
+    return "".join(
+        digit + unit for digit, unit in zip(invoice_uppercase_digits(value), INVOICE_AMOUNT_UNITS)
+    )
+
+
 def roc_year(value: date) -> int:
     return value.year - 1911
 
@@ -188,7 +204,8 @@ def calculate(draft: PrintDraft) -> dict:
         "subtotal": int(subtotal_before_tax),
         "tax": draft.tax,
         "total": int(total),
-        "uppercase": uppercase_twd(int(total)),
+        "uppercase": invoice_uppercase_twd(int(total)),
+        "uppercase_digits": invoice_uppercase_digits(int(total)),
         "roc_year": roc_year(parsed_date),
     }
 
@@ -198,6 +215,7 @@ class FieldSpec(BaseModel):
     y: float = Field(ge=0, le=PAPER_MAX_MM)
     width: float = Field(gt=0, le=PAPER_MAX_MM)
     height: float = Field(default=0.0, ge=0.0, le=PAPER_MAX_MM)  # 0 = single line
+    font_size: float | None = Field(default=None, ge=8, le=24)
 
     @model_validator(mode="after")
     def validate_bounds(self):

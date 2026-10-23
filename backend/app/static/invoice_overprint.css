@@ -191,6 +191,19 @@ button:disabled {
   overflow: hidden;
 }
 
+.invoice-reference-photo {
+  position: absolute;
+  left: 46mm;
+  top: -46mm;
+  width: 103mm;
+  height: 195mm;
+  transform: rotate(-90deg);
+  opacity: .62;
+  pointer-events: none;
+  user-select: none;
+}
+.invoice-reference-photo[hidden] { display: none; }
+
 .sheet-field {
   position: absolute;
   display: flex;
@@ -200,7 +213,16 @@ button:disabled {
   font-family: PMingLiU, "Microsoft JhengHei", sans-serif;
   color: #000;
   letter-spacing: 0.02em;
+  cursor: grab;
+  touch-action: none;
 }
+.sheet-field.selected { outline: 1px dashed #b34d2e; outline-offset: 2px; }
+
+.sheet-field.field-uppercase {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+}
+.sheet-field.field-uppercase span { text-align: left; }
 
 .sheet-field.field-note {
   white-space: normal;
@@ -240,7 +262,14 @@ button:disabled {
   text-align: center;
   transform: translate(-50%, -50%);
   box-shadow: 0 0 0 1px white;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
 }
+.selection-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; position: sticky; top: 8px; z-index: 8; margin: 10px 0; padding: 10px; background: #f7eee4; border: 1px solid #c9ae91; border-radius: 8px; box-shadow: 0 5px 18px #2f322224; }
+.selection-toolbar[hidden] { display: none; }
+.selection-toolbar button[hidden] { display: none; }
+.selection-toolbar input { width: 76px; }
 .coordinate-legend { margin-top: 12px; padding: 12px; background: #ecf3f1; border-radius: 8px; }
 .coordinate-legend > span { display: block; font-size: 12px; margin: 4px 0 8px; }
 .coordinate-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 5px 10px; font-size: 12px; }
@@ -338,7 +367,7 @@ button:disabled {
 @page { size: 103mm 195mm; margin: 0; }
 
 @media print {
-  .coordinate-overlay, .coordinate-legend { display: none !important; }
+  .coordinate-overlay, .coordinate-legend, .selection-toolbar, .invoice-reference-photo { display: none !important; }
   body {
     background: #fff;
   }
