@@ -176,8 +176,11 @@ button:disabled {
   box-sizing: border-box;
   padding-bottom: 4mm;
   white-space: pre;
-  letter-spacing: 0.02em;
+  /* 0.2em is the gap between upright cells, including each address digit. */
+  letter-spacing: 0.2em;
   line-height: 1;
+  text-orientation: upright;
+  text-combine-upright: none;
   /* End-align, but the padding keeps the last glyph off the clip edge. */
   text-align: end;
 }
@@ -185,12 +188,7 @@ button:disabled {
 .sheet-field.vertical.one-column .num-run {
   letter-spacing: 0;
   white-space: nowrap;
-}
-
-/* House numbers up to four digits: upright, compressed into one em. */
-.sheet-field.vertical.one-column .num-run.tcy {
-  text-combine-upright: all;
-  -webkit-text-combine: horizontal;
+  text-combine-upright: none;
 }
 
 /* Phone and other long or hyphenated runs: one string rotated 90°. */
@@ -341,7 +339,21 @@ button:disabled {
     background: #fff;
   }
   .sheet {
+    width: var(--page-width) !important;
+    height: var(--page-height) !important;
     margin: 0;
     box-shadow: none;
+  }
+  /* Print uses the same upright digits, 0.2em gap, and sideways phone as the preview. */
+  .sheet-field.vertical.one-column {
+    letter-spacing: 0.2em;
+    line-height: 1;
+    text-orientation: upright;
+    text-combine-upright: none;
+  }
+  .sheet-field.vertical.one-column .num-run.sideways {
+    text-orientation: sideways;
+    letter-spacing: 0;
+    text-combine-upright: none;
   }
 }

@@ -97,9 +97,12 @@ function numberRuns(text) {
   return String(text || '').matchAll(/[0-9０-９]+(?:[-－—–][0-9０-９]+)*/g);
 }
 
-// Short digit groups stay upright via text-combine-upright (one em).
-// Longer runs and anything with a hyphen rotate 90° as one string.
-function isCompactUprightRun(run) {
+// House numbers are one upright cell per digit (1em + the column letter-spacing).
+// text-combine-upright draws 385 wider than one em and paints over 路／巷／號／樓.
+// A hyphenated run such as the phone rotates 90° as one string.
+const UPRIGHT_ADVANCE_EM = 1.2;
+
+function isUprightDigitRun(run) {
   return /^[0-9０-９]{1,4}$/.test(run);
 }
 
@@ -112,10 +115,10 @@ export function verticalAdvanceEm(text) {
   let em = 0;
   let index = 0;
   for (const match of numberRuns(source)) {
-    em += Array.from(source.slice(index, match.index)).length * 1.02;
+    em += Array.from(source.slice(index, match.index)).length * UPRIGHT_ADVANCE_EM;
     const run = match[0];
-    if (isCompactUprightRun(run)) {
-      em += 1.02;
+    if (isUprightDigitRun(run)) {
+      em += Array.from(run).length * UPRIGHT_ADVANCE_EM;
     } else {
       let runEm = 0.12;
       for (const ch of run) runEm += isHyphen(ch) ? 0.45 : 0.65;
@@ -123,7 +126,7 @@ export function verticalAdvanceEm(text) {
     }
     index = match.index + run.length;
   }
-  em += Array.from(source.slice(index)).length * 1.02;
+  em += Array.from(source.slice(index)).length * UPRIGHT_ADVANCE_EM;
   return em;
 }
 
@@ -134,8 +137,9 @@ export function verticalColumnHtml(text) {
   for (const match of numberRuns(source)) {
     html += esc(source.slice(index, match.index));
     const run = match[0];
-    const kind = isCompactUprightRun(run) ? 'tcy' : 'sideways';
-    html += `<span class="num-run ${kind}">${esc(run)}</span>`;
+    html += isUprightDigitRun(run)
+      ? esc(run)
+      : `<span class="num-run sideways">${esc(run)}</span>`;
     index = match.index + run.length;
   }
   html += esc(source.slice(index));

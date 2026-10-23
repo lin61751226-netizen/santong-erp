@@ -74,13 +74,13 @@ test('sender address and name+phone are one vertical column each',()=>{
   assert.equal(verticalFontSize(name.text,150,10),10);
   assert.equal(verticalFontSize(name.text,30,10),5);
   const addressHtml=verticalColumnHtml(address.text);
-  assert.match(addressHtml,/num-run tcy">385</);
-  assert.match(addressHtml,/num-run tcy">6</);
-  assert.match(addressHtml,/num-run tcy">8</);
-  assert.match(addressHtml,/之<span class="num-run tcy">3<\/span>$/);
+  assert.equal(addressHtml,'桃園市桃園區永安路385巷6號8樓之3');
+  assert.doesNotMatch(addressHtml,/text-combine|num-run|tcy/);
   assert.match(verticalColumnHtml(name.text),/林金生緘 電話：<span class="num-run sideways">0978-909-078<\/span>$/);
   assert.ok(verticalAdvanceEm(name.text)<Array.from(name.text).length);
-  assert.ok(verticalAdvanceEm(address.text)*0.3528*10<address.height-4);
+  const addressEm=verticalAdvanceEm(address.text);
+  assert.ok(addressEm>=Array.from(address.text).length);
+  assert.ok(addressEm*0.3528*10<address.height-4);
   const senderCode=out.filter(x=>x.key==='sender_postcode').map(c=>c.text);
   assert.deepEqual(senderCode,['3','3','0','5','9']);
   assert.equal(out.find(x=>x.key==='sender_postcode').y,178);
@@ -113,9 +113,13 @@ test('CSS page is 100x200 portrait with vertical writing',()=>{
   assert.match(css,/writing-mode:\s*vertical-rl/);
   assert.match(css,/\.sheet-field\.vertical\.one-column/);
   assert.match(css,/padding-bottom:\s*4mm/);
-  assert.match(css,/text-combine-upright:\s*all/);
+  assert.match(css,/letter-spacing:\s*0\.2em/);
+  assert.doesNotMatch(css,/text-combine-upright:\s*all/);
   assert.match(css,/text-orientation:\s*sideways/);
   assert.match(css,/text-orientation:\s*upright/);
+  assert.match(css,/@media print[\s\S]*letter-spacing:\s*0\.2em/);
+  assert.match(css,/@media print[\s\S]*text-orientation:\s*sideways/);
+  assert.match(css,/@media print[\s\S]*width:\s*var\(--page-width\)/);
   assert.match(source,/oneColumn: true/);
   assert.match(css,/body:not\(\.print-armed\)/);
 });
@@ -126,8 +130,8 @@ test('HTML pre-fills the confirmed Santong sender and ships versioned assets',()
   assert.match(html,/value="三通工程行 林金生"/);
   assert.match(html,/value="0978-909-078"/);
   assert.match(html,/value="桃園市桃園區永安路385巷6號8樓之3"/);
-  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=sender-fit-20261023"/);
-  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=sender-fit-20261023"/);
+  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=sender-digits-20261023"/);
+  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=sender-digits-20261023"/);
   assert.match(html,/套用寄件兩欄完整直書（尚未保存）/);
 });
 
