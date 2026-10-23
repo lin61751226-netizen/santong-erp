@@ -66,9 +66,13 @@ def test_default_layout_get_is_read_only(ctx):
     assert response.headers['cache-control'] == 'no-store'
     data = response.json(); assert data['revision'] == 0
     assert data['content']['fields']['buyer']['x'] == 35
-    assert data['content']['fields']['buyer']['y'] == 13.5
+    assert data['content']['fields']['buyer']['y'] == 15.5
     assert (data['content']['paper_width'],data['content']['paper_height']) == (195,103)
-    assert data['content']['fields']['uppercase']['y'] == 82
+    assert data['content']['feed_mode'] == 'portrait_cw'
+    assert 'address' in data['content']['fields']
+    assert 'unit' not in data['content']['fields']
+    assert data['content']['fields']['note']['height'] > 0
+    assert data['content']['fields']['uppercase']['y'] == 89
     assert session.exec(select(InvoicePrintRevision)).all() == []
     assert not backup.called
     assert client.get('/invoice-overprint').headers['cache-control'] == 'no-store'
@@ -108,7 +112,7 @@ def test_draft_history_no_finance_writes(ctx):
         assert session.exec(select(model)).all() == []
 
 
-@pytest.mark.parametrize('key,value', [('font','url(https://bad)'),('offset_x',21),('font_size',0),('row_pitch',30),('tax_id_spacing',-1),('offset_y',float('inf'))])
+@pytest.mark.parametrize('key,value', [('font','url(https://bad)'),('offset_x',21),('font_size',0),('row_pitch',30),('tax_id_spacing',-1),('offset_y',float('inf')),('feed_mode','sideways')])
 def test_bad_layout_rejected(ctx, key, value):
     client, session, actor, backup = ctx
     content = PrintLayout().model_dump(); content[key] = value
@@ -177,13 +181,22 @@ def test_draft_pagination(ctx):
 
 def test_legacy_layout_read_does_not_resize_or_rewrite(ctx):
     client,session,actor,backup=ctx
-    old=PrintLayout().model_dump();old.pop('paper_width');old.pop('paper_height')
+    # Simulate a real v1 revision: no paper dims, no feed_mode, a 單位 column,
+    # and no 買受人地址 row.
+    old=PrintLayout().model_dump()
+    old.pop('paper_width');old.pop('paper_height');old.pop('feed_mode')
+    old.pop('tax_id_spacing');old.pop('row_pitch')
     old['fields']['buyer'].update(x=27,y=22);old['fields']['tax_id'].update(x=30,y=12)
+    old['fields']['unit']={'x':55,'y':38,'width':10,'height':0}
+    old['fields'].pop('address')
     row=InvoicePrintRevision(kind='layout',record_key='shared',revision=1,content=deepcopy(old),created_by_id=actor.id)
     session.add(row);session.commit()
     result=client.get('/api/invoice-print/template').json()
     assert (result['content']['paper_width'],result['content']['paper_height']) == (190,105)
     assert result['content']['fields']['buyer']['y']==22
+    assert result['content']['feed_mode'] == 'portrait_cw'
+    assert result['content']['fields']['address']['y'] == 24.5
+    assert 'unit' not in result['content']['fields']
     session.refresh(row);assert row.content==old and not backup.called
     assert client.put('/api/invoice-print/template',json={'expected_revision':1,'content':old}).status_code==422
     assert len(session.exec(select(InvoicePrintRevision)).all())==1
@@ -195,7 +208,12 @@ def test_sample_is_private_read_only_and_buyer_above_tax_id(ctx):
     assert sample.status_code==200 and sample.headers['cache-control']=='no-store'
     content=sample.json()
     assert (content['paper_width'],content['paper_height'])==(195,103)
+    assert content['feed_mode']=='portrait_cw'
     assert content['fields']['buyer']['y'] < content['fields']['tax_id']['y']
+    assert content['fields']['address']['y'] > content['fields']['tax_id']['y']
+    assert set(content['fields']) == {'buyer','tax_id','address','year','month','day',
+        'description','quantity','unit_price','amount','subtotal','tax','total','uppercase','note'}
+    assert content['fields']['note']['x'] > content['fields']['amount']['x']
     assert not session.exec(select(InvoicePrintRevision)).all() and not backup.called
     app.dependency_overrides.pop(get_current_actor)
     assert client.get('/api/invoice-print/sample-layout').status_code==401

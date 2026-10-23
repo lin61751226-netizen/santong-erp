@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>直式信封套印工作台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/envelope_overprint.css?v=env-20261023">
+</head>
+<body data-page="envelope-overprint">
+  <header class="topbar">
+    <div class="brand">
+      <h1>直式信封套印工作台</h1>
+      <p class="muted">依中華郵政直式信封配置：收件人郵遞區號於右上、地址於右中、姓名於正中；寄件人於左側、郵遞區號於左下。只印內容，不印框線。</p>
+    </div>
+    <div class="actions">
+      <a href="/">回到總覽</a>
+      <a href="/invoice-overprint">三聯式發票套印</a>
+      <button type="button" id="logoutLink" class="button-secondary">登出</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <div class="notice" id="globalMessage"></div>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>1. 收件人（信封右側／中央）</h2>
+        <span class="muted">3+2郵遞區號；地址直書由右至左；姓名後綴預設「收」。</span>
+      </div>
+      <div class="form-grid">
+        <div>
+          <label for="receiverPostcode">收件人郵遞區號（3+2，最多5碼）</label>
+          <input id="receiverPostcode" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="例：10603">
+        </div>
+        <div>
+          <label for="receiverCompany">收件公司／抬頭（可留空）</label>
+          <input id="receiverCompany" autocomplete="off" maxlength="120">
+        </div>
+        <div>
+          <label for="receiverName">收件人姓名</label>
+          <input id="receiverName" autocomplete="off" maxlength="120" placeholder="例：王大明">
+        </div>
+        <div>
+          <label for="receiverSuffix">姓名後綴</label>
+          <input id="receiverSuffix" autocomplete="off" maxlength="10" value="收">
+        </div>
+        <div class="full">
+          <label for="receiverAddress">收件人地址（不含郵遞區號）</label>
+          <input id="receiverAddress" autocomplete="off" maxlength="120" placeholder="例：臺北市大安區金山南路2段55號">
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>2. 寄件人（信封左側，預設三通工程行）</h2>
+      </div>
+      <div class="form-grid">
+        <div>
+          <label for="senderPostcode">寄件人郵遞區號（最多5碼）</label>
+          <input id="senderPostcode" inputmode="numeric" autocomplete="off" maxlength="5" value="330">
+        </div>
+        <div>
+          <label for="senderName">寄件公司／姓名</label>
+          <input id="senderName" autocomplete="off" maxlength="120" value="三通工程行">
+        </div>
+        <div>
+          <label for="senderSuffix">姓名後綴</label>
+          <input id="senderSuffix" autocomplete="off" maxlength="10" value="緘">
+        </div>
+        <div>
+          <label for="senderPhone">電話（可留空）</label>
+          <input id="senderPhone" inputmode="tel" autocomplete="off" maxlength="120">
+        </div>
+        <div class="full">
+          <label for="senderAddress">寄件人地址（不含郵遞區號）</label>
+          <input id="senderAddress" autocomplete="off" maxlength="120" value="桃園市桃園區永安路385巷6號8樓之3">
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>3. 紙張與字級（直式 100 × 200 mm）</h2>
+      </div>
+      <div class="form-grid">
+        <div>
+          <label for="paperWidth">紙張寬（mm）</label>
+          <input id="paperWidth" type="number" step="0.1" min="80" max="300">
+        </div>
+        <div>
+          <label for="paperHeight">紙張高（mm）</label>
+          <input id="paperHeight" type="number" step="0.1" min="80" max="300">
+        </div>
+        <div>
+          <label for="nameFontSize">姓名大欄字級（pt）</label>
+          <input id="nameFontSize" type="number" step="0.5" min="8" max="32">
+        </div>
+        <div>
+          <label for="fontSize">地址欄字級（pt）</label>
+          <input id="fontSize" type="number" step="0.5" min="6" max="24">
+        </div>
+        <div>
+          <label for="smallFontSize">寄件人小字級（pt）</label>
+          <input id="smallFontSize" type="number" step="0.5" min="6" max="18">
+        </div>
+        <div>
+          <label for="postcodeSpacing">郵遞區號每碼間距（mm）</label>
+          <input id="postcodeSpacing" type="number" step="0.1" min="3" max="12">
+        </div>
+        <div>
+          <label for="postcodeGap">3+2中間間隙（mm）</label>
+          <input id="postcodeGap" type="number" step="0.1" min="0" max="8">
+        </div>
+        <div>
+          <label for="offsetX">整體X位移（mm，右正）</label>
+          <input id="offsetX" type="number" step="0.1" min="-20" max="20">
+        </div>
+        <div>
+          <label for="offsetY">整體Y位移（mm，下正）</label>
+          <input id="offsetY" type="number" step="0.1" min="-20" max="20">
+        </div>
+      </div>
+      <div class="button-row">
+        <button type="button" id="sampleLayout" class="button-secondary">重設為100×200標準定位</button>
+      </div>
+      <div class="warning" id="paperWarning" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head">
+        <h2>4. 各欄座標微調（mm）</h2>
+        <span class="muted">直書欄位：X為左邊界、Y為頂端、寬度為直行區總寬、高度為行長。</span>
+      </div>
+      <div class="field-grid" id="fieldEditor"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><h2>5. 預覽與列印</h2></div>
+      <div class="layout-note">
+        <strong>列印前於瀏覽器列印視窗確認：</strong>
+        <ol>
+          <li>印表機：請選「<strong>Brother 直式信封 100x200mm</strong>」（MP盤放信封，長邊進紙、直向）。</li>
+          <li>紙張尺寸：自動（網頁指定100×200）；配置方式：<strong>實際大小／100%</strong>，不要用「符合頁面大小」。</li>
+          <li>邊界：無／0；關閉頁首頁尾；背景圖形關閉。</li>
+          <li>請先用白紙（裁成100×200）試印，再對信封調整X／Y與各欄座標。</li>
+        </ol>
+      </div>
+      <div class="paper-viewport">
+        <div id="sheet" class="sheet envelope" aria-label="信封預覽">
+          <div id="sheetContent"></div>
+          <div id="testGrid" class="test-grid" hidden></div>
+        </div>
+      </div>
+      <div class="form-inline">
+        <label><input type="checkbox" id="testPrint"> 白紙校正測試（標題＋每2mm網格＋郵票／郵遞區號提示框，不印正式內容）</label>
+      </div>
+      <div class="warning" id="validation" role="alert"></div>
+      <div class="button-row">
+        <button type="button" id="printBtn">列印</button>
+        <button type="button" id="saveLayout" class="button-secondary">保存定位</button>
+        <button type="button" id="saveDraft" class="button-secondary">存草稿</button>
+        <button type="button" id="loadDraft" class="button-secondary">載入草稿</button>
+        <button type="button" id="retryBackup" class="button-secondary">重試雲端備份</button>
+      </div>
+      <p class="muted" id="printHint">每次都會開啟瀏覽器列印視窗；可重複列印。</p>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><h2>草稿</h2><span class="muted">最多顯示最近50筆。</span></div>
+      <div class="table-wrap">
+        <table class="simple-table">
+          <thead><tr><th>名稱</th><th>收件人</th><th>時間</th><th>版本</th></tr></thead>
+          <tbody id="draftRows"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/envelope_overprint.js?v=env-20261023"></script>
+</body>
+</html>

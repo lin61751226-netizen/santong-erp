@@ -1,36 +1,360 @@
-:root { --ink:#223631; --muted:#69766f; --line:#d6ddd5; --paper:#fffdf8; --accent:#226452; --paper-width:195mm; --paper-height:103mm; }
-* { box-sizing:border-box; }
-body { margin:0; color:var(--ink); background:radial-gradient(at 10% 0%,#e0e9df,transparent 55%),#f3f1e9; font-family:"Microsoft JhengHei",sans-serif; }
-header,main,.toolbar,.message,.preview-heading { max-width:1200px; margin:20px auto; padding:0 24px; }
-header span { display:block; margin-top:20px; color:var(--muted); font-size:13px; letter-spacing:2px; }
-h1 { font-family:PMingLiU,serif; font-size:36px; margin:12px 0; } h2 { font-size:21px; margin:0 0 14px; }
-a { color:var(--accent); } p,li { line-height:1.7; } .muted { color:var(--muted); font-size:14px; }
-.toolbar,.actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; } .toolbar { position:sticky; top:0; z-index:3; background:#f3f1e9f5; padding:12px 24px; border-bottom:1px solid var(--line); }
-#printHint { flex-basis:100%; margin:0; font-size:14px; }
-button { font:inherit; padding:11px 15px; border:1px solid var(--line); border-radius:6px; background:white; color:var(--ink); cursor:pointer; }
-button[aria-pressed="true"],#saveDraft,#saveLayout,#overprint { background:var(--accent); color:white; }
-button:disabled { opacity:.45; cursor:not-allowed; } button:focus-visible,input:focus-visible,select:focus-visible { outline:3px solid #ab8e3d; outline-offset:2px; }
-main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:20px; align-items:start; }
-.card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:24px; min-width:0; box-shadow:0 6px 20px #20302006; }
-[hidden] { display:none!important; } .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-label { display:block; font-size:14px; margin:0 0 14px; } input,select { display:block; font:inherit; padding:10px; border:1px solid #bfc9c0; border-radius:5px; width:100%; margin-top:7px; background:white; color:#182f27; }
-.check { display:flex; align-items:start; gap:8px; font-weight:bold; line-height:1.6; }.check input { width:20px; height:20px; flex-shrink:0; }
-.table-scroll { overflow-x:auto; margin:14px 0; } table { border-collapse:collapse; width:100%; min-width:640px; } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:14px; } th { font-size:12px; color:var(--muted); white-space:nowrap; }
-td input { min-width:78px; } td:first-child input { min-width:170px; } #fieldPositions td:first-child { min-width:130px; } #fieldPositions input { min-width:85px; }
-.message { min-height:27px; font-weight:bold; } .totals { background:#e7eee7; padding:16px; border-radius:6px; }.actions { margin:14px 0; } summary { cursor:pointer; padding:12px 0; font-weight:bold; }
-#draftList button { display:block; width:100%; text-align:left; margin:8px 0; } .error { color:#a53023; }
-.paper-viewport { overflow-x:auto; padding:4px 24px 32px; }
-#sheet { position:relative; width:var(--paper-width); height:var(--paper-height); margin:0 auto; background-color:white; background-image:linear-gradient(#dae4dc 1px,transparent 1px),linear-gradient(90deg,#dae4dc 1px,transparent 1px); background-size:5mm 5mm; outline:1px solid #abb9ad; color:black; }
-.print-field { position:absolute; line-height:1.2; white-space:nowrap; } .print-field.numeric { text-align:right; } .print-field.bad { outline:2px solid #c34a33; }
-#testMark { position:absolute; top:2mm; left:4mm; font:9pt "Microsoft JhengHei",sans-serif; color:#687c6a; }
-@media(max-width:850px) { main { grid-template-columns:1fr; } h1 { font-size:29px; }.card { padding:18px; } .form-grid { grid-template-columns:1fr; } .toolbar { position:static; } }
-@page { size:195mm 103mm; margin:0; }
+:root {
+  --paper-width: 195mm;
+  --paper-height: 103mm;
+  --page-width: 103mm;
+  --page-height: 195mm;
+  --line: #d7dce5;
+  --ink: #222;
+}
+
+body {
+  margin: 0;
+  background: #f3f5f9;
+  color: var(--ink);
+}
+
+.app-main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.section-head h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 14px;
+}
+
+.form-grid .full {
+  grid-column: 1 / -1;
+}
+
+.form-grid label,
+.form-inline label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.form-inline {
+  margin: 10px 0;
+}
+
+input,
+select,
+textarea {
+  padding: 7px 9px;
+  border: 1px solid #c7cedb;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+button,
+.button-row a {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #1f5c99;
+  background: #1f5c99;
+  color: #fff;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 14px;
+}
+
+button.button-secondary {
+  background: #fff;
+  color: #1f5c99;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 10px 0;
+}
+
+.simple-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.simple-table th,
+.simple-table td {
+  border: 1px solid var(--line);
+  padding: 6px;
+  vertical-align: middle;
+}
+
+.simple-table input {
+  width: 100%;
+  min-width: 90px;
+  box-sizing: border-box;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.totals div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.field-row strong {
+  min-width: 96px;
+}
+
+.field-row label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.field-row input {
+  width: 64px;
+  padding: 4px 6px;
+}
+
+.paper-viewport {
+  width: 100%;
+  overflow: auto;
+  background: #dfe4ee;
+  border-radius: 8px;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.sheet {
+  position: relative;
+  background: #fff;
+  margin: 0 auto;
+  box-shadow: 0 2px 12px rgba(15, 35, 70, 0.18);
+  overflow: hidden;
+}
+
+.sheet-field {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  white-space: pre;
+  line-height: 1.2;
+  font-family: PMingLiU, "Microsoft JhengHei", sans-serif;
+  color: #000;
+  letter-spacing: 0.02em;
+}
+
+.sheet-field.field-note {
+  white-space: normal;
+  align-items: flex-start;
+  word-break: break-all;
+  line-height: 1.25;
+  overflow: hidden;
+}
+
+.test-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(180, 190, 210, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(180, 190, 210, 0.35) 1px, transparent 1px);
+}
+
+.test-title {
+  position: absolute;
+  left: 2mm;
+  top: 1mm;
+  font-size: 12pt;
+  font-weight: 700;
+}
+
+.test-subtitle {
+  position: absolute;
+  right: 2mm;
+  top: 1.5mm;
+  font-size: 8pt;
+}
+
+.grid-x,
+.grid-y {
+  position: absolute;
+  font-size: 6pt;
+  color: #7a869b;
+}
+
+.grid-x { top: 0; }
+.grid-y { left: 0; }
+
+.corner {
+  position: absolute;
+  width: 4mm;
+  height: 4mm;
+  border-color: #333;
+}
+.corner.tl { top: 0; left: 0; border-top: 1px solid; border-left: 1px solid; }
+.corner.tr { top: 0; right: 0; border-top: 1px solid; border-right: 1px solid; }
+.corner.bl { bottom: 0; left: 0; border-bottom: 1px solid; border-left: 1px solid; }
+.corner.br { bottom: 0; right: 0; border-bottom: 1px solid; border-right: 1px solid; }
+
+.layout-note {
+  background: #fff8e1;
+  border: 1px solid #e6cf86;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.layout-note ol {
+  margin: 6px 0 0 18px;
+  padding: 0;
+}
+
+.notice {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: #eef4ff;
+  border: 1px solid #c8daf6;
+}
+
+.notice.error,
+.warning {
+  background: #fdeeee;
+  border-color: #f0b8b8;
+  color: #8a1f1f;
+}
+
+.warning {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #f0b8b8;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.muted {
+  color: #6b7484;
+  font-size: 12.5px;
+}
+
+/* Static fallback: default feed mode is portrait 103x195; JS injects the
+   exact @page rule from the saved layout before printing. */
+@page { size: 103mm 195mm; margin: 0; }
+
 @media print {
-  html,body { margin:0!important; padding:0!important; width:var(--paper-width); height:var(--paper-height); background:white!important; }
-  .no-print { display:none!important; } .paper-viewport { padding:0; margin:0; overflow:visible; }
-  #sheet { margin:0; outline:0; background:none; break-inside:avoid; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-  #testMark { display:none; } body.test-print #testMark { display:block; }
-  body.test-print #sheet { background-image:linear-gradient(#ccc 1px,transparent 1px),linear-gradient(90deg,#ccc 1px,transparent 1px); background-size:5mm 5mm; }
-  body:not(.print-armed) .paper-viewport { display:none!important; }
-  .print-field.bad { outline:0; }
+  body {
+    background: #fff;
+  }
+  body:not(.print-armed) .paper-viewport {
+    display: none !important;
+  }
+  .topbar,
+  .card:not(:has(.paper-viewport)),
+  .layout-note,
+  .no-print {
+    display: none !important;
+  }
+  .app-main {
+    max-width: none;
+    padding: 0;
+    margin: 0;
+  }
+  .card:has(.paper-viewport) {
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+  html,
+  body {
+    width: var(--page-width);
+    height: var(--page-height);
+  }
+  .paper-viewport {
+    display: block;
+    width: var(--page-width);
+    height: var(--page-height);
+    padding: 0;
+    border-radius: 0;
+    overflow: visible;
+    background: #fff;
+  }
+  .sheet {
+    margin: 0;
+    box-shadow: none;
+    page-break-after: avoid;
+  }
+  /* Portrait short-edge feed: CSS page is 103x195, rotate the landscape
+     invoice content so it exactly fills the registered form. */
+  body.print-armed .sheet.feed-portrait {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: top left;
+  }
+  body.print-armed .sheet.feed-portrait.feed-cw {
+    transform: rotate(90deg) translateY(-100%);
+  }
+  body.print-armed .sheet.feed-portrait.feed-ccw {
+    transform: rotate(-90deg) translateX(-100%);
+  }
 }

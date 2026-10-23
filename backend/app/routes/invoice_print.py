@@ -1,131 +1,193 @@
-"""Authenticated overprint calibration and append-only drafts."""
-from pathlib import Path
-from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+"""Admin-only routes for the triplicate invoice overprint workbench."""
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import Field
+from pydantic import ValidationError
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+
 from app.core.db import get_session
 from app.deps import require_roles
 from app.models import AdminAuditLog, Employee, InvoicePrintRevision, Role
 from app.services.google_drive import google_drive_worklog_service as drive
-from app.services.invoice_print import PrintDraft, PrintLayout, StrictModel, calculate
+from app.services.invoice_print import (
+    FIELD_KEYS,
+    PrintDraft,
+    PrintLayout,
+    calculate,
+    real_invoice_fields,
+)
 
-
-def no_cache(response: Response):
-    response.headers["Cache-Control"] = "no-store"
-
-
-router = APIRouter(tags=["invoice-print"], dependencies=[Depends(no_cache)])
+router = APIRouter()
+templates = Jinja2Templates(directory="app/templates")
 admin = require_roles(Role.owner, Role.admin)
-templates = Jinja2Templates(directory=str(Path(__file__).resolve().parents[1] / "templates"))
+LAYOUT_RECORD_KEY = "shared"
+DRAFT_LIMIT = 50
 
 
-class LayoutSave(StrictModel):
-    expected_revision: int = Field(ge=0)
-    content: PrintLayout
+def _load_content(session: Session, kind: str, record_key: str):
+    row = session.exec(
+        select(InvoicePrintRevision)
+        .where(
+            InvoicePrintRevision.kind == kind,
+            InvoicePrintRevision.record_key == record_key,
+        )
+        .order_by(InvoicePrintRevision.revision.desc())
+    ).first()
+    return (row.revision, row.content) if row else (0, None)
 
 
-class DraftSave(StrictModel):
-    expected_revision: int = Field(ge=0)
-    record_key: Annotated[str, Field(pattern=r"^[a-zA-Z0-9-]{1,64}$")]
-    content: PrintDraft
+def _normalize_legacy(content: dict) -> dict:
+    """Read-only view of an old layout that fills missing fields from real-form defaults.
+
+    Never writes the revision; unknown fields (e.g. the removed 單位 column) are
+    hidden and new fields (買受人地址) appear at their real-form coordinates.
+    """
+    if not isinstance(content, dict) or not isinstance(content.get("fields"), dict):
+        return content
+    defaults = real_invoice_fields()
+    stored = content["fields"]
+    normalized = {key: (stored[key] if key in stored else defaults[key].model_dump())
+                  for key in FIELD_KEYS}
+    view = {**content, "fields": normalized}
+    # Earliest revisions used an implicit 190 x 105 mm sheet; never resize them.
+    view.setdefault("paper_width", 190)
+    view.setdefault("paper_height", 105)
+    view.setdefault("feed_mode", PrintLayout().feed_mode)
+    view.setdefault("tax_id_spacing", 6.0)
+    view.setdefault("row_pitch", 6.1)
+    return view
 
 
-def latest(session, kind, key):
-    return session.exec(select(InvoicePrintRevision).where(
-        InvoicePrintRevision.kind == kind, InvoicePrintRevision.record_key == key
-    ).order_by(InvoicePrintRevision.revision.desc())).first()
+def _audit(session: Session, actor: Employee, action: str, detail: str):
+    session.add(AdminAuditLog(
+        actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+        action=action, entity_type="invoiceprintrevision", summary=detail))
 
 
-def encode(row):
-    content = dict(row.content)
-    if row.kind == "layout":
-        # Earlier layouts had an implicit 190 x 105 mm sheet. Never silently resize them.
-        content.setdefault("paper_width", 190)
-        content.setdefault("paper_height", 105)
-    return {"record_key": row.record_key, "revision": row.revision, "content": content,
-            "created_at": row.created_at.isoformat() + "Z"}
+def _layout_view(session: Session) -> dict:
+    revision, content = _load_content(session, "layout", LAYOUT_RECORD_KEY)
+    if content is None:
+        return {"revision": 0, "content": PrintLayout().model_dump()}
+    return {"revision": revision, "content": _normalize_legacy(content)}
 
 
-async def backup():
-    try:
-        result = await drive.backup_database()
-        return {"status": result.get("status", "failed")}
-    except Exception:
-        return {"status": "failed"}
-
-
-async def save(session, actor, kind, key, expected, content):
-    previous = latest(session, kind, key)
-    revision = previous.revision if previous else 0
-    if revision != expected:
-        raise HTTPException(409, "已被其他人更新，請先重新載入；本次未覆蓋")
-    row = InvoicePrintRevision(kind=kind, record_key=key, revision=revision + 1,
-        content=content, created_by_id=actor.id)
+async def _save_revision(session: Session, actor: Employee, kind: str, record_key: str,
+                         content: dict, expected_revision: int, audit_action: str) -> dict:
+    current_revision, _ = _load_content(session, kind, record_key)
+    if expected_revision != current_revision:
+        raise HTTPException(409, detail="版本已改變，請重新載入後再儲存")
+    row = InvoicePrintRevision(
+        kind=kind,
+        record_key=record_key,
+        revision=current_revision + 1,
+        content=content,
+        created_by_id=actor.id,
+    )
     session.add(row)
-    session.add(AdminAuditLog(actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
-        action=f"invoice_print_{kind}_save", entity_type="invoiceprintrevision",
-        summary=f"套印{kind} {key} 版本{revision + 1}；保留歷史版本，不改計價或帳目"))
+    _audit(session, actor, audit_action, f"{kind}:{record_key} 修訂為第 {current_revision + 1} 版")
+    session.commit()
     try:
-        session.commit()
-    except IntegrityError as exc:
-        session.rollback()
-        raise HTTPException(409, "同時保存衝突，請重新載入；本次未覆蓋") from exc
-    session.refresh(row)
-    return {**encode(row), "backup": await backup()}
+        backup = await drive.backup_database()
+    except Exception:
+        backup = {"status": "failed", "message": "資料庫已保存，Google Drive 備份失敗"}
+    return {"revision": row.revision, "backup": backup}
 
 
-@router.get("/invoice-overprint")
-def page(request: Request, actor: Employee = Depends(admin)):
-    return templates.TemplateResponse("invoice_overprint.html", {"request": request}, headers={"Cache-Control": "no-store"})
+@router.get("/invoice-overprint", response_class=HTMLResponse)
+def invoice_overprint_page(request: Request, actor: Employee = Depends(admin)):
+    response = templates.TemplateResponse("invoice_overprint.html", {"request": request})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @router.get("/api/invoice-print/template")
-def template(session: Session = Depends(get_session), actor: Employee = Depends(admin)):
-    row = latest(session, "layout", "shared")
-    return encode(row) if row else {"record_key": "shared", "revision": 0, "content": PrintLayout().model_dump()}
+def get_template(response: Response, session: Session = Depends(get_session),
+                 actor: Employee = Depends(admin)):
+    response.headers["Cache-Control"] = "no-store"
+    return _layout_view(session)
 
 
 @router.put("/api/invoice-print/template")
-async def save_template(payload: LayoutSave, session: Session = Depends(get_session), actor: Employee = Depends(admin)):
-    if not {"paper_width", "paper_height"}.issubset(payload.content.model_fields_set):
-        raise HTTPException(422, "請重新整理套印頁並確認紙張寬高；本次未變更印模")
-    return await save(session, actor, "layout", "shared", payload.expected_revision, payload.content.model_dump(mode="json"))
+async def save_template(payload: dict, session: Session = Depends(get_session),
+                        actor: Employee = Depends(admin)):
+    try:
+        content = PrintLayout(**payload.get("content", {})).model_dump()
+        expected_revision = int(payload.get("expected_revision"))
+    except (ValueError, TypeError, ValidationError) as exc:
+        raise HTTPException(422, detail=f"定位內容不正確：{exc}") from exc
+    return await _save_revision(
+        session, actor, "layout", LAYOUT_RECORD_KEY, content,
+        expected_revision, "invoice_print_layout_save",
+    )
 
 
 @router.get("/api/invoice-print/sample-layout")
-def sample_layout(actor: Employee = Depends(admin)):
+def sample_layout(response: Response, actor: Employee = Depends(admin)):
+    """Real-form 195 x 103 mm coordinates, measured from the actual sample."""
+    response.headers["Cache-Control"] = "no-store"
     return PrintLayout().model_dump()
 
 
 @router.post("/api/invoice-print/calculate")
-def preview(payload: PrintDraft, actor: Employee = Depends(admin)):
+def calculate_draft(payload: dict, actor: Employee = Depends(admin)):
     try:
-        return calculate(payload)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-
-
-@router.get("/api/invoice-print/drafts")
-def drafts(offset: int = Query(0, ge=0), session: Session = Depends(get_session), actor: Employee = Depends(admin)):
-    heads = select(func.max(InvoicePrintRevision.id)).where(InvoicePrintRevision.kind == "draft").group_by(InvoicePrintRevision.record_key)
-    rows = session.exec(select(InvoicePrintRevision).where(InvoicePrintRevision.id.in_(heads))
-        .order_by(InvoicePrintRevision.id.desc()).offset(offset).limit(51)).all()
-    return {"items": [encode(row) for row in rows[:50]], "has_more": len(rows) > 50}
+        draft = PrintDraft(**payload)
+        return calculate(draft)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 @router.post("/api/invoice-print/drafts")
-async def save_draft(payload: DraftSave, session: Session = Depends(get_session), actor: Employee = Depends(admin)):
+async def save_draft(payload: dict, session: Session = Depends(get_session),
+                     actor: Employee = Depends(admin)):
+    record_key = (payload.get("record_key") or "").strip()
+    if not record_key or len(record_key) > 80:
+        raise HTTPException(422, detail="草稿鍵不正確")
     try:
-        calculate(payload.content)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return await save(session, actor, "draft", payload.record_key, payload.expected_revision, payload.content.model_dump(mode="json"))
+        draft = PrintDraft(**payload.get("content", {})).model_dump()
+        expected_revision = int(payload.get("expected_revision"))
+    except (ValueError, TypeError, ValidationError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    return await _save_revision(
+        session, actor, "draft", record_key, draft,
+        expected_revision, "invoice_print_draft_save",
+    )
+
+
+@router.get("/api/invoice-print/drafts")
+def list_drafts(limit: int = DRAFT_LIMIT, offset: int = 0,
+                session: Session = Depends(get_session), actor: Employee = Depends(admin)):
+    limit = max(1, min(limit, DRAFT_LIMIT))
+    offset = max(0, offset)
+    heads = (
+        select(func.max(InvoicePrintRevision.id))
+        .where(InvoicePrintRevision.kind == "draft")
+        .group_by(InvoicePrintRevision.record_key)
+    )
+    rows = session.exec(
+        select(InvoicePrintRevision)
+        .where(InvoicePrintRevision.id.in_(heads))
+        .order_by(InvoicePrintRevision.id.desc())
+        .offset(offset).limit(limit + 1)
+    ).all()
+    has_more = len(rows) > limit
+    items = [
+        {
+            "record_key": row.record_key,
+            "revision": row.revision,
+            "content": row.content,
+            "created_at": row.created_at.isoformat(),
+        }
+        for row in rows[:limit]
+    ]
+    return {"items": items, "has_more": has_more, "limit": limit, "offset": offset}
 
 
 @router.post("/api/invoice-print/backup")
 async def retry_backup(actor: Employee = Depends(admin)):
-    return await backup()
+    try:
+        return await drive.backup_database()
+    except Exception as exc:
+        raise HTTPException(500, detail=f"備份失敗：{exc}") from exc

@@ -1,249 +1,608 @@
-const LABELS = {buyer:'買受人',tax_id:'統一編號',year:'民國年',month:'月',day:'日',description:'品名',quantity:'數量',unit:'單位',unit_price:'單價',amount:'明細金額',subtotal:'未稅小計',tax:'稅額',total:'數字總計',uppercase:'國字總計',note:'備註'};
-const NUMERIC = new Set(['quantity','unit_price','amount','subtotal','tax','total']);
+const $ = (id) => document.getElementById(id);
+const FIELD_ORDER = [
+  'buyer', 'tax_id', 'address', 'year', 'month', 'day',
+  'description', 'quantity', 'unit_price', 'amount',
+  'subtotal', 'tax', 'total', 'uppercase', 'note',
+];
+const FIELD_LABELS = {
+  buyer: '買受人', tax_id: '統一編號', address: '買受人地址',
+  year: '年（民國）', month: '月', day: '日',
+  description: '品名', quantity: '數量', unit_price: '單價', amount: '金額',
+  subtotal: '銷售額合計', tax: '營業稅', total: '總計',
+  uppercase: '中文大寫', note: '備註（右側直欄）',
+};
+const ROW_DETAIL_KEYS = ['description', 'quantity', 'unit_price', 'amount'];
+const NUMERIC_KEYS = new Set(['unit_price', 'amount', 'subtotal', 'tax', 'total', 'year', 'month', 'day']);
+const MAX_ITEMS = 5;
+
+export function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+function money(value) {
+  return Number(value || 0).toLocaleString('zh-Hant', { maximumFractionDigits: 0 });
+}
+export function taipeiDate(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(value);
+  const map = {};
+  parts.forEach((part) => { if (part.type !== 'literal') map[part.type] = part.value; });
+  return `${map.year}-${map.month}-${map.day}`;
+}
+function rocParts(dateString) {
+  const [year, month, day] = dateString.split('-').map(Number);
+  return { year: year - 1911, month, day };
+}
+function roundedAmount(quantity, unitPrice) {
+  const q = Number(quantity || 1);
+  const p = Number(unitPrice || 0);
+  return Math.round((q * p) * 100) / 100;
+}
+
+const state = {
+  layout: null,
+  calc: null,
+  draftRevision: 0,
+  layoutRevision: 0,
+  testPrint: false,
+  printing: false,
+  sequence: 0,
+};
+
+function gatherDraft() {
+  return {
+    buyer: $('buyer').value.trim(),
+    tax_id: $('taxId').value.trim(),
+    address: $('buyerAddress').value.trim(),
+    invoice_date: $('invoiceDate').value,
+    tax: Number($('tax').value || 0),
+    note: $('note').value.trim(),
+    items: [...document.querySelectorAll('.item-row')].map((row) => ({
+      description: row.querySelector('.item-description').value.trim(),
+      quantity: row.querySelector('.item-quantity').value.trim(),
+      unit_price: row.querySelector('.item-price').value.trim(),
+    })),
+  };
+}
+function setFeedback(text, kind = 'info') {
+  const node = $('globalMessage');
+  node.textContent = text || '';
+  node.className = kind === 'error' ? 'notice error' : 'notice';
+}
+export function backupMessage(backup) {
+  if (!backup || backup.status === 'saved') return '已保存，Google Drive 資料庫備份成功。';
+  if (backup.status === 'skipped_regression') return '已保存；Google Drive 尚未成功設定，目前只留在本機資料庫。';
+  return `已保存，但雲端備份失敗：${backup.message || ''} 請稍後按「重試雲端備份」。`;
+}
+
+export function positionedFields(layout, draft, result) {
+  const roc = rocParts(draft.invoice_date);
+  const fields = layout.fields;
+  const out = [];
+  function add(key, text, rowIndex = null) {
+    const field = fields[key];
+    if (!field || !text) return;
+    let y = field.y + Number(layout.offset_y || 0);
+    if (rowIndex !== null && ROW_DETAIL_KEYS.includes(key)) {
+      y += rowIndex * Number(layout.row_pitch || 6);
+    }
+    out.push({
+      key, text,
+      x: Number((field.x + Number(layout.offset_x || 0)).toFixed(2)),
+      y: Number(y.toFixed(2)),
+      width: field.width,
+      height: field.height || 0,
+      numeric: NUMERIC_KEYS.has(key),
+    });
+  }
+  add('buyer', draft.buyer);
+  if (draft.tax_id) {
+    draft.tax_id.split('').forEach((char, index) => {
+      add('tax_id', char, null);
+      const base = out[out.length - 1];
+      base.key = 'tax_id';
+      base.numeric = true;
+      base.x = Number((fields.tax_id.x + Number(layout.offset_x || 0)
+        + index * Number(layout.tax_id_spacing || 6)).toFixed(2));
+      base.width = Number(layout.tax_id_spacing || 6);
+    });
+  }
+  add('address', draft.address);
+  add('year', String(roc.year));
+  add('month', String(roc.month));
+  add('day', String(roc.day));
+  draft.items.forEach((item, index) => {
+    add('description', item.description, index);
+    add('quantity', item.quantity, index);
+    add('unit_price', item.unit_price ? money(item.unit_price) : '', index);
+    add('amount', result.amounts[index] ? money(result.amounts[index]) : '', index);
+  });
+  add('subtotal', money(result.subtotal));
+  add('tax', money(result.tax));
+  add('total', money(result.total));
+  add('uppercase', result.uppercase);
+  add('note', draft.note);
+  return out;
+}
 
 export function paperGeometry(layout) {
-  const width=layout.paper_width ?? 190, height=layout.paper_height ?? 105;
-  if(!Number.isFinite(width)||!Number.isFinite(height)||width<80||width>297||height<80||height>297)throw new Error('紙張寬高須為80至297mm。');
-  return {width,height,pageRule:`@page { size:${width}mm ${height}mm; margin:0; }`};
+  const width = Number(layout.paper_width);
+  const height = Number(layout.paper_height);
+  if (!Number.isFinite(width) || !Number.isFinite(height)) throw new Error('紙張尺寸不正確');
+  const mode = layout.feed_mode || 'portrait_cw';
+  const portrait = mode === 'portrait_cw' || mode === 'portrait_ccw';
+  const pageW = portrait ? height : width;
+  const pageH = portrait ? width : height;
+  if (!(width >= 80 && width <= 297 && height >= 80 && height <= 297)) throw new Error('紙張尺寸須為80至297mm。');
+  return {
+    width, height, mode, portrait,
+    pageWidth: pageW, pageHeight: pageH,
+    pageRule: `@page { size:${pageW}mm ${pageH}mm; margin:0; }`,
+  };
 }
 
-export function applySampleLayout(layout, sample) {
-  const next=structuredClone(layout);
-  next.paper_width=sample.paper_width;next.paper_height=sample.paper_height;
-  for(const key of ['buyer','tax_id'])next.fields[key]=structuredClone(sample.fields[key]);
-  return next;
-}
-
-export function taipeiDate(now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now);
-  const p = Object.fromEntries(parts.map(x=>[x.type,x.value]));
-  return `${p.year}-${p.month}-${p.day}`;
-}
-
-export function positionedFields(layout, draft, calculated) {
-  const values = {buyer:draft.buyer,tax_id:draft.tax_id,year:calculated.roc_year,month:Number(draft.invoice_date.slice(5,7)),day:Number(draft.invoice_date.slice(8,10)),subtotal:calculated.subtotal,tax:calculated.tax,total:calculated.total,uppercase:calculated.uppercase,note:draft.note};
-  const result = [];
-  function add(key, value, row = 0) {
-    const p = layout.fields[key];
-    result.push({key,text:String(value ?? ''),x:p.x+layout.offset_x,y:p.y+layout.offset_y+row*layout.row_pitch,width:p.width,numeric:NUMERIC.has(key)});
-  }
-  for (const [key,value] of Object.entries(values)) add(key,value);
-  draft.items.forEach((row,index)=>{
-    for (const key of ['description','quantity','unit','unit_price']) add(key,row[key],index);
-    add('amount',calculated.amounts[index],index);
+function gatherLayout() {
+  const fields = {};
+  document.querySelectorAll('[data-field]').forEach((input) => {
+    const key = input.dataset.field;
+    const dim = input.dataset.dim;
+    fields[key] = fields[key] || { x: 0, y: 0, width: 0, height: 0 };
+    fields[key][dim] = Number(input.value);
   });
-  return result;
+  return {
+    paper_width: Number($('paperWidth').value),
+    paper_height: Number($('paperHeight').value),
+    feed_mode: $('feedMode').value,
+    font: $('fontSize').dataset.font || state.layout.font,
+    font_size: Number($('fontSize').value),
+    row_pitch: Number($('rowPitch').value),
+    tax_id_spacing: Number($('taxSpacing').value),
+    offset_x: Number($('offsetX').value),
+    offset_y: Number($('offsetY').value),
+    fields,
+  };
 }
 
-export function backupMessage(result) {
-  return result?.status === 'saved' ? '雲端資料庫備份成功。' : '雲端備份尚未成功，請勿重新部署；請按「重試雲端備份」。';
+function renderFieldEditor() {
+  const editor = $('fieldEditor');
+  editor.innerHTML = FIELD_ORDER.map((key) => {
+    const field = state.layout.fields[key];
+    const height = field.height ? `<label>高<input type="number" step="0.1" data-field="${key}" data-dim="height" value="${field.height}"></label>` : '';
+    return `<div class="field-row"><strong>${FIELD_LABELS[key]}</strong>
+      <label>X<input type="number" step="0.1" data-field="${key}" data-dim="x" value="${field.x}"></label>
+      <label>Y<input type="number" step="0.1" data-field="${key}" data-dim="y" value="${field.y}"></label>
+      <label>寬<input type="number" step="0.1" data-field="${key}" data-dim="width" value="${field.width}"></label>
+      ${height}</div>`;
+  }).join('');
+  editor.querySelectorAll('input').forEach((input) => input.addEventListener('input', liveRefresh));
 }
 
-export function printAllowed(test, validInput, ready, aligned) {
-  return Boolean(validInput && (test || (ready && aligned)));
+function syncLayoutControls() {
+  const layout = state.layout;
+  $('paperWidth').value = layout.paper_width;
+  $('paperHeight').value = layout.paper_height;
+  $('feedMode').value = layout.feed_mode || 'portrait_cw';
+  $('fontSize').value = layout.font_size;
+  $('fontSize').dataset.font = layout.font;
+  $('rowPitch').value = layout.row_pitch;
+  $('taxSpacing').value = layout.tax_id_spacing;
+  $('offsetX').value = layout.offset_x;
+  $('offsetY').value = layout.offset_y;
+}
+
+function liveRefresh() {
+  try {
+    state.layout = gatherLayout();
+    renderPreview();
+    validatePaper();
+  } catch (error) {
+    $('paperWarning').hidden = false;
+    $('paperWarning').textContent = error.message;
+  }
+}
+
+function validatePaper() {
+  const warning = $('paperWarning');
+  const layout = state.layout;
+  const problems = [];
+  Object.entries(layout.fields).forEach(([key, field]) => {
+    if (field.x + field.width > layout.paper_width + 0.1) {
+      problems.push(`${FIELD_LABELS[key] || key} 超出右邊界`);
+    }
+    if (field.y + (field.height || 0) > layout.paper_height + 0.1) {
+      problems.push(`${FIELD_LABELS[key] || key} 超出下邊界`);
+    }
+  });
+  warning.hidden = problems.length === 0;
+  warning.textContent = problems.join('；');
+  return problems.length === 0;
+}
+
+function buildOneRow() {
+  const tr = document.createElement('tr');
+  tr.className = 'item-row';
+  tr.innerHTML = `
+    <td><input class="item-description" maxlength="40"></td>
+    <td><input class="item-quantity" inputmode="decimal" style="width:80px"></td>
+    <td><input class="item-price" inputmode="decimal" style="width:100px"></td>
+    <td class="item-amount">0</td>
+    <td><button type="button" class="button-secondary item-remove">刪</button></td>`;
+  tr.querySelector('.item-remove').addEventListener('click', () => {
+    if (document.querySelectorAll('.item-row').length === 1) return;
+    tr.remove();
+    refresh();
+  });
+  tr.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
+    updateRowAmount(tr);
+    refresh();
+  }));
+  return tr;
+}
+
+function renderItems() {
+  const tbody = $('itemRows');
+  tbody.innerHTML = '';
+  for (let i = 0; i < MAX_ITEMS; i += 1) tbody.appendChild(buildOneRow());
+}
+
+function updateRowAmount(row) {
+  const quantity = row.querySelector('.item-quantity').value;
+  const price = row.querySelector('.item-price').value;
+  const amount = roundedAmount(quantity, price);
+  row.querySelector('.item-amount').textContent = price ? money(amount) : '0';
+  return amount;
+}
+
+function ensureItemRows() {
+  if (!document.querySelector('.item-row')) {
+    renderItems();
+  }
+}
+
+function refresh() {
+  ensureItemRows();
+  const draft = gatherDraft();
+  fetch('/api/invoice-print/calculate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft),
+  }).then(async (response) => {
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      $('validation').textContent = data.detail || '金額或日期不正確';
+      $('validation').hidden = false;
+      state.calc = null;
+      return;
+    }
+    state.calc = await response.json();
+    $('validation').hidden = true;
+    $('subtotalText').textContent = money(state.calc.subtotal);
+    $('taxText').textContent = money(state.calc.tax);
+    $('totalText').textContent = money(state.calc.total);
+    $('uppercaseText').textContent = state.calc.uppercase;
+    renderPreview();
+  });
+}
+
+function renderPreview() {
+  if (!state.layout) return;
+  const sheet = $('sheet');
+  const content = $('sheetContent');
+  const paper = paperGeometry(state.layout);
+  document.documentElement.style.setProperty('--paper-width', `${paper.width}mm`);
+  document.documentElement.style.setProperty('--paper-height', `${paper.height}mm`);
+  document.documentElement.style.setProperty('--page-width', `${paper.pageWidth}mm`);
+  document.documentElement.style.setProperty('--page-height', `${paper.pageHeight}mm`);
+  const scale = Math.min(
+    ($('sheet').parentElement.clientWidth - 40) / paper.width,
+    7,
+  );
+  sheet.style.width = `${paper.width * scale}px`;
+  sheet.style.height = `${paper.height * scale}px`;
+  sheet.classList.toggle('feed-portrait', paper.portrait);
+  sheet.classList.toggle('feed-cw', paper.mode === 'portrait_cw');
+  sheet.classList.toggle('feed-ccw', paper.mode === 'portrait_ccw');
+
+  let styleNode = document.getElementById('paperStyle');
+  if (!styleNode) {
+    styleNode = document.createElement('style');
+    styleNode.id = 'paperStyle';
+    document.head.appendChild(styleNode);
+  }
+  styleNode.textContent = paper.pageRule;
+
+  if (state.testPrint) {
+    content.innerHTML = '';
+    $('testGrid').hidden = false;
+    renderTestGrid(paper, scale);
+    sheet.dataset.scale = scale;
+    return;
+  }
+  $('testGrid').hidden = true;
+  const draft = gatherDraft();
+  if (!state.calc) { content.innerHTML = ''; return; }
+  content.innerHTML = positionedFields(state.layout, draft, state.calc).map((field) => {
+    const size = state.layout.font_size;
+    const heightStyle = field.height ? `height:${field.height}mm;` : '';
+    const cls = field.key === 'note' ? 'sheet-field field-note' : 'sheet-field';
+    return `<div class="${cls}" data-key="${esc(field.key)}"
+      style="left:${field.x}mm;top:${field.y}mm;${heightStyle}
+      width:${field.width}mm;font-size:${size}pt;
+      justify-content:${field.numeric ? 'flex-end' : 'flex-start'}">${esc(field.text)}</div>`;
+  }).join('');
+  sheet.dataset.scale = scale;
+}
+
+function renderTestGrid(paper, scale) {
+  const grid = $('testGrid');
+  grid.style.width = `${paper.width}mm`;
+  grid.style.height = `${paper.height}mm`;
+  const cellsX = Math.round(paper.width / 2);
+  const cellsY = Math.round(paper.height / 2);
+  grid.style.backgroundSize = `${2 * scale}px ${2 * scale}px`;
+  let html = `<div class="test-title">三通工程行｜${paper.width} × ${paper.height} mm 白紙校正 v3</div>`;
+  html += `<div class="test-subtitle">${paper.mode === 'landscape' ? '橫式直出' : '直式103×195（網頁旋轉）'}／非正式發票／不可請款</div>`;
+  for (let x = 0; x <= cellsX; x += 5) {
+    html += `<span class="grid-x" style="left:${x * 2}mm">${x}</span>`;
+  }
+  for (let y = 0; y <= cellsY; y += 5) {
+    html += `<span class="grid-y" style="top:${y * 2}mm">${y}</span>`;
+  }
+  html += '<span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>';
+  grid.innerHTML = html;
+}
+
+export function printAllowed(testPrint, paperOk, hasValidationError, hasVisibleWarning) {
+  if (testPrint) return true;
+  if (!paperOk) return false;
+  if (hasValidationError) return false;
+  if (hasVisibleWarning) return false;
+  return true;
+}
+
+function restorePrint() {
+  state.printing = false;
+  document.body.classList.remove('print-armed');
+  $('printBtn').disabled = false;
+}
+
+function printSheet() {
+  if (state.printing) return;
+  const paperOk = validatePaper();
+  if (!state.testPrint) {
+    refresh();
+    if (!state.calc) {
+      alert('金額或日期不正確，無法列印正式內容。');
+      return;
+    }
+    if (!printAllowed(false, paperOk, !$('validation').hidden, false)) {
+      alert('仍有欄位超出紙張，請先修正。');
+      return;
+    }
+  }
+  state.sequence += 1;
+  const sequence = state.sequence;
+  state.printing = true;
+  $('printBtn').disabled = true;
+  document.body.classList.add('print-armed');
+  renderPreview();
+  const timer = setTimeout(() => {
+    if (sequence === state.sequence) window.print();
+  }, 250);
+  if (window.matchMedia) {
+    const printMedia = window.matchMedia('print');
+    const onChange = (event) => {
+      if (!event.matches) {
+        clearTimeout(timer);
+        restorePrint();
+        if (printMedia.removeEventListener) printMedia.removeEventListener('change', onChange);
+      }
+    };
+    if (printMedia.addEventListener) printMedia.addEventListener('change', onChange);
+    else printMedia.addListener(onChange);
+  }
+  const onAfter = () => {
+    clearTimeout(timer);
+    if (sequence !== state.sequence) return;
+    window.removeEventListener('afterprint', onAfter);
+    window.removeEventListener('focus', onFocus);
+    restorePrint();
+  };
+  const onFocus = () => {
+    if (sequence !== state.sequence) return;
+    clearTimeout(timer);
+    window.setTimeout(() => {
+      if (state.printing && sequence === state.sequence) {
+        window.removeEventListener('focus', onFocus);
+        window.removeEventListener('afterprint', onAfter);
+        restorePrint();
+      }
+    }, 500);
+  };
+  window.addEventListener('afterprint', onAfter);
+  window.addEventListener('focus', onFocus);
+}
+
+export function applySampleLayout(original, sample) {
+  const fields = { ...sample.fields };
+  return {
+    ...original,
+    paper_width: sample.paper_width,
+    paper_height: sample.paper_height,
+    feed_mode: sample.feed_mode,
+    tax_id_spacing: sample.tax_id_spacing,
+    row_pitch: sample.row_pitch,
+    fields,
+  };
+}
+
+export function normalizeLayout(raw) {
+  // Tolerate legacy v1/v2 layouts (with 單位, no 地址) using real-form defaults.
+  const sample = window.__SAMPLE_LAYOUT__;
+  if (!sample || !raw || !raw.fields) return raw;
+  const known = new Set(FIELD_ORDER);
+  const changed = Object.keys(raw.fields).some((key) => !known.has(key))
+    || FIELD_ORDER.some((key) => !raw.fields[key]);
+  if (!changed && raw.feed_mode) return raw;
+  const fields = {};
+  FIELD_ORDER.forEach((key) => {
+    fields[key] = raw.fields[key] || sample.fields[key];
+  });
+  return {
+    ...raw,
+    feed_mode: raw.feed_mode || sample.feed_mode,
+    tax_id_spacing: raw.tax_id_spacing || sample.tax_id_spacing,
+    row_pitch: raw.row_pitch || sample.row_pitch,
+    fields,
+  };
+}
+
+async function init() {
+  $('currentDate').textContent = `台北日期：${taipeiDate()}`;
+  $('invoiceDate').value = taipeiDate();
+  renderItems();
+  const [template, sample] = await Promise.all([
+    fetch('/api/invoice-print/template').then((r) => r.json()),
+    fetch('/api/invoice-print/sample-layout').then((r) => r.json()),
+  ]);
+  window.__SAMPLE_LAYOUT__ = sample;
+  state.layoutRevision = template.revision;
+  const normalized = normalizeLayout(template.content);
+  const legacy = JSON.stringify(normalized.fields) !== JSON.stringify(template.content?.fields)
+    || !template.content?.feed_mode;
+  state.layout = normalized;
+  $('legacyWarning').hidden = !legacy;
+  syncLayoutControls();
+  renderFieldEditor();
+  refresh();
+  loadDrafts();
+
+  document.querySelectorAll('input, textarea, select').forEach((input) => {
+    if (input.id && ['buyer', 'taxId', 'buyerAddress', 'note', 'invoiceDate', 'tax'].includes(input.id)) {
+      input.addEventListener('input', refresh);
+    }
+  });
+  ['paperWidth', 'paperHeight', 'feedMode', 'fontSize', 'rowPitch', 'taxSpacing', 'offsetX', 'offsetY']
+    .forEach((id) => $(id).addEventListener('input', liveRefresh));
+  $('feedMode').addEventListener('change', liveRefresh);
+  $('addItem').addEventListener('click', () => {
+    if (document.querySelectorAll('.item-row').length >= MAX_ITEMS) return;
+    const tr = document.createElement('tr');
+    tr.className = 'item-row';
+    tr.innerHTML = `
+      <td><input class="item-description" maxlength="40"></td>
+      <td><input class="item-quantity" inputmode="decimal" style="width:80px"></td>
+      <td><input class="item-price" inputmode="decimal" style="width:100px"></td>
+      <td class="item-amount">0</td>
+      <td><button type="button" class="button-secondary item-remove">刪</button></td>`;
+    $('itemRows').appendChild(tr);
+    tr.querySelector('.item-remove').addEventListener('click', () => { tr.remove(); refresh(); });
+    tr.querySelectorAll('input').forEach((input) => input.addEventListener('input', () => {
+      updateRowAmount(tr);
+      refresh();
+    }));
+    refresh();
+  });
+  $('calculateBtn').addEventListener('click', refresh);
+  $('testPrint').addEventListener('change', (event) => {
+    state.testPrint = event.target.checked;
+    renderPreview();
+  });
+  $('printBtn').addEventListener('click', printSheet);
+  window.addEventListener('afterprint', restorePrint);
+  window.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'p') {
+      event.preventDefault();
+      printSheet();
+    }
+  });
+  $('sampleLayout').addEventListener('click', async () => {
+    state.layout = applySampleLayout(state.layout, sample);
+    syncLayoutControls();
+    renderFieldEditor();
+    $('legacyWarning').hidden = true;
+    refresh();
+    setFeedback('已套用真實發票195×103定位；請白紙試印，確認後再保存。');
+  });
+  $('saveLayout').addEventListener('click', async () => {
+    const content = gatherLayout();
+    const response = await fetch('/api/invoice-print/template', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_revision: state.layoutRevision, content }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      state.layoutRevision = data.revision;
+      state.layout = content;
+      setFeedback(backupMessage(data.backup));
+    } else {
+      setFeedback(data.detail || '保存失敗', 'error');
+    }
+  });
+  $('saveDraft').addEventListener('click', async () => {
+    const recordKey = prompt('請輸入草稿名稱（例如：2026-10-23 齊裕營造）', `${$('invoiceDate').value} ${$('buyer').value}`.trim());
+    if (!recordKey) return;
+    const response = await fetch('/api/invoice-print/drafts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record_key: recordKey, expected_revision: state.draftRevision, content: gatherDraft() }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      state.draftRevision = data.revision;
+      setFeedback(backupMessage(data.backup));
+      loadDrafts();
+    } else {
+      setFeedback(data.detail || '草稿保存失敗', 'error');
+    }
+  });
+  $('retryBackup').addEventListener('click', async () => {
+    const response = await fetch('/api/invoice-print/backup', { method: 'POST' });
+    const data = await response.json();
+    setFeedback(response.ok ? 'Google Drive 備份成功。' : `備份失敗：${data.detail}`);
+  });
+  window.addEventListener('resize', renderPreview);
+}
+
+async function loadDrafts() {
+  const data = await fetch('/api/invoice-print/drafts').then((r) => r.json());
+  $('draftRows').innerHTML = data.items.map((item) => `
+    <tr>
+      <td><a href="#" data-key="${esc(item.record_key)}">${esc(item.record_key)}</a></td>
+      <td>${esc(item.content.buyer || '')}</td>
+      <td>${new Date(item.created_at).toLocaleString('zh-Hant')}</td>
+      <td>${item.revision}</td>
+    </tr>`).join('');
+  $('draftRows').querySelectorAll('a').forEach((link) => link.addEventListener('click', async (event) => {
+    event.preventDefault();
+    const key = link.dataset.key;
+    const drafts = await fetch('/api/invoice-print/drafts').then((r) => r.json());
+    const item = drafts.items.find((entry) => entry.record_key === key);
+    if (!item) return;
+    state.draftRevision = item.revision;
+    applyDraft(item.content);
+  }));
+}
+
+function applyDraft(content) {
+  $('buyer').value = content.buyer || '';
+  $('taxId').value = content.tax_id || '';
+  $('buyerAddress').value = content.address || '';
+  $('invoiceDate').value = content.invoice_date || taipeiDate();
+  $('tax').value = content.tax || 0;
+  $('note').value = content.note || '';
+  ensureItemRows();
+  const rows = [...document.querySelectorAll('.item-row')];
+  rows.forEach((row, index) => {
+    const item = content.items?.[index] || {};
+    row.querySelector('.item-description').value = item.description || '';
+    row.querySelector('.item-quantity').value = item.quantity || '';
+    row.querySelector('.item-price').value = item.unit_price || '';
+    updateRowAmount(row);
+  });
+  refresh();
 }
 
 if (typeof document !== 'undefined') {
-  const $ = id=>document.getElementById(id);
-  const state = {layout:null, layoutRevision:0, draftKey:null, draftRevision:0, ready:false, validInput:false, printing:false, sequence:0, draftDirty:false, layoutDirty:false, draftOffset:0};
-  let timer;
-  function message(text, error=false) { $('status').textContent=text; $('status').classList.toggle('error',error); }
-  function validationMessage(text, error=false) {
-    for(const id of ['validation','printHint']) { $(id).textContent=text;$(id).classList.toggle('error',error); }
-  }
-  async function api(path, options={}) {
-    const response = await fetch('/api/invoice-print/'+path,{...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...options.headers}});
-    if (response.status===401) throw new Error('登入已過期，請返回管理後台使用原帳密登入；未保存內容請先保留。');
-    const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail==='string'?data.detail:'輸入格式有誤，請檢查日期、數量、單價及欄位範圍。');
-    return data;
-  }
-  function readDraft() {
-    return {buyer:$('buyer').value.trim(),tax_id:$('taxId').value.trim(),invoice_date:$('invoiceDate').value,tax:Number($('tax').value),note:$('note').value,
-      items:[...$('items').rows].map(tr=>Object.fromEntries(['description','quantity','unit','unit_price'].map(key=>[key,tr.querySelector(`[data-value="${key}"]`).value])))};
-  }
-  function readLayout() {
-    const content = structuredClone(state.layout);
-    for (const key of ['paper_width','paper_height','offset_x','offset_y','font_size','tax_id_spacing','row_pitch']) content[key]=Number($(key).value);
-    content.font=$('font').value;
-    for (const input of $('fieldPositions').querySelectorAll('input')) content.fields[input.dataset.field][input.dataset.axis]=Number(input.value);
-    return content;
-  }
-  function invalidate() {
-    state.sequence++; state.ready=false; state.validInput=false; $('aligned').checked=false; $('overprint').disabled=true; $('testPrint').disabled=true;
-    validationMessage('重新檢查中…');
-    document.body.classList.remove('print-armed','test-print');
-  }
-  function schedule() { invalidate(); clearTimeout(timer); timer=setTimeout(()=>refresh(),220); }
-  function addRow(row={description:'',quantity:'1',unit:'台',unit_price:'0'}) {
-    if ($('items').rows.length>=5) return;
-    const tr=document.createElement('tr');
-    for (const key of ['description','quantity','unit','unit_price']) {
-      const td=tr.insertCell(); const input=document.createElement('input'); input.dataset.value=key; input.value=row[key]; input.setAttribute('aria-label',`${LABELS[key]}第${$('items').rows.length+1}行`);
-      input.required=key!=='unit';
-      if (key==='quantity'||key==='unit_price') { input.type='number'; input.min=key==='quantity'?'0.001':'0'; input.step=key==='quantity'?'0.001':'0.01'; input.max=key==='quantity'?'1000000':'999999999'; }
-      else input.maxLength=key==='unit'?4:40;
-      td.append(input);
-    }
-    const amount=tr.insertCell(); amount.dataset.amount=''; amount.textContent='—';
-    const remove=document.createElement('button');remove.type='button'; remove.textContent='移除';remove.onclick=()=>{if($('items').rows.length===1)return;tr.remove();state.draftDirty=true;schedule();};
-    tr.insertCell().append(remove); $('items').append(tr); $('addItem').disabled=$('items').rows.length>=5;
-  }
-  function fillDraft(content) {
-    for (const [id,key] of [['buyer','buyer'],['taxId','tax_id'],['invoiceDate','invoice_date'],['tax','tax'],['note','note']]) $(id).value=content[key];
-    $('items').replaceChildren(); content.items.forEach(addRow); state.draftDirty=false; invalidate(); refresh();
-  }
-  function fillLayout(content) {
-    state.layout=structuredClone(content);
-    const paper=paperGeometry(content);state.layout.paper_width=paper.width;state.layout.paper_height=paper.height;
-    for (const key of ['paper_width','paper_height','offset_x','offset_y','font','font_size','tax_id_spacing','row_pitch']) $(key).value=state.layout[key];
-    $('fieldPositions').replaceChildren();
-    for (const [key,p] of Object.entries(content.fields)) {
-      const tr=document.createElement('tr');tr.insertCell().textContent=LABELS[key];
-      for (const axis of ['x','y','width']) {
-        const input=document.createElement('input');input.type='number';input.step='0.1';input.min=axis==='width'?'0.1':'0';input.max='297';input.required=true;input.value=p[axis];input.dataset.field=key;input.dataset.axis=axis;input.setAttribute('aria-label',`${LABELS[key]} ${axis} mm`);tr.insertCell().append(input);
-      }
-      $('fieldPositions').append(tr);
-    }
-    state.layoutDirty=false; $('layoutVersion').textContent=`共用印模版本 ${state.layoutRevision}（0為未保存初始值）`;
-  }
-  async function refresh() {
-    if (!state.layout) return false;
-    const sequence=++state.sequence; state.ready=false; state.validInput=false; $('overprint').disabled=true;$('testPrint').disabled=true;
-    if (!$('draftForm').checkValidity() || !$('layoutForm').checkValidity()) {
-      validationMessage('請完成必填內容；數量、日期及校正值必須在範圍內。',true); $('printFields').replaceChildren();return false;
-    }
-    const draft=readDraft(), layout=readLayout();
-    try {
-      const paper=paperGeometry(layout);
-      document.documentElement.style.setProperty('--paper-width',`${paper.width}mm`);
-      document.documentElement.style.setProperty('--paper-height',`${paper.height}mm`);
-      $('paperStyle').textContent=paper.pageRule;
-      $('paperSummary').textContent=`${paper.width} × ${paper.height} mm${paper.width>=paper.height?' 橫式':''}`;
-      $('sheet').setAttribute('aria-label',`${paper.width}乘${paper.height}公厘套印預覽`);
-      $('paperHint').textContent=`版面${paper.width}×${paper.height}mm。Brother短邊進紙${Math.min(paper.width,paper.height)}×${Math.max(paper.width,paper.height)}mm，方向${paper.width>=paper.height?'橫向':'直向'}；紙張含裝訂邊，不再加邊。`;
-      const calculated=await api('calculate',{method:'POST',body:JSON.stringify(draft)});
-      if(sequence!==state.sequence)return false;
-      $('totals').textContent=`未稅 ${calculated.subtotal.toLocaleString()} ＋ 稅額 ${calculated.tax.toLocaleString()} ＝ 總計 ${calculated.total.toLocaleString()} 元 ／ ${calculated.uppercase}`;
-      [...$('items').rows].forEach((row,i)=>row.querySelector('[data-amount]').textContent=calculated.amounts[i].toLocaleString());
-      $('addItem').disabled=draft.items.length>=5;
-      $('printFields').replaceChildren();
-      $('sheet').style.fontFamily=`"${layout.font}", serif`; $('sheet').style.fontSize=`${layout.font_size}pt`;
-      const invalid=[], boxes=[];const sheet=$('sheet').getBoundingClientRect(); const scale=sheet.width/paper.width;
-      for (const field of positionedFields(layout,draft,calculated)) {
-        const element=document.createElement('div');element.className='print-field'+(field.numeric?' numeric':'');element.textContent=field.text;
-        element.style.left=`${field.x}mm`;element.style.top=`${field.y}mm`;element.style.width=`${field.width}mm`;element.title=LABELS[field.key];
-        if(field.key==='tax_id')element.style.letterSpacing=`${layout.tax_id_spacing}mm`;
-        $('printFields').append(element);
-        const rect=element.getBoundingClientRect();
-        if(field.text)boxes.push({key:field.key,element,rect});
-        if(field.text && (field.x<0||field.y<0||field.x+field.width>paper.width+.01||field.y+rect.height/scale>paper.height+.01||element.scrollWidth>element.clientWidth+1)) {
-          invalid.push(LABELS[field.key]);element.classList.add('bad');
-        }
-      }
-      for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++) {
-        const a=boxes[i], b=boxes[j];
-        if(Math.min(a.rect.right,b.rect.right)-Math.max(a.rect.left,b.rect.left)>.5 && Math.min(a.rect.bottom,b.rect.bottom)-Math.max(a.rect.top,b.rect.top)>.5) {
-          invalid.push(LABELS[a.key],LABELS[b.key]);a.element.classList.add('bad');b.element.classList.add('bad');
-        }
-      }
-      state.validInput=true;state.ready=invalid.length===0;
-      validationMessage(state.ready?'可重複白紙試印；關閉或取消預覽後可再次試印。':`超出範圍或欄位重疊：${[...new Set(invalid)].join('、')}。可用白紙試印校正（可能截字），正式套印已停用。`,!state.ready);
-      $('testPrint').disabled=!printAllowed(true,state.validInput,state.ready,false); $('overprint').disabled=!printAllowed(false,state.validInput,state.ready,$('aligned').checked);
-      return state.ready;
-    } catch(error) { if(sequence===state.sequence){validationMessage(error.message,true);message(error.message,true);} return false; }
-  }
-  function mayDiscard() {
-    if(state.savingDraft){message('草稿正在保存，請等保存結果後再切換。');return false;}
-    return !state.draftDirty || window.confirm('目前草稿有未保存的修改。確定放棄並載入其他草稿？');
-  }
-  function newDraft() {
-    if(!mayDiscard())return;
-    state.draftKey=crypto.randomUUID();state.draftRevision=0;
-    fillDraft({buyer:'',tax_id:'',invoice_date:taipeiDate(),tax:0,note:'',items:[{description:'堆高機作業',quantity:'1',unit:'台',unit_price:'0'}]});
-    message('新草稿尚未保存。請填寫內容，再按「保存草稿」。');
-  }
-  async function loadLayout() {
-    if(state.savingLayout){message('印模正在保存，請等保存結果後再載入。');return;}
-    if(state.layoutDirty&&!window.confirm('放棄目前未保存的校正，重新載入共用印模？'))return;
-    const result=await api('template'); state.layoutRevision=result.revision;fillLayout(result.content);invalidate();await refresh();
-  }
-  async function listDrafts(offset=0) {
-    const result=await api(`drafts?offset=${offset}`);state.draftOffset=offset; $('draftList').replaceChildren();
-    for(const row of result.items) {
-      const button=document.createElement('button');button.type='button';button.textContent=`${row.content.invoice_date} ／ ${row.content.buyer||'未填抬頭'} ／ 版本${row.revision}`;
-      button.onclick=()=>{if(!mayDiscard())return;state.draftKey=row.record_key;state.draftRevision=row.revision;fillDraft(row.content);message(`已開啟草稿版本${row.revision}；校正沿用目前共用印模。`);};$('draftList').append(button);
-    }
-    if(!result.items.length)$('draftList').textContent='此批沒有已存草稿。';
-    $('moreDrafts').hidden=!result.has_more;
-  }
-  async function action(button, operation, lock=null) {
-    if(lock&&state[lock])return;
-    if(lock)state[lock]=true;
-    button.disabled=true;try {await operation();} catch(error){message(error.message,true);} finally{button.disabled=false;if(lock)state[lock]=false;}
-  }
-  $('contentTab').onclick=()=>{ $('contentPanel').hidden=false;$('layoutPanel').hidden=true;$('contentTab').setAttribute('aria-pressed','true');$('layoutTab').setAttribute('aria-pressed','false'); };
-  $('layoutTab').onclick=()=>{ $('contentPanel').hidden=true;$('layoutPanel').hidden=false;$('contentTab').setAttribute('aria-pressed','false');$('layoutTab').setAttribute('aria-pressed','true'); };
-  $('draftForm').onsubmit=event=>event.preventDefault();$('layoutForm').onsubmit=event=>event.preventDefault();
-  $('draftForm').addEventListener('input',()=>{state.draftDirty=true;schedule();});
-  $('layoutForm').addEventListener('input',()=>{state.layoutDirty=true;schedule();});
-  $('addItem').onclick=()=>{addRow();state.draftDirty=true;schedule();};
-  $('aligned').onchange=()=>{$('overprint').disabled=!(state.ready&&$('aligned').checked);};
-  $('saveLayout').onclick=()=>action($('saveLayout'),async()=>{
-    if(!$('layoutForm').reportValidity())return;
-    const content=readLayout(); const result=await api('template',{method:'PUT',body:JSON.stringify({expected_revision:state.layoutRevision,content})});
-    state.layoutRevision=result.revision;state.layoutDirty=JSON.stringify(readLayout())!==JSON.stringify(content);state.layout=content;
-    $('layoutVersion').textContent=`共用印模版本 ${result.revision}`;message(`印模已保存至資料庫，版本${result.revision}。${backupMessage(result.backup)}${state.layoutDirty?'保存期間另有校正，請再保存。':''}`);
-  },'savingLayout');
-  $('saveDraft').onclick=()=>action($('saveDraft'),async()=>{
-    if(!$('draftForm').reportValidity())return;
-    const fingerprint=JSON.stringify(readDraft());const result=await api('drafts',{method:'POST',body:JSON.stringify({record_key:state.draftKey,expected_revision:state.draftRevision,content:readDraft()})});
-    state.draftRevision=result.revision;state.draftDirty=JSON.stringify(readDraft())!==fingerprint;
-    message(`草稿版本${result.revision}已保存至資料庫。${backupMessage(result.backup)}${state.draftDirty?'保存期間另有修改，請再保存。':''}`);
-  },'savingDraft');
-  $('newDraft').onclick=newDraft;
-  $('sampleLayout').onclick=()=>action($('sampleLayout'),async()=>{
-    if(state.savingLayout)throw new Error('印模正在保存，請稍候。');
-    if(!$('layoutForm').reportValidity())return;
-    const sample=await api('sample-layout');
-    if(state.savingLayout)throw new Error('印模正在保存，請稍候。');
-    if(!window.confirm('只套用195×103mm紙張與買受人／統編位置；其他欄位、字型、位移與金額不變。套用後仍須按保存。'))return;
-    fillLayout(applySampleLayout(readLayout(),sample));state.layoutDirty=true;schedule();
-    message('已套用照片估算位置：買受人在上、統編在下；尚未保存，仍需白紙試印。');
-  });
-  $('reloadLayout').onclick=()=>action($('reloadLayout'),loadLayout);
-  $('reloadDrafts').onclick=()=>action($('reloadDrafts'),()=>listDrafts());
-  $('moreDrafts').onclick=()=>action($('moreDrafts'),()=>listDrafts(state.draftOffset+50));
-  $('backup').onclick=()=>action($('backup'),async()=>message(backupMessage(await api('backup',{method:'POST'}))));
-  $('tax5').onclick=()=>action($('tax5'),async()=>{
-    const draft=readDraft(), fingerprint=JSON.stringify(draft);const result=await api('calculate',{method:'POST',body:JSON.stringify(draft)});
-    if(JSON.stringify(readDraft())!==fingerprint)throw new Error('內容已變更，請重新試算。');
-    $('tax').value=Math.floor((result.subtotal*5+50)/100);state.draftDirty=true;schedule();
-  });
-  const printMedia=window.matchMedia('print');
-  function restorePrint() {
-    if(printMedia.matches||!document.body.classList.contains('print-armed'))return;
-    document.body.classList.remove('print-armed','test-print');
-    clearTimeout(timer);refresh();
-  }
-  async function print(test) {
-    if(state.printing||(!test&&!$('aligned').checked))return;
-    state.printing=true;clearTimeout(timer);
-    try {
-      const ready=await refresh();
-      if(!printAllowed(test,state.validInput,ready,$('aligned').checked))return;
-      if(!test&&(!readDraft().buyer||!readDraft().tax_id)){message('正式套印前請填寫買受人與8位統編。',true);return;}
-      document.body.classList.toggle('test-print',test);document.body.classList.add('print-armed');window.print();
-    } catch(error) { message(`無法開啟列印預覽：${error.message}`,true); }
-    finally { state.printing=false;restorePrint(); }
-  }
-  $('testPrint').onclick=()=>print(true);$('overprint').onclick=()=>print(false);
-  window.addEventListener('afterprint',restorePrint);
-  printMedia.addEventListener('change',event=>{if(!event.matches)restorePrint();});
-  window.addEventListener('focus',restorePrint);
-  window.addEventListener('beforeunload',event=>{if(state.draftDirty||state.layoutDirty||state.savingDraft||state.savingLayout){event.preventDefault();event.returnValue='';}});
-  (async()=>{
-    try { await loadLayout();newDraft();$('saveLayout').disabled=false;$('saveDraft').disabled=false;$('sampleLayout').disabled=false; }
-    catch(error){message(error.message,true);}
-  })();
+  init();
 }

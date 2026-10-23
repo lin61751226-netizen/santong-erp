@@ -1,0 +1,453 @@
+const $ = (id) => document.getElementById(id);
+const FIELD_ORDER = [
+  'receiver_postcode', 'receiver_company', 'receiver_address', 'receiver_name',
+  'sender_postcode', 'sender_address', 'sender_name', 'sender_phone',
+];
+const FIELD_LABELS = {
+  receiver_postcode: '收件人郵遞區號',
+  receiver_company: '收件公司（最右欄）',
+  receiver_address: '收件人地址',
+  receiver_name: '收件人姓名',
+  sender_postcode: '寄件人郵遞區號',
+  sender_address: '寄件人地址',
+  sender_name: '寄件人姓名',
+  sender_phone: '寄件人電話',
+};
+const VERTICAL_FIELDS = new Set([
+  'receiver_company', 'receiver_address', 'receiver_name',
+  'sender_address', 'sender_name', 'sender_phone',
+]);
+const POSTCODE_FIELDS = new Set(['receiver_postcode', 'sender_postcode']);
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+const state = {
+  layout: null,
+  draft: null,
+  lines: null,
+  draftRevision: 0,
+  layoutRevision: 0,
+  testPrint: false,
+  printing: false,
+  sequence: 0,
+};
+
+export function setFeedback(text, kind = 'info') {
+  const node = $('globalMessage');
+  node.textContent = text || '';
+  node.className = kind === 'error' ? 'notice error' : 'notice';
+}
+export function backupMessage(backup) {
+  if (!backup || backup.status === 'saved') return '已保存，Google Drive 資料庫備份成功。';
+  if (backup.status === 'skipped_regression') return '已保存；Google Drive 尚未成功設定，目前只留在本機資料庫。';
+  return `已保存，但雲端備份失敗：${backup.message || ''} 請稍後按「重試雲端備份」。`;
+}
+
+function gatherDraft() {
+  return {
+    receiver_postcode: $('receiverPostcode').value.trim(),
+    receiver_address: $('receiverAddress').value.trim(),
+    receiver_company: $('receiverCompany').value.trim(),
+    receiver_name: $('receiverName').value.trim(),
+    receiver_suffix: $('receiverSuffix').value.trim(),
+    sender_postcode: $('senderPostcode').value.trim(),
+    sender_address: $('senderAddress').value.trim(),
+    sender_name: $('senderName').value.trim(),
+    sender_suffix: $('senderSuffix').value.trim(),
+    sender_phone: $('senderPhone').value.trim(),
+  };
+}
+
+function gatherLayout() {
+  const fields = {};
+  document.querySelectorAll('[data-field]').forEach((input) => {
+    const key = input.dataset.field;
+    const dim = input.dataset.dim;
+    fields[key] = fields[key] || { x: 0, y: 0, width: 0, height: 0 };
+    fields[key][dim] = Number(input.value);
+  });
+  return {
+    paper_width: Number($('paperWidth').value),
+    paper_height: Number($('paperHeight').value),
+    font: state.layout.font,
+    font_size: Number($('fontSize').value),
+    name_font_size: Number($('nameFontSize').value),
+    small_font_size: Number($('smallFontSize').value),
+    postcode_spacing: Number($('postcodeSpacing').value),
+    postcode_gap: Number($('postcodeGap').value),
+    offset_x: Number($('offsetX').value),
+    offset_y: Number($('offsetY').value),
+    fields,
+  };
+}
+
+function fontSizeFor(key, layout) {
+  if (key === 'receiver_name') return layout.name_font_size;
+  if (key.startsWith('sender') || key === 'sender_postcode') return layout.small_font_size;
+  return layout.font_size;
+}
+
+export function positionedElements(layout, draft, lines) {
+  const out = [];
+  const ox = Number(layout.offset_x || 0);
+  const oy = Number(layout.offset_y || 0);
+  const postcodeSpacing = Number(layout.postcode_spacing || 6.5);
+  const postcodeGap = Number(layout.postcode_gap || 3);
+
+  function postcodeChars(key, raw) {
+    const chars = (raw || '').replace(/\D/g, '').slice(0, 5).split('');
+    const field = layout.fields[key];
+    chars.forEach((ch, i) => {
+      out.push({
+        key, text: ch,
+        x: Number((field.x + ox + i * postcodeSpacing + (i >= 3 ? postcodeGap : 0)).toFixed(2)),
+        y: Number((field.y + oy).toFixed(2)),
+        width: postcodeSpacing,
+        height: 0,
+        postcode: true,
+        fontSize: fontSizeFor(key, layout),
+      });
+    });
+  }
+
+  function addVertical(key, text) {
+    const field = layout.fields[key];
+    if (!text) return;
+    out.push({
+      key, text,
+      x: Number((field.x + ox).toFixed(2)),
+      y: Number((field.y + oy).toFixed(2)),
+      width: field.width,
+      height: field.height,
+      vertical: true,
+      fontSize: fontSizeFor(key, layout),
+    });
+  }
+
+  postcodeChars('receiver_postcode', draft.receiver_postcode);
+  addVertical('receiver_company', lines.receiver_company);
+  addVertical('receiver_address', lines.receiver_address);
+  addVertical('receiver_name', lines.receiver_name);
+  postcodeChars('sender_postcode', draft.sender_postcode);
+  addVertical('sender_address', lines.sender_address);
+  addVertical('sender_name', lines.sender_name);
+  addVertical('sender_phone', lines.sender_phone);
+  return out;
+}
+
+function renderFieldEditor() {
+  $('fieldEditor').innerHTML = FIELD_ORDER.map((key) => {
+    const field = state.layout.fields[key];
+    const vertical = VERTICAL_FIELDS.has(key);
+    return `<div class="field-row"><strong>${FIELD_LABELS[key]}</strong>
+      <label>X<input type="number" step="0.1" data-field="${key}" data-dim="x" value="${field.x}"></label>
+      <label>${vertical ? 'Y頂' : 'Y'}<input type="number" step="0.1" data-field="${key}" data-dim="y" value="${field.y}"></label>
+      <label>寬<input type="number" step="0.1" data-field="${key}" data-dim="width" value="${field.width}"></label>
+      <label>${vertical ? '行高' : '高'}<input type="number" step="0.1" data-field="${key}" data-dim="height" value="${field.height}"></label>
+      </div>`;
+  }).join('');
+  $('fieldEditor').querySelectorAll('input').forEach((input) => input.addEventListener('input', liveRefresh));
+}
+
+function syncControls() {
+  const l = state.layout;
+  $('paperWidth').value = l.paper_width;
+  $('paperHeight').value = l.paper_height;
+  $('fontSize').value = l.font_size;
+  $('nameFontSize').value = l.name_font_size;
+  $('smallFontSize').value = l.small_font_size;
+  $('postcodeSpacing').value = l.postcode_spacing;
+  $('postcodeGap').value = l.postcode_gap;
+  $('offsetX').value = l.offset_x;
+  $('offsetY').value = l.offset_y;
+}
+
+async function validateDraft() {
+  const draft = gatherDraft();
+  const response = await fetch('/api/envelope-print/validate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    $('validation').textContent = data.detail || '內容不正確';
+    $('validation').hidden = false;
+    return null;
+  }
+  $('validation').hidden = true;
+  state.draft = draft;
+  state.lines = data.lines;
+  return data;
+}
+
+function validatePaper() {
+  const l = state.layout;
+  const problems = [];
+  Object.entries(l.fields).forEach(([key, field]) => {
+    if (field.x + field.width > l.paper_width + 0.1) problems.push(`${FIELD_LABELS[key] || key} 超出右邊界`);
+    if (field.y + field.height > l.paper_height + 0.1) problems.push(`${FIELD_LABELS[key] || key} 超出下邊界`);
+  });
+  if (!(l.paper_width >= 80 && l.paper_width <= 300 && l.paper_height >= 80 && l.paper_height <= 300)) {
+    problems.push('紙張寬高必須介於80至300 mm');
+  }
+  $('paperWarning').hidden = problems.length === 0;
+  $('paperWarning').textContent = problems.join('；');
+  return problems.length === 0;
+}
+
+function liveRefresh() {
+  state.layout = gatherLayout();
+  validatePaper();
+  renderPreview();
+}
+
+function renderPreview() {
+  if (!state.layout) return;
+  const l = state.layout;
+  const sheet = $('sheet');
+  document.documentElement.style.setProperty('--page-width', `${l.paper_width}mm`);
+  document.documentElement.style.setProperty('--page-height', `${l.paper_height}mm`);
+  const scale = Math.min(
+    ($('sheet').parentElement.clientWidth - 40) / l.paper_width,
+    4.2,
+  );
+  sheet.style.width = `${l.paper_width * scale}px`;
+  sheet.style.height = `${l.paper_height * scale}px`;
+  sheet.dataset.scale = scale;
+
+  const styleNode = document.getElementById('paperStyle') || (() => {
+    const node = document.createElement('style');
+    node.id = 'paperStyle';
+    document.head.appendChild(node);
+    return node;
+  })();
+  styleNode.textContent = `@page { size:${l.paper_width}mm ${l.paper_height}mm; margin:0; }`;
+
+  if (state.testPrint) {
+    $('sheetContent').innerHTML = '';
+    $('testGrid').hidden = false;
+    renderTestGrid(l, scale);
+    return;
+  }
+  $('testGrid').hidden = true;
+  const content = $('sheetContent');
+  if (!state.lines) { content.innerHTML = ''; return; }
+  content.innerHTML = positionedElements(l, state.draft, state.lines).map((el) => {
+    if (el.postcode) {
+      return `<div class="sheet-field postcode-char" data-key="${esc(el.key)}"
+        style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
+    }
+    return `<div class="sheet-field vertical" data-key="${esc(el.key)}"
+      style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
+  }).join('');
+}
+
+function postcodeBoxesHtml(field, spacing, gap, scale) {
+  let html = '';
+  for (let i = 0; i < 5; i += 1) {
+    const x = field.x + i * spacing + (i >= 3 ? gap : 0);
+    html += `<span class="guide-box" style="left:${x}mm;top:${field.y - 0.8}mm;width:${spacing - 0.4}mm;height:${spacing - 0.4}mm"></span>`;
+  }
+  return html;
+}
+
+function renderTestGrid(l, scale) {
+  const grid = $('testGrid');
+  grid.style.width = `${l.paper_width}mm`;
+  grid.style.height = `${l.paper_height}mm`;
+  grid.style.backgroundSize = `${2 * scale}px ${2 * scale}px`;
+  let html = `<div class="test-title">三通工程行｜直式信封 ${l.paper_width}×${l.paper_height} mm 白紙校正</div>`;
+  html += '<div class="guide-stamp" style="left:8mm;top:8mm;width:18mm;height:18mm">貼郵票處</div>';
+  html += postcodeBoxesHtml(l.fields.receiver_postcode, l.postcode_spacing, l.postcode_gap, scale);
+  html += postcodeBoxesHtml(l.fields.sender_postcode, l.postcode_spacing, l.postcode_gap, scale);
+  const cellsX = Math.round(l.paper_width / 2);
+  const cellsY = Math.round(l.paper_height / 2);
+  for (let x = 0; x <= cellsX; x += 5) {
+    html += `<span class="grid-x" style="left:${x * 2}mm">${x}</span>`;
+  }
+  for (let y = 0; y <= cellsY; y += 5) {
+    html += `<span class="grid-y" style="top:${y * 2}mm">${y}</span>`;
+  }
+  html += '<span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>';
+  grid.innerHTML = html;
+}
+
+function restorePrint() {
+  state.printing = false;
+  document.body.classList.remove('print-armed');
+  $('printBtn').disabled = false;
+}
+
+function printSheet() {
+  if (state.printing) return;
+  if (!state.testPrint) {
+    validateDraft().then((ok) => {
+      if (!ok) { alert('請先填齊收件人地址與姓名。'); return; }
+      if (!validatePaper()) { alert('仍有欄位超出紙張，請先修正。'); return; }
+      doPrint();
+    });
+    return;
+  }
+  doPrint();
+}
+
+function doPrint() {
+  state.sequence += 1;
+  const sequence = state.sequence;
+  state.printing = true;
+  $('printBtn').disabled = true;
+  document.body.classList.add('print-armed');
+  renderPreview();
+  const timer = setTimeout(() => {
+    if (sequence === state.sequence) window.print();
+  }, 250);
+  if (window.matchMedia) {
+    const printMedia = window.matchMedia('print');
+    const onChange = (event) => {
+      if (!event.matches) {
+        clearTimeout(timer);
+        restorePrint();
+        if (printMedia.removeEventListener) printMedia.removeEventListener('change', onChange);
+      }
+    };
+    if (printMedia.addEventListener) printMedia.addEventListener('change', onChange);
+    else printMedia.addListener(onChange);
+  }
+  const onAfter = () => {
+    clearTimeout(timer);
+    if (sequence !== state.sequence) return;
+    window.removeEventListener('afterprint', onAfter);
+    window.removeEventListener('focus', onFocus);
+    restorePrint();
+  };
+  const onFocus = () => {
+    if (sequence !== state.sequence) return;
+    clearTimeout(timer);
+    window.setTimeout(() => {
+      if (state.printing && sequence === state.sequence) {
+        window.removeEventListener('focus', onFocus);
+        window.removeEventListener('afterprint', onAfter);
+        restorePrint();
+      }
+    }, 500);
+  };
+  window.addEventListener('afterprint', onAfter);
+  window.addEventListener('focus', onFocus);
+}
+
+async function init() {
+  const [template, sample] = await Promise.all([
+    fetch('/api/envelope-print/template').then((r) => r.json()),
+    fetch('/api/envelope-print/sample-layout').then((r) => r.json()),
+  ]);
+  window.__SAMPLE_LAYOUT__ = sample;
+  state.layoutRevision = template.revision;
+  state.layout = template.content;
+  syncControls();
+  renderFieldEditor();
+  validatePaper();
+  const validated = await validateDraft();
+  if (validated) renderPreview();
+  loadDrafts();
+
+  document.querySelectorAll('input, textarea').forEach((input) => {
+    input.addEventListener('input', () => validateDraft().then((ok) => { if (ok) renderPreview(); }));
+  });
+  ['paperWidth', 'paperHeight', 'fontSize', 'nameFontSize', 'smallFontSize',
+   'postcodeSpacing', 'postcodeGap', 'offsetX', 'offsetY']
+    .forEach((id) => $(id).addEventListener('input', liveRefresh));
+  $('testPrint').addEventListener('change', (event) => {
+    state.testPrint = event.target.checked;
+    renderPreview();
+  });
+  $('printBtn').addEventListener('click', printSheet);
+  window.addEventListener('afterprint', restorePrint);
+  $('sampleLayout').addEventListener('click', () => {
+    state.layout = { ...sample, offset_x: state.layout.offset_x, offset_y: state.layout.offset_y };
+    syncControls();
+    renderFieldEditor();
+    validatePaper();
+    renderPreview();
+    setFeedback('已重設為100×200標準定位；請白紙試印後再保存。');
+  });
+  $('saveLayout').addEventListener('click', async () => {
+    const content = gatherLayout();
+    const response = await fetch('/api/envelope-print/template', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_revision: state.layoutRevision, content }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      state.layoutRevision = data.revision;
+      state.layout = content;
+      setFeedback(backupMessage(data.backup));
+    } else {
+      setFeedback(data.detail || '保存失敗', 'error');
+    }
+  });
+  $('saveDraft').addEventListener('click', async () => {
+    const ok = await validateDraft();
+    if (!ok) { alert('請先填齊收件人地址與姓名。'); return; }
+    const defaultName = `${state.draft.receiver_postcode || ''} ${state.draft.receiver_company || state.draft.receiver_name}`.trim();
+    const recordKey = prompt('請輸入草稿名稱', defaultName);
+    if (!recordKey) return;
+    const response = await fetch('/api/envelope-print/drafts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ record_key: recordKey, expected_revision: state.draftRevision, content: state.draft }),
+    });
+    const data = await response.json();
+    if (response.ok) {
+      state.draftRevision = data.revision;
+      setFeedback(backupMessage(data.backup));
+      loadDrafts();
+    } else {
+      setFeedback(data.detail || '草稿保存失敗', 'error');
+    }
+  });
+  $('retryBackup').addEventListener('click', async () => {
+    const response = await fetch('/api/envelope-print/backup', { method: 'POST' });
+    const data = await response.json();
+    setFeedback(response.ok ? 'Google Drive 備份成功。' : `備份失敗：${data.detail}`);
+  });
+  window.addEventListener('resize', renderPreview);
+}
+
+async function loadDrafts() {
+  const data = await fetch('/api/envelope-print/drafts').then((r) => r.json());
+  $('draftRows').innerHTML = data.items.map((item) => `
+    <tr>
+      <td><a href="#" data-key="${esc(item.record_key)}">${esc(item.record_key)}</a></td>
+      <td>${esc(item.content.receiver_company || item.content.receiver_name || '')}</td>
+      <td>${new Date(item.created_at).toLocaleString('zh-Hant')}</td>
+      <td>${item.revision}</td>
+    </tr>`).join('') || '<tr><td colspan="4" class="muted">尚無草稿</td></tr>';
+  $('draftRows').querySelectorAll('a').forEach((link) => link.addEventListener('click', async (event) => {
+    event.preventDefault();
+    const key = link.dataset.key;
+    const drafts = await fetch('/api/envelope-print/drafts').then((r) => r.json());
+    const item = drafts.items.find((entry) => entry.record_key === key);
+    if (item) applyDraft(item.content);
+  }));
+}
+
+function applyDraft(content) {
+  $('receiverPostcode').value = content.receiver_postcode || '';
+  $('receiverCompany').value = content.receiver_company || '';
+  $('receiverName').value = content.receiver_name || '';
+  $('receiverSuffix').value = content.receiver_suffix || '收';
+  $('receiverAddress').value = content.receiver_address || '';
+  $('senderPostcode').value = content.sender_postcode || '';
+  $('senderName').value = content.sender_name || '';
+  $('senderSuffix').value = content.sender_suffix || '緘';
+  $('senderPhone').value = content.sender_phone || '';
+  $('senderAddress').value = content.sender_address || '';
+  validateDraft().then((ok) => { if (ok) renderPreview(); });
+}
+
+if (typeof document !== 'undefined') {
+  init();
+}
