@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>三聯式發票套印｜三通工程行</title>
+  <link rel="stylesheet" href="/static/invoice_overprint.css">
+  <script type="module" src="/static/invoice_overprint.js"></script>
+</head>
+<body>
+  <header class="no-print"><a href="/#panel-invoice-overprint">返回管理後台</a><span>三通工程行 ／ 文件工作台</span><h1>三聯式發票套印</h1><p>190 × 105 mm 橫式 · 只印內容 · 初始座標尚未實機校正</p></header>
+  <div class="toolbar no-print">
+    <button type="button" id="contentTab" aria-pressed="true">01 填寫與草稿</button>
+    <button type="button" id="layoutTab" aria-pressed="false">02 印模校正</button>
+    <button type="button" id="testPrint" disabled>白紙試印（含格線）</button>
+    <button type="button" id="overprint" disabled>套印現成發票紙</button>
+  </div>
+  <p id="status" class="message no-print" role="status" aria-live="polite">正在讀取已存印模…</p>
+  <main class="no-print">
+    <section id="contentPanel" class="card">
+      <h2>填寫內容</h2>
+      <p class="muted">此頁只保存套印草稿，不新增發票號碼、不認列營收，也不自動標記已開票。</p>
+      <form id="draftForm">
+        <div class="form-grid">
+          <label>買受人抬頭<input id="buyer" maxlength="50" autocomplete="off"></label>
+          <label>統一編號<input id="taxId" maxlength="8" pattern="[0-9]{8}" inputmode="numeric" autocomplete="off" placeholder="8位數字"></label>
+          <label>開立日期<input id="invoiceDate" type="date" min="1912-01-01" required></label>
+          <label>稅額（元，自行確認）<input id="tax" type="number" min="0" max="99999999999" step="1" value="0" required></label>
+        </div>
+        <div class="table-scroll"><table><thead><tr><th>品名（最多5行）</th><th>數量</th><th>單位</th><th>單價</th><th>金額</th><th>操作</th></tr></thead><tbody id="items"></tbody></table></div>
+        <div class="actions"><button type="button" id="addItem">新增一行</button><button type="button" id="tax5">依未稅小計試算5%稅額</button></div>
+        <p class="muted">每行數量×單價四捨五入至整元後加總；稅額需自行核對。試算按鈕不會寫入原計價或收支。</p>
+        <label>備註<input id="note" maxlength="60"></label>
+        <p id="totals" class="totals">尚未計算</p>
+        <div class="actions"><button id="saveDraft" type="button" disabled>保存草稿</button><button id="newDraft" type="button">另開新草稿</button></div>
+      </form>
+      <details><summary>開啟已存草稿</summary><p class="muted">離開前請按保存。載入或另開草稿不會自動保存目前修改。</p><div class="actions"><button id="reloadDrafts" type="button">重新讀取</button><button id="moreDrafts" type="button" hidden>下一批50筆</button></div><div id="draftList"></div></details>
+    </section>
+    <section id="layoutPanel" class="card" hidden>
+      <h2>印模校正</h2><p>所有座標單位為mm，從紙張左上角計算到文字框左上角。正X向右、正Y向下；負值反向。</p>
+      <form id="layoutForm">
+        <div class="form-grid">
+          <label>全域X位移（mm）<input id="offset_x" type="number" min="-20" max="20" step="0.1" required></label>
+          <label>全域Y位移（mm）<input id="offset_y" type="number" min="-20" max="20" step="0.1" required></label>
+          <label>字型<select id="font"><option value="PMingLiU">新細明體 PMingLiU</option><option value="Microsoft JhengHei">微軟正黑體</option></select></label>
+          <label>字體大小（pt）<input id="font_size" type="number" min="8" max="16" step="0.5" required></label>
+          <label>統編字距（mm）<input id="tax_id_spacing" type="number" min="0" max="8" step="0.1" required></label>
+          <label>明細行距（mm）<input id="row_pitch" type="number" min="4" max="8" step="0.1" required></label>
+        </div>
+        <details><summary>個別欄位座標與寬度</summary><div class="table-scroll"><table><thead><tr><th>欄位</th><th>X距左（mm）</th><th>Y距上（mm）</th><th>寬度（mm）</th></tr></thead><tbody id="fieldPositions"></tbody></table></div></details>
+        <div class="actions"><button id="saveLayout" type="button" disabled>保存共用印模</button><button id="reloadLayout" type="button">載入已存印模</button></div>
+      </form><p id="layoutVersion" class="muted"></p><p class="muted">校正設定由管理者共用，保存時保留版本。尚未保存的校正只影響目前預覽；重新部署後以已存版本為準。</p>
+    </section>
+    <section class="card instructions">
+      <h2>列印前確認</h2>
+      <ol><li>印表機自訂紙張190 × 105 mm，橫向、邊距0。</li><li>瀏覽器縮放100%／實際大小，關閉頁首頁尾及符合頁面。</li><li>先用白紙試印，比對現成發票格位，再微調X／Y與欄位位置。</li></ol>
+      <label class="check"><input id="aligned" type="checkbox">我已試印並確認本次內容、位置及印表機設定</label>
+      <p class="muted">系統不能控制實體進紙與驅動程式；無邊距能力、三聯複寫及用紙方式須依實際機型確認。字型未安裝時會使用替代字型，可能影響對位。</p>
+      <div class="actions"><button id="backup" type="button">重試雲端備份</button></div>
+    </section>
+  </main>
+  <section class="preview-heading no-print"><h2>內容位置預覽</h2><p id="validation" role="status">請先填寫內容。</p><p>畫面格線每5mm；只有白紙試印才會印出格線與測試字樣。</p></section>
+  <div class="paper-viewport"><div id="sheet" aria-label="190乘105公厘套印預覽"><div id="testMark">白紙校正測試／非正式發票</div><div id="printFields"></div></div></div>
+</body>
+</html>

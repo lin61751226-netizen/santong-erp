@@ -93,8 +93,8 @@ function visibleKey(panels) {
 
 test('every existing function stays reachable in one of seven groups', () => {
   const panels = loadPanels();
-  assert.equal(panels.length, 34);
-  assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 34);
+  assert.equal(panels.length, 35);
+  assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 35);
   const groups = [...navHtml.matchAll(/data-workspace-tab="([^"]+)"[^>]*>([^<]+)/g)].map((match) => match[2]);
   assert.deepEqual(groups, ['今日總覽', '人員與考勤', '派工與工地', '堆高機', '日誌與簽單', '計價與收支', '文件與設定']);
   for (const title of keptTitles) assert.ok(panels.some((panel) => panel.title === title), title);
@@ -149,7 +149,7 @@ test('old document indexes still open the same functions', () => {
   }
   context.setWorkspace('pricing');
   context.setWorkspaceView(999);
-  assert.equal(visibleKey(panels), 'management-reports');
+  assert.equal(visibleKey(panels), 'invoice-overprint');
 });
 
 test('reassignment results reveal their own panel', () => {

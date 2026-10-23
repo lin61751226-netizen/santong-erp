@@ -17,6 +17,7 @@ from app.routes.finance_imports import router as finance_import_router
 from app.routes.document_data import router as document_data_router
 from app.routes.management_reports import router as management_reports_router
 from app.routes.photo_import import router as photo_import_router
+from app.routes.invoice_print import router as invoice_print_router
 from app.routes.line_management import api_router as line_management_api_router
 from app.routes.line_management import page_router as line_management_page_router
 from app.routes.line_webhook import router as line_router
@@ -88,6 +89,7 @@ app.include_router(finance_import_router)
 app.include_router(document_data_router)
 app.include_router(management_reports_router)
 app.include_router(photo_import_router)
+app.include_router(invoice_print_router)
 
 
 @app.get("/", response_class=HTMLResponse)

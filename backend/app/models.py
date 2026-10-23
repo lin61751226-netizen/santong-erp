@@ -772,6 +772,18 @@ class AiSignSlipDraft(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class InvoicePrintRevision(SQLModel, table=True):
+    """Append-only print layout/drafts; never modifies issued invoices or accounts."""
+    __table_args__ = (UniqueConstraint("kind", "record_key", "revision"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(index=True)
+    record_key: str = Field(index=True)
+    revision: int
+    content: dict = Field(sa_column=Column(JSON))
+    created_by_id: int = Field(foreign_key="employee.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class AiBillingCheck(SQLModel, table=True):
     """月度計價核對報告。只列出差異與建議，不改工時、金額或計價規則。"""
 

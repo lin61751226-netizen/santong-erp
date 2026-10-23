@@ -1,0 +1,35 @@
+:root { --ink:#223631; --muted:#69766f; --line:#d6ddd5; --paper:#fffdf8; --accent:#226452; }
+* { box-sizing:border-box; }
+body { margin:0; color:var(--ink); background:radial-gradient(at 10% 0%,#e0e9df,transparent 55%),#f3f1e9; font-family:"Microsoft JhengHei",sans-serif; }
+header,main,.toolbar,.message,.preview-heading { max-width:1200px; margin:20px auto; padding:0 24px; }
+header span { display:block; margin-top:20px; color:var(--muted); font-size:13px; letter-spacing:2px; }
+h1 { font-family:PMingLiU,serif; font-size:36px; margin:12px 0; } h2 { font-size:21px; margin:0 0 14px; }
+a { color:var(--accent); } p,li { line-height:1.7; } .muted { color:var(--muted); font-size:14px; }
+.toolbar,.actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; } .toolbar { position:sticky; top:0; z-index:3; background:#f3f1e9f5; padding:12px 24px; border-bottom:1px solid var(--line); }
+button { font:inherit; padding:11px 15px; border:1px solid var(--line); border-radius:6px; background:white; color:var(--ink); cursor:pointer; }
+button[aria-pressed="true"],#saveDraft,#saveLayout,#overprint { background:var(--accent); color:white; }
+button:disabled { opacity:.45; cursor:not-allowed; } button:focus-visible,input:focus-visible,select:focus-visible { outline:3px solid #ab8e3d; outline-offset:2px; }
+main { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:20px; align-items:start; }
+.card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:24px; min-width:0; box-shadow:0 6px 20px #20302006; }
+[hidden] { display:none!important; } .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+label { display:block; font-size:14px; margin:0 0 14px; } input,select { display:block; font:inherit; padding:10px; border:1px solid #bfc9c0; border-radius:5px; width:100%; margin-top:7px; background:white; color:#182f27; }
+.check { display:flex; align-items:start; gap:8px; font-weight:bold; line-height:1.6; }.check input { width:20px; height:20px; flex-shrink:0; }
+.table-scroll { overflow-x:auto; margin:14px 0; } table { border-collapse:collapse; width:100%; min-width:640px; } th,td { border-bottom:1px solid var(--line); padding:8px; text-align:left; font-size:14px; } th { font-size:12px; color:var(--muted); white-space:nowrap; }
+td input { min-width:78px; } td:first-child input { min-width:170px; } #fieldPositions td:first-child { min-width:130px; } #fieldPositions input { min-width:85px; }
+.message { min-height:27px; font-weight:bold; } .totals { background:#e7eee7; padding:16px; border-radius:6px; }.actions { margin:14px 0; } summary { cursor:pointer; padding:12px 0; font-weight:bold; }
+#draftList button { display:block; width:100%; text-align:left; margin:8px 0; } .error { color:#a53023; }
+.paper-viewport { overflow-x:auto; padding:4px 24px 32px; }
+#sheet { position:relative; width:190mm; height:105mm; margin:0 auto; background-color:white; background-image:linear-gradient(#dae4dc 1px,transparent 1px),linear-gradient(90deg,#dae4dc 1px,transparent 1px); background-size:5mm 5mm; outline:1px solid #abb9ad; color:black; }
+.print-field { position:absolute; line-height:1.2; white-space:nowrap; } .print-field.numeric { text-align:right; } .print-field.bad { outline:2px solid #c34a33; }
+#testMark { position:absolute; top:2mm; left:4mm; font:9pt "Microsoft JhengHei",sans-serif; color:#687c6a; }
+@media(max-width:850px) { main { grid-template-columns:1fr; } h1 { font-size:29px; }.card { padding:18px; } .form-grid { grid-template-columns:1fr; } .toolbar { position:static; } }
+@page { size:190mm 105mm; margin:0; }
+@media print {
+  html,body { margin:0!important; padding:0!important; width:190mm; height:105mm; background:white!important; }
+  .no-print { display:none!important; } .paper-viewport { padding:0; margin:0; overflow:visible; }
+  #sheet { margin:0; outline:0; background:none; break-inside:avoid; print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+  #testMark { display:none; } body.test-print #testMark { display:block; }
+  body.test-print #sheet { background-image:linear-gradient(#ccc 1px,transparent 1px),linear-gradient(90deg,#ccc 1px,transparent 1px); background-size:5mm 5mm; }
+  body:not(.print-armed) .paper-viewport { display:none!important; }
+  .print-field.bad { outline:0; }
+}
