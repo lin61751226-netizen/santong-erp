@@ -116,10 +116,15 @@ test('legacy layouts are normalized read-only (unit hidden, address added, feed 
   assert.equal(JSON.stringify(legacy),snapshot); // never mutated
 });
 
-test('assets ship with real-form version strings',()=>{
+test('coordinate preview assets ship with new version strings',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=real-form-20261023b"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=real-form-20261023b"/);
+  const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=coordinates-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=coordinates-20261023"/);
+  assert.match(html,/id="showCoordinates" checked/);
+  assert.match(source,/function renderCoordinates\(paper\)/);
+  assert.match(source,/Number\(field\.x\) \+ offsetX/);
+  assert.match(css,/\.coordinate-overlay, \.coordinate-legend \{ display: none !important; \}/);
 });
 
 test('printAllowed blocks formal print unless paper and validation pass; test print always allowed',()=>{

@@ -315,11 +315,14 @@ function renderPreview() {
   if (state.testPrint) {
     content.innerHTML = '';
     $('testGrid').hidden = false;
+    $('coordinateOverlay').hidden = true;
+    $('coordinateLegend').hidden = true;
     renderTestGrid(paper, scale);
     sheet.dataset.scale = scale;
     return;
   }
   $('testGrid').hidden = true;
+  renderCoordinates(paper);
   const draft = gatherDraft();
   if (!state.calc) { content.innerHTML = ''; return; }
   content.innerHTML = positionedFields(state.layout, draft, state.calc).map((field) => {
@@ -332,6 +335,35 @@ function renderPreview() {
       justify-content:${field.numeric ? 'flex-end' : 'flex-start'}">${esc(field.text)}</div>`;
   }).join('');
   sheet.dataset.scale = scale;
+}
+
+function renderCoordinates(paper) {
+  const overlay = $('coordinateOverlay');
+  const legend = $('coordinateLegend');
+  const visible = $('showCoordinates').checked;
+  overlay.hidden = !visible;
+  legend.hidden = !visible;
+  if (!visible) return;
+  const offsetX = Number(state.layout.offset_x || 0);
+  const offsetY = Number(state.layout.offset_y || 0);
+  const fields = FIELD_ORDER.filter((key) => state.layout.fields[key]);
+  let html = '<span class="coordinate-origin">0,0</span>';
+  for (let x = 20; x < paper.width; x += 20) {
+    html += `<span class="coordinate-x" style="left:${x}mm">X ${x}</span>`;
+  }
+  for (let y = 20; y < paper.height; y += 20) {
+    html += `<span class="coordinate-y" style="top:${y}mm">Y ${y}</span>`;
+  }
+  overlay.innerHTML = html + fields.map((key, index) => {
+    const field = state.layout.fields[key];
+    const x = Number(field.x) + offsetX;
+    const y = Number(field.y) + offsetY;
+    return `<span class="coordinate-point" style="left:${x}mm;top:${y}mm" title="${esc(FIELD_LABELS[key])} X ${x} / Y ${y}">${index + 1}</span>`;
+  }).join('');
+  legend.innerHTML = `<strong>欄位起點座標（mm，左上角為 0,0）</strong><span>已含全域位移 X ${offsetX}、Y ${offsetY}；只供畫面校正，不會列印。</span><div class="coordinate-list">${fields.map((key, index) => {
+    const field = state.layout.fields[key];
+    return `<span><b>${index + 1}</b> ${esc(FIELD_LABELS[key])}：X ${Number(field.x) + offsetX}／Y ${Number(field.y) + offsetY}</span>`;
+  }).join('')}</div>`;
 }
 
 function renderTestGrid(paper, scale) {
@@ -509,6 +541,7 @@ async function init() {
     state.testPrint = event.target.checked;
     renderPreview();
   });
+  $('showCoordinates').addEventListener('change', renderPreview);
   $('printBtn').addEventListener('click', printSheet);
   window.addEventListener('afterprint', restorePrint);
   window.addEventListener('keydown', (event) => {

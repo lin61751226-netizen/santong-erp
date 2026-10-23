@@ -210,6 +210,42 @@ button:disabled {
   overflow: hidden;
 }
 
+.coordinate-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(20, 95, 112, .10) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(20, 95, 112, .10) 1px, transparent 1px);
+  background-size: 10mm 10mm;
+  color: #0b5961;
+}
+
+.coordinate-overlay[hidden], .coordinate-legend[hidden] { display: none; }
+.coordinate-origin, .coordinate-x, .coordinate-y, .coordinate-point { position: absolute; }
+.coordinate-origin, .coordinate-x, .coordinate-y {
+  font: 700 8px/1 sans-serif;
+  background: rgba(255, 255, 255, .88);
+}
+.coordinate-origin { left: 1mm; top: 1mm; }
+.coordinate-x { top: 1mm; transform: translateX(-50%); }
+.coordinate-y { left: 1mm; transform: translateY(-50%); }
+.coordinate-point {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b34d2e;
+  color: white;
+  font: 700 10px/16px sans-serif;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px white;
+}
+.coordinate-legend { margin-top: 12px; padding: 12px; background: #ecf3f1; border-radius: 8px; }
+.coordinate-legend > span { display: block; font-size: 12px; margin: 4px 0 8px; }
+.coordinate-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 5px 10px; font-size: 12px; }
+.coordinate-list b { display: inline-block; min-width: 16px; color: #b34d2e; }
+
 .test-grid {
   position: absolute;
   inset: 0;
@@ -302,6 +338,7 @@ button:disabled {
 @page { size: 103mm 195mm; margin: 0; }
 
 @media print {
+  .coordinate-overlay, .coordinate-legend { display: none !important; }
   body {
     background: #fff;
   }

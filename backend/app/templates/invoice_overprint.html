@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三聯式發票套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/invoice_overprint.css?v=real-form-20261023b">
+  <link rel="stylesheet" href="/static/invoice_overprint.css?v=coordinates-20261023">
 </head>
 <body data-page="invoice-overprint">
   <header class="topbar">
@@ -163,11 +163,14 @@
         <div id="sheet" class="sheet" aria-label="發票預覽">
           <div id="sheetContent"></div>
           <div id="testGrid" class="test-grid" hidden></div>
+          <div id="coordinateOverlay" class="coordinate-overlay" aria-hidden="true"></div>
         </div>
       </div>
       <div class="form-inline">
         <label><input type="checkbox" id="testPrint"> 白紙校正測試（標題＋每2mm網格，不印正式內容）</label>
+        <label><input type="checkbox" id="showCoordinates" checked> 畫面顯示欄位座標（不列印）</label>
       </div>
+      <div id="coordinateLegend" class="coordinate-legend" aria-live="polite"></div>
       <div class="warning" id="validation" role="alert"></div>
       <div class="button-row">
         <button type="button" id="printBtn">列印</button>
@@ -195,6 +198,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/invoice_overprint.js?v=real-form-20261023b"></script>
+  <script type="module" src="/static/invoice_overprint.js?v=coordinates-20261023"></script>
 </body>
 </html>
