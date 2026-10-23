@@ -22,7 +22,15 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
-from app.services.envelope_print import EnvelopeDraft, EnvelopeLayout, render_lines
+from app.services.envelope_print import (
+    SENDER_POSTCODE_BOXES,
+    SENDER_POSTCODE_GAP,
+    SENDER_POSTCODE_SPACING,
+    STAMP_GUIDE,
+    EnvelopeDraft,
+    EnvelopeLayout,
+    render_lines,
+)
 from app.services.invoice_pdf import (
     FONT_NAME,
     _baseline_centered,
@@ -183,9 +191,11 @@ def layout_boxes(layout: EnvelopeLayout, draft: EnvelopeDraft) -> list[dict]:
 
     def place_postcode(key: str, raw: str):
         field = layout.fields[key]
+        spacing = SENDER_POSTCODE_SPACING if key == "sender_postcode" else layout.postcode_spacing
+        gap = SENDER_POSTCODE_GAP if key == "sender_postcode" else layout.postcode_gap
         boxes.extend(postcode_boxes(
             raw, field.x + ox, field.y + oy,
-            layout.postcode_spacing, layout.postcode_gap, _font_cap(key, layout),
+            spacing, gap, _font_cap(key, layout),
         ))
 
     place_postcode("receiver_postcode", draft.receiver_postcode)
@@ -267,16 +277,18 @@ def _draw_calibration(pdf: canvas.Canvas, layout: EnvelopeLayout) -> None:
     pdf.setStrokeColorRGB(0.77, 0.42, 0.42)
     pdf.setLineWidth(0.25)
     pdf.setDash(1, 1)
-    pdf.rect(8, -8 - 18, 18, 18, stroke=1, fill=0)
+    stamp_x, stamp_y, stamp_w, stamp_h = STAMP_GUIDE
+    pdf.rect(stamp_x, -(stamp_y + stamp_h), stamp_w, stamp_h, stroke=1, fill=0)
     pdf.setDash()
-    _draw_text(pdf, "貼郵票處", 9.2, _baseline_centered(13, 8, 9), 9)
-    for key in ("receiver_postcode", "sender_postcode"):
-        field = layout.fields[key]
-        for index in range(5):
-            left = field.x + index * layout.postcode_spacing + (layout.postcode_gap if index >= 3 else 0)
-            top = field.y - 0.8
-            box = layout.postcode_spacing - 0.4
-            pdf.rect(left, -(top + box), box, box, stroke=1, fill=0)
+    _draw_text(pdf, "貼郵票處", stamp_x + 1.2, _baseline_centered(stamp_y + 5, 8, 9), 9)
+    field = layout.fields["receiver_postcode"]
+    for index in range(5):
+        left = field.x + index * layout.postcode_spacing + (layout.postcode_gap if index >= 3 else 0)
+        top = field.y - 0.8
+        box = layout.postcode_spacing - 0.4
+        pdf.rect(left, -(top + box), box, box, stroke=1, fill=0)
+    for left, top, box_w, box_h in SENDER_POSTCODE_BOXES:
+        pdf.rect(left, -(top + box_h), box_w, box_h, stroke=1, fill=0)
     pdf.setStrokeColorRGB(0.2, 0.2, 0.2)
     pdf.setFillColorRGB(0, 0, 0)
     mark = 4

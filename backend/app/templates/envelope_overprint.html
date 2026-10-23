@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>直式信封套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/envelope_overprint.css?v=envelope-print-pdf-20261023">
+  <link rel="stylesheet" href="/static/envelope_overprint.css?v=envelope-photo-align-20261023">
 </head>
 <body data-page="envelope-overprint">
   <header class="topbar">
@@ -124,7 +124,7 @@
       </div>
       <div class="button-row">
         <button type="button" id="sampleLayout" class="button-secondary">重設為100×200標準定位</button>
-        <button type="button" id="senderLayout" class="button-secondary">套用寄件兩欄完整直書（尚未保存）</button>
+        <button type="button" id="senderLayout" class="button-secondary">套用照片定位（尚未保存）</button>
       </div>
       <div class="warning" id="paperWarning" hidden></div>
     </section>
@@ -146,11 +146,13 @@
           <li>縮放：<strong>實際大小／100%</strong>。邊界無／0；關閉頁首頁尾與背景圖形。</li>
           <li>列印視窗若被改成 A4，這一頁不應再多出第二頁，但對不準信封。請改選 100×200，或改按「下載信封 PDF」用檢視器以實際大小列印。</li>
           <li>請先用白紙（裁成100×200）試印，再對信封調整X／Y與各欄座標。</li>
+          <li>預覽上的淡紅框是信封預印格：郵票框，以及底部寄件郵遞區號 6 格。正式列印不會印出這些框。</li>
         </ol>
       </div>
       <div class="paper-viewport">
         <div id="sheet" class="sheet envelope" aria-label="信封預覽">
           <div id="sheetContent"></div>
+          <div id="preprintGuides" class="preprint-guides"></div>
           <div id="testGrid" class="test-grid" hidden></div>
         </div>
       </div>
@@ -181,6 +183,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/envelope_overprint.js?v=envelope-print-pdf-20261023"></script>
+  <script type="module" src="/static/envelope_overprint.js?v=envelope-photo-align-20261023"></script>
 </body>
 </html>

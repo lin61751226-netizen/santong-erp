@@ -85,9 +85,15 @@ function gatherLayout() {
   };
 }
 
+// Photo calibration. Receiver postcode is already on its squares and is not copied.
+const PHOTO_LAYOUT_KEYS = [
+  'sender_postcode', 'sender_address', 'sender_name', 'sender_phone',
+  'receiver_company', 'receiver_address', 'receiver_name',
+];
+
 export function applySenderLayout(original, sample) {
   const fields = { ...original.fields };
-  for (const key of ['sender_address', 'sender_name', 'sender_phone']) {
+  for (const key of PHOTO_LAYOUT_KEYS) {
     fields[key] = { ...sample.fields[key] };
   }
   return { ...original, fields };
@@ -97,6 +103,18 @@ export function applySenderLayout(original, sample) {
 // which is what stacked 3 onto 路 and 6 onto 巷. Cell height is the only gap.
 export const GLYPH_EM = 1.15;
 const PHONE_GAP_EM = 0.45;
+// Sender squares measured on the printed envelope. Do not reuse the receiver pitch.
+export const SENDER_POSTCODE_SPACING = 6.4;
+export const SENDER_POSTCODE_GAP = 3;
+export const SENDER_POSTCODE_BOXES = [
+  [9.10, 182.4, 5.20, 7.8],
+  [15.60, 182.4, 5.08, 7.8],
+  [21.99, 182.4, 5.08, 7.8],
+  [31.44, 182.4, 5.08, 7.8],
+  [37.83, 182.4, 5.08, 7.8],
+  [44.21, 182.4, 5.08, 7.8],
+];
+export const STAMP_GUIDE = [6.7, 15.5, 20.9, 18.4];
 
 function isHyphen(ch) {
   return ch === '-' || ch === '－' || ch === '—' || ch === '–';
@@ -169,12 +187,14 @@ export function positionedElements(layout, draft, lines) {
   function postcodeChars(key, raw) {
     const chars = (raw || '').replace(/\D/g, '').slice(0, 5).split('');
     const field = layout.fields[key];
+    const spacing = key === 'sender_postcode' ? SENDER_POSTCODE_SPACING : postcodeSpacing;
+    const gap = key === 'sender_postcode' ? SENDER_POSTCODE_GAP : postcodeGap;
     chars.forEach((ch, i) => {
       out.push({
         key, text: ch,
-        x: Number((field.x + ox + i * postcodeSpacing + (i >= 3 ? postcodeGap : 0)).toFixed(2)),
+        x: Number((field.x + ox + i * spacing + (i >= 3 ? gap : 0)).toFixed(2)),
         y: Number((field.y + oy).toFixed(2)),
-        width: postcodeSpacing,
+        width: spacing,
         height: 0,
         postcode: true,
         fontSize: fontSizeFor(key, layout),
@@ -303,11 +323,18 @@ function renderPreview() {
 
   if (state.testPrint) {
     $('sheetContent').innerHTML = '';
+    const guides = $('preprintGuides');
+    if (guides) guides.hidden = true;
     $('testGrid').hidden = false;
     renderTestGrid(l, scale);
     return;
   }
   $('testGrid').hidden = true;
+  const guides = $('preprintGuides');
+  if (guides) {
+    guides.hidden = false;
+    guides.innerHTML = preprintGuideHtml();
+  }
   const content = $('sheetContent');
   if (!state.lines) { content.innerHTML = ''; return; }
   content.innerHTML = positionedElements(l, state.draft, state.lines).map((el) => {
@@ -324,11 +351,20 @@ function renderPreview() {
   }).join('');
 }
 
-function postcodeBoxesHtml(field, spacing, gap, scale) {
+function postcodeBoxesHtml(field, spacing, gap) {
   let html = '';
   for (let i = 0; i < 5; i += 1) {
     const x = field.x + i * spacing + (i >= 3 ? gap : 0);
     html += `<span class="guide-box" style="left:${x}mm;top:${field.y - 0.8}mm;width:${spacing - 0.4}mm;height:${spacing - 0.4}mm"></span>`;
+  }
+  return html;
+}
+
+function preprintGuideHtml() {
+  const [x, y, w, h] = STAMP_GUIDE;
+  let html = `<div class="guide-stamp" style="left:${x}mm;top:${y}mm;width:${w}mm;height:${h}mm">貼郵票處</div>`;
+  for (const box of SENDER_POSTCODE_BOXES) {
+    html += `<span class="guide-box" style="left:${box[0]}mm;top:${box[1]}mm;width:${box[2]}mm;height:${box[3]}mm"></span>`;
   }
   return html;
 }
@@ -339,9 +375,8 @@ function renderTestGrid(l, scale) {
   grid.style.height = `${l.paper_height}mm`;
   grid.style.backgroundSize = `${2 * scale}px ${2 * scale}px`;
   let html = `<div class="test-title">三通工程行｜直式信封 ${l.paper_width}×${l.paper_height} mm 白紙校正</div>`;
-  html += '<div class="guide-stamp" style="left:8mm;top:8mm;width:18mm;height:18mm">貼郵票處</div>';
-  html += postcodeBoxesHtml(l.fields.receiver_postcode, l.postcode_spacing, l.postcode_gap, scale);
-  html += postcodeBoxesHtml(l.fields.sender_postcode, l.postcode_spacing, l.postcode_gap, scale);
+  html += preprintGuideHtml();
+  html += postcodeBoxesHtml(l.fields.receiver_postcode, l.postcode_spacing, l.postcode_gap);
   const cellsX = Math.round(l.paper_width / 2);
   const cellsY = Math.round(l.paper_height / 2);
   for (let x = 0; x <= cellsX; x += 5) {
@@ -510,7 +545,7 @@ async function init() {
     renderFieldEditor();
     validatePaper();
     renderPreview();
-    setFeedback('已套用寄件兩欄完整直書：地址一行、姓名與電話一行（數字橫排），欄位 Y25／高150。尚未保存，確認後再按「保存定位」。');
+    setFeedback('已套用照片定位。寄件地址／姓名 X18／X6、Y52、高127；寄件郵遞區號 X8.5、Y184.5、每碼 6.4mm。收件地址 Y64、公司 Y54、姓名 Y60。上方收件郵遞區號未改。尚未保存。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();
