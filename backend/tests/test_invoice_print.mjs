@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/invoice_overprint.js',import.meta.url),'utf8');
-const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout,printAllowed}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 test('Taipei date crosses UTC date correctly',()=>{
   assert.equal(taipeiDate(new Date('2026-10-22T17:00:00Z')),'2026-10-23');
@@ -50,6 +50,25 @@ test('sample changes only paper and buyer/tax coordinates, not other calibration
 
 test('updated layout loads versioned CSS and module rather than cached old assets',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=195x103-20261023"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=195x103-20261023"/);
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=repeat-print-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=repeat-print-20261023"/);
+});
+
+test('white-paper calibration may repeat with layout warnings but not invalid input',()=>{
+  assert.equal(printAllowed(true,true,false,false),true);
+  assert.equal(printAllowed(true,false,false,false),false);
+  assert.equal(printAllowed(false,true,false,true),false);
+  assert.equal(printAllowed(false,true,true,false),false);
+  assert.equal(printAllowed(false,true,true,true),true);
+  for(let i=0;i<5;i++)assert.equal(printAllowed(true,true,true,false),true);
+});
+
+test('preview cancellation and media exit restore controls, keeping duplicate-click guard',()=>{
+  assert.match(source,/window\.addEventListener\('afterprint',restorePrint\)/);
+  assert.match(source,/printMedia\.addEventListener\('change'/);
+  assert.match(source,/window\.addEventListener\('focus',restorePrint\)/);
+  assert.match(source,/finally \{ state\.printing=false;restorePrint\(\); \}/);
+  assert.match(source,/if\(state\.printing\|\|/);
+  assert.match(source,/clearTimeout\(timer\);refresh\(\)/);
+  assert.match(source,/\['validation','printHint'\]/);
 });

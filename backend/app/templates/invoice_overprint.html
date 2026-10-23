@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三聯式發票套印｜三通工程行</title>
-  <link rel="stylesheet" href="/static/invoice_overprint.css?v=195x103-20261023">
+  <link rel="stylesheet" href="/static/invoice_overprint.css?v=repeat-print-20261023">
   <style id="paperStyle"></style>
-  <script type="module" src="/static/invoice_overprint.js?v=195x103-20261023"></script>
+  <script type="module" src="/static/invoice_overprint.js?v=repeat-print-20261023"></script>
 </head>
 <body>
   <header class="no-print"><a href="/#panel-invoice-overprint">返回管理後台</a><span>三通工程行 ／ 文件工作台</span><h1>三聯式發票套印</h1><p><span id="paperSummary">讀取紙張尺寸中</span> · 只印內容 · 座標仍需白紙試印校正</p></header>
@@ -14,6 +14,7 @@
     <button type="button" id="layoutTab" aria-pressed="false">02 印模校正</button>
     <button type="button" id="testPrint" disabled>白紙試印（含格線）</button>
     <button type="button" id="overprint" disabled>套印現成發票紙</button>
+    <p id="printHint" role="status">可重複白紙試印；請先完成內容檢查。</p>
   </div>
   <p id="status" class="message no-print" role="status" aria-live="polite">正在讀取已存印模…</p>
   <main class="no-print">

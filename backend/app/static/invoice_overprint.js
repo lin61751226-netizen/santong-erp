@@ -39,11 +39,18 @@ export function backupMessage(result) {
   return result?.status === 'saved' ? '雲端資料庫備份成功。' : '雲端備份尚未成功，請勿重新部署；請按「重試雲端備份」。';
 }
 
+export function printAllowed(test, validInput, ready, aligned) {
+  return Boolean(validInput && (test || (ready && aligned)));
+}
+
 if (typeof document !== 'undefined') {
   const $ = id=>document.getElementById(id);
-  const state = {layout:null, layoutRevision:0, draftKey:null, draftRevision:0, ready:false, sequence:0, draftDirty:false, layoutDirty:false, draftOffset:0};
+  const state = {layout:null, layoutRevision:0, draftKey:null, draftRevision:0, ready:false, validInput:false, printing:false, sequence:0, draftDirty:false, layoutDirty:false, draftOffset:0};
   let timer;
   function message(text, error=false) { $('status').textContent=text; $('status').classList.toggle('error',error); }
+  function validationMessage(text, error=false) {
+    for(const id of ['validation','printHint']) { $(id).textContent=text;$(id).classList.toggle('error',error); }
+  }
   async function api(path, options={}) {
     const response = await fetch('/api/invoice-print/'+path,{...options,credentials:'same-origin',headers:{'Content-Type':'application/json',...options.headers}});
     if (response.status===401) throw new Error('登入已過期，請返回管理後台使用原帳密登入；未保存內容請先保留。');
@@ -63,8 +70,8 @@ if (typeof document !== 'undefined') {
     return content;
   }
   function invalidate() {
-    state.sequence++; state.ready=false; $('aligned').checked=false; $('overprint').disabled=true; $('testPrint').disabled=true;
-    $('validation').textContent='重新檢查中…';
+    state.sequence++; state.ready=false; state.validInput=false; $('aligned').checked=false; $('overprint').disabled=true; $('testPrint').disabled=true;
+    validationMessage('重新檢查中…');
     document.body.classList.remove('print-armed','test-print');
   }
   function schedule() { invalidate(); clearTimeout(timer); timer=setTimeout(()=>refresh(),220); }
@@ -102,9 +109,9 @@ if (typeof document !== 'undefined') {
   }
   async function refresh() {
     if (!state.layout) return false;
-    const sequence=++state.sequence; state.ready=false; $('overprint').disabled=true;$('testPrint').disabled=true;
+    const sequence=++state.sequence; state.ready=false; state.validInput=false; $('overprint').disabled=true;$('testPrint').disabled=true;
     if (!$('draftForm').checkValidity() || !$('layoutForm').checkValidity()) {
-      $('validation').textContent='請完成必填內容；數量、日期及校正值必須在範圍內。'; $('printFields').replaceChildren();return false;
+      validationMessage('請完成必填內容；數量、日期及校正值必須在範圍內。',true); $('printFields').replaceChildren();return false;
     }
     const draft=readDraft(), layout=readLayout();
     try {
@@ -140,12 +147,11 @@ if (typeof document !== 'undefined') {
           invalid.push(LABELS[a.key],LABELS[b.key]);a.element.classList.add('bad');b.element.classList.add('bad');
         }
       }
-      state.ready=invalid.length===0;
-      $('validation').textContent=state.ready?'欄位位於紙張內；仍需白紙試印比對實際格位。':`超出範圍或欄位重疊：${[...new Set(invalid)].join('、')}。請調整座標、寬度、字體或內容。`;
-      $('validation').classList.toggle('error',!state.ready);
-      $('testPrint').disabled=!state.ready; $('overprint').disabled=!(state.ready&&$('aligned').checked);
+      state.validInput=true;state.ready=invalid.length===0;
+      validationMessage(state.ready?'可重複白紙試印；關閉或取消預覽後可再次試印。':`超出範圍或欄位重疊：${[...new Set(invalid)].join('、')}。可用白紙試印校正（可能截字），正式套印已停用。`,!state.ready);
+      $('testPrint').disabled=!printAllowed(true,state.validInput,state.ready,false); $('overprint').disabled=!printAllowed(false,state.validInput,state.ready,$('aligned').checked);
       return state.ready;
-    } catch(error) { if(sequence===state.sequence){$('validation').textContent=error.message;message(error.message,true);} return false; }
+    } catch(error) { if(sequence===state.sequence){validationMessage(error.message,true);message(error.message,true);} return false; }
   }
   function mayDiscard() {
     if(state.savingDraft){message('草稿正在保存，請等保存結果後再切換。');return false;}
@@ -214,14 +220,27 @@ if (typeof document !== 'undefined') {
     if(JSON.stringify(readDraft())!==fingerprint)throw new Error('內容已變更，請重新試算。');
     $('tax').value=Math.floor((result.subtotal*5+50)/100);state.draftDirty=true;schedule();
   });
+  const printMedia=window.matchMedia('print');
+  function restorePrint() {
+    if(printMedia.matches||!document.body.classList.contains('print-armed'))return;
+    document.body.classList.remove('print-armed','test-print');
+    clearTimeout(timer);refresh();
+  }
   async function print(test) {
-    if(!test&&!$('aligned').checked)return;
-    if(!await refresh()||(!test&&!$('aligned').checked))return;
-    if(!test&&(!readDraft().buyer||!readDraft().tax_id)){message('正式套印前請填寫買受人與8位統編。',true);return;}
-    document.body.classList.toggle('test-print',test);document.body.classList.add('print-armed');window.print();
+    if(state.printing||(!test&&!$('aligned').checked))return;
+    state.printing=true;clearTimeout(timer);
+    try {
+      const ready=await refresh();
+      if(!printAllowed(test,state.validInput,ready,$('aligned').checked))return;
+      if(!test&&(!readDraft().buyer||!readDraft().tax_id)){message('正式套印前請填寫買受人與8位統編。',true);return;}
+      document.body.classList.toggle('test-print',test);document.body.classList.add('print-armed');window.print();
+    } catch(error) { message(`無法開啟列印預覽：${error.message}`,true); }
+    finally { state.printing=false;restorePrint(); }
   }
   $('testPrint').onclick=()=>print(true);$('overprint').onclick=()=>print(false);
-  window.addEventListener('afterprint',()=>document.body.classList.remove('print-armed','test-print'));
+  window.addEventListener('afterprint',restorePrint);
+  printMedia.addEventListener('change',event=>{if(!event.matches)restorePrint();});
+  window.addEventListener('focus',restorePrint);
   window.addEventListener('beforeunload',event=>{if(state.draftDirty||state.layoutDirty||state.savingDraft||state.savingLayout){event.preventDefault();event.returnValue='';}});
   (async()=>{
     try { await loadLayout();newDraft();$('saveLayout').disabled=false;$('saveDraft').disabled=false;$('sampleLayout').disabled=false; }

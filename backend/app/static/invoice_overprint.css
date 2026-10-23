@@ -6,6 +6,7 @@ header span { display:block; margin-top:20px; color:var(--muted); font-size:13px
 h1 { font-family:PMingLiU,serif; font-size:36px; margin:12px 0; } h2 { font-size:21px; margin:0 0 14px; }
 a { color:var(--accent); } p,li { line-height:1.7; } .muted { color:var(--muted); font-size:14px; }
 .toolbar,.actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; } .toolbar { position:sticky; top:0; z-index:3; background:#f3f1e9f5; padding:12px 24px; border-bottom:1px solid var(--line); }
+#printHint { flex-basis:100%; margin:0; font-size:14px; }
 button { font:inherit; padding:11px 15px; border:1px solid var(--line); border-radius:6px; background:white; color:var(--ink); cursor:pointer; }
 button[aria-pressed="true"],#saveDraft,#saveLayout,#overprint { background:var(--accent); color:white; }
 button:disabled { opacity:.45; cursor:not-allowed; } button:focus-visible,input:focus-visible,select:focus-visible { outline:3px solid #ab8e3d; outline-offset:2px; }
