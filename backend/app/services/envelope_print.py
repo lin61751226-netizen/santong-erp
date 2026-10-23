@@ -52,11 +52,16 @@ def default_envelope_fields() -> dict[str, FieldSpec]:
         "receiver_company": FieldSpec(x=84, y=34, width=12, height=118),
         "receiver_address": FieldSpec(x=58, y=34, width=24, height=118),
         "receiver_name": FieldSpec(x=30, y=40, width=24, height=112),
-        # Sender zone on the left.
+        # Sender zone on the left. Postcode boxes stay put.
+        # Address is the right-hand vertical column (read first); name+phone
+        # is the left-hand column. Columns run Y25–175 so a full address and
+        # the sideways phone string fit above the postcode (Y178). The phone
+        # field is kept for saved layouts but is not printed on its own —
+        # see sender_column_text().
         "sender_postcode": FieldSpec(x=8, y=178, width=30, height=7),
-        "sender_address": FieldSpec(x=8, y=40, width=20, height=80),
-        "sender_name": FieldSpec(x=8, y=121, width=20, height=41),
-        "sender_phone": FieldSpec(x=8, y=164, width=50, height=8),
+        "sender_address": FieldSpec(x=18, y=25, width=10, height=150),
+        "sender_name": FieldSpec(x=6, y=25, width=10, height=150),
+        "sender_phone": FieldSpec(x=6, y=25, width=10, height=150),
     }
 
 
@@ -185,15 +190,30 @@ class EnvelopeDraft(BaseModel):
         return self
 
 
+def sender_column_text(draft: EnvelopeDraft) -> str:
+    """One vertical line: 「姓名＋後綴 電話：號碼」.
+
+    A single space sits between the suffix and 電話. No phone label when blank.
+    """
+    head = f"{draft.sender_name}{draft.sender_suffix or ''}".strip()
+    phone = (draft.sender_phone or "").strip()
+    if not phone:
+        return head
+    return f"{head} 電話：{phone}"
+
+
 def render_lines(draft: EnvelopeDraft) -> dict:
-    """Compose the final text for each zone."""
+    """Compose the final text for each zone.
+
+    Sender phone is not a separate column; it is appended to the name line.
+    ``sender_phone`` is returned empty so the preview does not draw it twice.
+    """
     receiver_name = f"{draft.receiver_name}{draft.receiver_suffix or ''}"
-    sender_name = f"{draft.sender_name}{draft.sender_suffix or ''}"
     return {
         "receiver_company": draft.receiver_company,
         "receiver_address": draft.receiver_address,
         "receiver_name": receiver_name,
         "sender_address": draft.sender_address,
-        "sender_name": sender_name,
-        "sender_phone": draft.sender_phone,
+        "sender_name": sender_column_text(draft),
+        "sender_phone": "",
     }

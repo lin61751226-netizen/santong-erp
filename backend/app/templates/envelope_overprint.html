@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>直式信封套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/envelope_overprint.css?v=sender-20261023">
+  <link rel="stylesheet" href="/static/envelope_overprint.css?v=sender-cells-20261023">
 </head>
 <body data-page="envelope-overprint">
   <header class="topbar">
     <div class="brand">
       <h1>直式信封套印工作台</h1>
-      <p class="muted">依中華郵政直式信封配置：收件人郵遞區號於右上、地址於右中、姓名於正中；寄件人於左側、郵遞區號於左下。只印內容，不印框線。</p>
+      <p class="muted">依中華郵政直式信封配置：收件人郵遞區號於右上、地址於右中、姓名於正中。寄件郵遞區號仍在左下方格。寄件地址與姓名逐字一格往下排，電話整串橫排。只印內容，不印框線。</p>
     </div>
     <div class="actions">
       <a href="/">回到總覽</a>
@@ -124,7 +124,7 @@
       </div>
       <div class="button-row">
         <button type="button" id="sampleLayout" class="button-secondary">重設為100×200標準定位</button>
-        <button type="button" id="senderLayout" class="button-secondary">套用新版寄件區定位（尚未保存）</button>
+        <button type="button" id="senderLayout" class="button-secondary">套用寄件兩欄完整直書（尚未保存）</button>
       </div>
       <div class="warning" id="paperWarning" hidden></div>
     </section>
@@ -132,7 +132,7 @@
     <section class="card">
       <div class="section-head">
         <h2>4. 各欄座標微調（mm）</h2>
-        <span class="muted">直書欄位：X為左邊界、Y為頂端、寬度為直行區總寬、高度為行長。</span>
+        <span class="muted">直書欄位：X為左邊界、Y為頂端、寬度為直行區總寬、高度為行長。寄件電話印在姓名那一行，不另排。</span>
       </div>
       <div class="field-grid" id="fieldEditor"></div>
     </section>
@@ -179,6 +179,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/envelope_overprint.js?v=sender-20261023"></script>
+  <script type="module" src="/static/envelope_overprint.js?v=sender-cells-20261023"></script>
 </body>
 </html>

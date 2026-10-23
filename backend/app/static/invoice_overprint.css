@@ -222,7 +222,7 @@ button:disabled {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
 }
-.sheet-field.field-uppercase span { text-align: left; }
+.sheet-field.field-uppercase span { text-align: center; }
 
 .sheet-field.field-note {
   white-space: normal;

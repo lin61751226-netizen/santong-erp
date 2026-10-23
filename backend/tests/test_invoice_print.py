@@ -95,6 +95,19 @@ def test_decimal_rounding_and_roc():
     assert calculate(PrintDraft(**payload))['total'] == 152
 
 
+def test_photo_digit_centers_match_measured_squares():
+    """八個統編方格與九個大寫單位，中心須落在參考照片量到的位置。"""
+    layout = PrintLayout()
+    measured_tax = [50.06, 55.96, 61.86, 67.77, 73.67, 79.63, 85.58, 91.49]
+    tax_centers = [layout.fields['tax_id'].x + (i + 0.5) * layout.tax_id_spacing for i in range(8)]
+    assert all(abs(got - expect) < 0.12 for got, expect in zip(tax_centers, measured_tax))
+    measured_upper = [51.79, 61.27, 71.02, 80.61, 90.37, 99.84, 109.49, 118.99, 128.63]
+    pitch = layout.fields['uppercase'].width / 9
+    upper_centers = [layout.fields['uppercase'].x + (i + 0.5) * pitch for i in range(9)]
+    assert all(abs(got - expect) < 0.2 for got, expect in zip(upper_centers, measured_upper))
+    assert layout.fields['uppercase'].y == 85.9
+
+
 def test_default_layout_get_is_read_only(ctx):
     client, session, actor, backup = ctx
     response = client.get('/api/invoice-print/template')
@@ -108,10 +121,13 @@ def test_default_layout_get_is_read_only(ctx):
     assert 'address' in data['content']['fields']
     assert 'unit' not in data['content']['fields']
     assert data['content']['fields']['note']['height'] > 0
-    assert data['content']['fields']['uppercase']['x'] == 26.7
+    assert data['content']['fields']['uppercase']['x'] == 47.0
     assert data['content']['fields']['uppercase']['y'] == 85.9
-    assert data['content']['fields']['uppercase']['width'] == 81
-    assert data['content']['tax_id_spacing'] == 6.5
+    assert data['content']['fields']['uppercase']['width'] == 86.5
+    assert data['content']['fields']['tax_id']['x'] == 47.1
+    assert data['content']['fields']['tax_id']['y'] == 16.4
+    assert data['content']['fields']['tax_id']['height'] == 5.5
+    assert data['content']['tax_id_spacing'] == 5.92
     assert session.exec(select(InvoicePrintRevision)).all() == []
     assert not backup.called
     assert client.get('/invoice-overprint').headers['cache-control'] == 'no-store'

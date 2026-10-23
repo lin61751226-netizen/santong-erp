@@ -11,7 +11,7 @@ const FIELD_LABELS = {
   sender_postcode: '寄件人郵遞區號',
   sender_address: '寄件人地址',
   sender_name: '寄件人姓名',
-  sender_phone: '寄件人電話',
+  sender_phone: '寄件人電話（併入姓名直書，不另印）',
 };
 const VERTICAL_FIELDS = new Set([
   'receiver_company', 'receiver_address', 'receiver_name',
@@ -93,6 +93,66 @@ export function applySenderLayout(original, sample) {
   return { ...original, fields };
 }
 
+// One upright cell per character. writing-mode mixes digit and CJK advances,
+// which is what stacked 3 onto 路 and 6 onto 巷. Cell height is the only gap.
+export const GLYPH_EM = 1.15;
+const PHONE_GAP_EM = 0.45;
+
+function isHyphen(ch) {
+  return ch === '-' || ch === '－' || ch === '—' || ch === '–';
+}
+
+function normalizeSenderText(text) {
+  return String(text ?? '').replace(/電話\s*[:：]/g, '電話：');
+}
+
+export function columnParts(text, { sidewaysPhone = false } = {}) {
+  const source = normalizeSenderText(text);
+  if (!sidewaysPhone) return { glyphs: Array.from(source), phone: '' };
+  const match = source.match(/^(.*?)([0-9０-９][0-9０-９\-－—–]*)$/);
+  if (!match || !match[2]) return { glyphs: Array.from(source), phone: '' };
+  return { glyphs: Array.from(match[1]), phone: match[2] };
+}
+
+function phoneAdvanceEm(phone) {
+  let em = PHONE_GAP_EM + 0.25;
+  for (const ch of phone) em += isHyphen(ch) ? 0.45 : 0.62;
+  return em;
+}
+
+export function verticalAdvanceEm(text, options = {}) {
+  const { glyphs, phone } = columnParts(text, options);
+  let em = glyphs.length * GLYPH_EM;
+  if (phone) em += phoneAdvanceEm(phone);
+  return em;
+}
+
+function glyphSpan(ch) {
+  const shown = ch === ' ' ? '\u00a0' : ch;
+  return `<span class="glyph">${esc(shown)}</span>`;
+}
+
+// Shared by the on-screen preview and print (print shows this same DOM).
+export function verticalColumnHtml(text, options = {}) {
+  const { glyphs, phone } = columnParts(text, options);
+  let html = glyphs.map(glyphSpan).join('');
+  if (phone) {
+    const height = phoneAdvanceEm(phone) - PHONE_GAP_EM;
+    html += `<span class="phone-run" style="height:${height.toFixed(2)}em"><span class="phone-text">${esc(phone)}</span></span>`;
+  }
+  return html;
+}
+
+// Shrink the whole column by one ratio when it would pass the field height.
+export function verticalFontSize(text, heightMm, maxPt, options = {}) {
+  const em = verticalAdvanceEm(text, options);
+  const cap = Number(maxPt);
+  if (!em || !(Number(heightMm) > 0) || !Number.isFinite(cap)) return cap;
+  const usable = Math.max(1, Number(heightMm) - 1);
+  const fitted = usable / (em * 0.3528);
+  return Math.round(Math.min(cap, fitted) * 10) / 10;
+}
+
 function fontSizeFor(key, layout) {
   if (key === 'receiver_name') return layout.name_font_size;
   if (key.startsWith('sender') || key === 'sender_postcode') return layout.small_font_size;
@@ -122,17 +182,22 @@ export function positionedElements(layout, draft, lines) {
     });
   }
 
-  function addVertical(key, text) {
+  function addVertical(key, text, { oneColumn = false, sidewaysPhone = false } = {}) {
     const field = layout.fields[key];
-    if (!text) return;
+    if (!text || !field) return;
+    const fontSize = oneColumn
+      ? verticalFontSize(text, field.height, fontSizeFor(key, layout), { sidewaysPhone })
+      : fontSizeFor(key, layout);
     out.push({
       key, text,
       x: Number((field.x + ox).toFixed(2)),
       y: Number((field.y + oy).toFixed(2)),
       width: field.width,
       height: field.height,
-      vertical: VERTICAL_FIELDS.has(key),
-      fontSize: fontSizeFor(key, layout),
+      vertical: !oneColumn,
+      oneColumn,
+      sidewaysPhone,
+      fontSize,
     });
   }
 
@@ -141,9 +206,10 @@ export function positionedElements(layout, draft, lines) {
   addVertical('receiver_address', lines.receiver_address);
   addVertical('receiver_name', lines.receiver_name);
   postcodeChars('sender_postcode', draft.sender_postcode);
-  addVertical('sender_address', lines.sender_address);
-  addVertical('sender_name', lines.sender_name);
-  addVertical('sender_phone', lines.sender_phone);
+  // Address is one vertical column. Name and phone share the other column;
+  // sender_phone is not drawn again.
+  addVertical('sender_address', lines.sender_address, { oneColumn: true });
+  addVertical('sender_name', lines.sender_name, { oneColumn: true, sidewaysPhone: true });
   return out;
 }
 
@@ -249,8 +315,12 @@ function renderPreview() {
       return `<div class="sheet-field postcode-char" data-key="${esc(el.key)}"
         style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
     }
-    return `<div class="sheet-field${el.vertical ? ' vertical' : ''}" data-key="${esc(el.key)}"
-      style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
+    const kind = el.oneColumn ? ' stack-column' : (el.vertical ? ' vertical' : '');
+    const body = el.oneColumn
+      ? verticalColumnHtml(el.text, { sidewaysPhone: !!el.sidewaysPhone })
+      : esc(el.text);
+    return `<div class="sheet-field${kind}" data-key="${esc(el.key)}"
+      style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${body}</div>`;
   }).join('');
 }
 
@@ -388,7 +458,7 @@ async function init() {
     renderFieldEditor();
     validatePaper();
     renderPreview();
-    setFeedback('已在畫面套用新版寄件區位置，寄件人與電話不重疊；尚未保存。');
+    setFeedback('已套用寄件兩欄完整直書：地址一行、姓名與電話一行（數字橫排），欄位 Y25／高150。尚未保存，確認後再按「保存定位」。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();
