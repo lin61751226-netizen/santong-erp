@@ -178,3 +178,76 @@ def test_sample_layout_and_private(ctx):
     app.dependency_overrides.pop(get_current_actor)
     assert client.get('/api/envelope-print/template').status_code == 401
     assert client.post('/api/envelope-print/validate', json=valid_draft()).status_code == 401
+    assert client.post('/api/envelope-print/pdf', json={'layout': EnvelopeLayout().model_dump(), 'calibration': True}).status_code == 401
+
+
+def _intersects(a, b, slack=0.05):
+    return (a['x'] < b['x'] + b['w'] - slack and b['x'] < a['x'] + a['w'] - slack
+            and a['y'] < b['y'] + b['h'] - slack and b['y'] < a['y'] + a['h'] - slack)
+
+
+def test_envelope_pdf_is_one_page_and_glyphs_do_not_overlap(ctx):
+    from app.services.envelope_pdf import layout_boxes, render_envelope_pdf, vertical_font_size
+    from tests.test_invoice_print import _media_box, _page_count, _pdf_text
+    client, session, actor, backup = ctx
+    before = len(session.exec(select(InvoicePrintRevision)).all())
+    draft = {
+        'receiver_postcode': '10603',
+        'receiver_address': '臺北市大安區金山南路2段55號',
+        'receiver_company': '齊裕營造',
+        'receiver_name': '王大明',
+        'receiver_suffix': '收',
+        'sender_postcode': '33059',
+        'sender_address': '桃園市桃園區永安路385巷6號8樓之3',
+        'sender_name': '三通工程行 林金生',
+        'sender_suffix': '緘',
+        'sender_phone': '0978-909-078',
+    }
+    layout = EnvelopeLayout()
+    response = client.post('/api/envelope-print/pdf', json={'layout': layout.model_dump(), 'draft': draft})
+    assert response.status_code == 200
+    assert response.headers['content-type'] == 'application/pdf'
+    assert response.headers['cache-control'] == 'no-store'
+    body = response.content
+    assert body.startswith(b'%PDF') and _page_count(body) == 1
+    width, height = _media_box(body)
+    assert abs(width - 100 * 72 / 25.4) < 0.2
+    assert abs(height - 200 * 72 / 25.4) < 0.2
+    text = _pdf_text(body)
+    assert '王大明收' in text
+    assert '桃園市桃園區永安路385巷6號8樓之3' in text
+    assert '0978-909-078' in text
+    assert '33059' in text
+    assert '10603' in text
+    assert '保存定位' not in text
+    assert '白紙校正' not in text
+    assert b'DCTDecode' not in body and b'UMing' in body
+    assert len(session.exec(select(InvoicePrintRevision)).all()) == before and not backup.called
+
+    content = EnvelopeDraft(**draft)
+    boxes = layout_boxes(layout, content)
+    for index, left in enumerate(boxes):
+        for right in boxes[index + 1:]:
+            assert not _intersects(left, right), (left, right)
+    # The address column is the right-hand sender column; its digits are upright cells.
+    address_text = ''.join(box['text'] for box in boxes if 16 <= box['x'] <= 28 and box['y'] < 170)
+    assert address_text == '桃園市桃園區永安路385巷6號8樓之3'
+    address_boxes = [box for box in boxes if 16 <= box['x'] <= 28 and box['y'] < 170]
+    for earlier, later in zip(address_boxes, address_boxes[1:]):
+        assert later['y'] >= earlier['y'] + earlier['h'] - 0.01
+    phone = [box for box in boxes if box['sideways']]
+    assert ''.join(box['text'] for box in phone) == '0978-909-078'
+    # CSS rotate(-90deg) puts the start of the string at the bottom of the run.
+    assert phone[0]['y'] == max(box['y'] for box in phone)
+    assert phone[0]['y'] > address_boxes[-1]['y']
+    assert max(box['y'] + box['h'] for box in phone) < layout.fields['sender_postcode'].y
+    assert vertical_font_size('桃園市桃園區永安路385巷6號8樓之3', 50, 10) == 6.4
+
+    blank = client.post('/api/envelope-print/pdf', json={'layout': layout.model_dump(), 'calibration': True})
+    assert blank.status_code == 200 and _page_count(blank.content) == 1
+    blank_text = _pdf_text(blank.content)
+    assert '白紙校正' in blank_text and '貼郵票處' in blank_text
+    assert '王大明' not in blank_text and '桃園市' not in blank_text
+    assert client.post('/api/envelope-print/pdf', json={'layout': layout.model_dump(), 'calibration': False}).status_code == 422
+    direct = render_envelope_pdf(layout, content)
+    assert _page_count(direct) == 1

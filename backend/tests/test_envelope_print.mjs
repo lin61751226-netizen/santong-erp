@@ -122,6 +122,13 @@ test('CSS page is 100x200 portrait with vertical writing',()=>{
   assert.match(css,/text-orientation:\s*upright/);
   assert.match(css,/@media print[\s\S]*width:\s*var\(--page-width\)/);
   assert.doesNotMatch(css,/@media print[\s\S]*stack-column/);
+  const printCss=css.slice(css.lastIndexOf('@media print'));
+  assert.match(printCss,/overflow:\s*hidden !important/);
+  assert.match(printCss,/page-break-after:\s*avoid/);
+  assert.match(printCss,/\.form-inline,/);
+  assert.match(printCss,/\.button-row,/);
+  assert.match(printCss,/height:\s*var\(--page-height\) !important/);
+  assert.match(source,/\/api\/envelope-print\/pdf/);
   assert.match(source,/oneColumn: true/);
   assert.match(source,/verticalColumnHtml\(el\.text/);
   assert.match(css,/body:not\(\.print-armed\)/);
@@ -133,8 +140,11 @@ test('HTML pre-fills the confirmed Santong sender and ships versioned assets',()
   assert.match(html,/value="三通工程行 林金生"/);
   assert.match(html,/value="0978-909-078"/);
   assert.match(html,/value="桃園市桃園區永安路385巷6號8樓之3"/);
-  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=sender-cells-20261023"/);
-  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=sender-cells-20261023"/);
+  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=envelope-print-pdf-20261023"/);
+  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=envelope-print-pdf-20261023"/);
+  assert.match(html,/id="downloadPdfBtn"/);
+  assert.match(html,/id="downloadCalibrationPdfBtn"/);
+  assert.match(html,/下載信封 PDF（單頁 100×200mm，不含按鈕）/);
   assert.match(html,/套用寄件兩欄完整直書（尚未保存）/);
 });
 
