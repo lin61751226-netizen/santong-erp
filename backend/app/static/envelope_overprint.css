@@ -172,6 +172,13 @@ button:disabled {
   overflow: hidden;
 }
 
+.sheet-field.vertical.one-column {
+  white-space: pre;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-align: end;
+}
+
 .sheet-field.postcode-char {
   display: flex;
   align-items: center;

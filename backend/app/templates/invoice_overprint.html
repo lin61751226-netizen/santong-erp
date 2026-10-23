@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三聯式發票套印工作台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/invoice_overprint.css?v=invoice-calibration-20261023">
+  <link rel="stylesheet" href="/static/invoice_overprint.css?v=invoice-slots-20261023">
 </head>
 <body data-page="invoice-overprint">
   <header class="topbar">
@@ -118,7 +118,7 @@
         </div>
         <div>
           <label for="taxSpacing">統編每碼間距（mm）</label>
-          <input id="taxSpacing" type="number" step="0.1" min="0" max="8">
+          <input id="taxSpacing" type="number" step="0.01" min="0" max="8">
         </div>
         <div>
           <label for="offsetX">整體X位移（mm，右正）</label>
@@ -131,8 +131,8 @@
       </div>
       <div class="button-row">
         <button type="button" id="sampleLayout" class="button-secondary">套用真實發票定位（含地址欄、移除單位欄）</button>
-        <button type="button" id="requestedCalibration" class="button-secondary">套用本次統編／大寫校正（尚未保存）</button>
-        <span class="muted">前者重設全張定位；後者只調整統編間距與大寫九格，不變更輸入內容。都需另按「保存定位」。</span>
+        <button type="button" id="requestedCalibration" class="button-secondary">套用照片方格校正（尚未保存）</button>
+        <span class="muted">前者重設全張定位；後者只改統編方格與大寫九格，不改買受人、品名或其他已存欄位。都需另按「保存定位」才會寫入。</span>
       </div>
       <div class="warning" id="paperWarning" hidden></div>
     </section>
@@ -208,6 +208,6 @@
     </section>
   </main>
 
-  <script type="module" src="/static/invoice_overprint.js?v=invoice-calibration-20261023"></script>
+  <script type="module" src="/static/invoice_overprint.js?v=invoice-slots-20261023"></script>
 </body>
 </html>

@@ -11,7 +11,7 @@ const FIELD_LABELS = {
   sender_postcode: '寄件人郵遞區號',
   sender_address: '寄件人地址',
   sender_name: '寄件人姓名',
-  sender_phone: '寄件人電話',
+  sender_phone: '寄件人電話（併入姓名直書，不另印）',
 };
 const VERTICAL_FIELDS = new Set([
   'receiver_company', 'receiver_address', 'receiver_name',
@@ -93,6 +93,16 @@ export function applySenderLayout(original, sample) {
   return { ...original, fields };
 }
 
+// Upright vertical advance is one em plus the 0.02em letter-spacing on .one-column.
+export function verticalFontSize(text, heightMm, maxPt) {
+  const count = Array.from(String(text || '')).length;
+  const cap = Number(maxPt);
+  if (!count || !(Number(heightMm) > 0) || !Number.isFinite(cap)) return cap;
+  const advanceMmPerPt = 0.3528 * 1.06;
+  const fitted = Number(heightMm) / (count * advanceMmPerPt);
+  return Math.round(Math.min(cap, Math.max(5, fitted)) * 10) / 10;
+}
+
 function fontSizeFor(key, layout) {
   if (key === 'receiver_name') return layout.name_font_size;
   if (key.startsWith('sender') || key === 'sender_postcode') return layout.small_font_size;
@@ -122,17 +132,21 @@ export function positionedElements(layout, draft, lines) {
     });
   }
 
-  function addVertical(key, text) {
+  function addVertical(key, text, { oneColumn = false } = {}) {
     const field = layout.fields[key];
-    if (!text) return;
+    if (!text || !field) return;
+    const fontSize = oneColumn
+      ? verticalFontSize(text, field.height, fontSizeFor(key, layout))
+      : fontSizeFor(key, layout);
     out.push({
       key, text,
       x: Number((field.x + ox).toFixed(2)),
       y: Number((field.y + oy).toFixed(2)),
       width: field.width,
       height: field.height,
-      vertical: VERTICAL_FIELDS.has(key),
-      fontSize: fontSizeFor(key, layout),
+      vertical: true,
+      oneColumn,
+      fontSize,
     });
   }
 
@@ -141,9 +155,10 @@ export function positionedElements(layout, draft, lines) {
   addVertical('receiver_address', lines.receiver_address);
   addVertical('receiver_name', lines.receiver_name);
   postcodeChars('sender_postcode', draft.sender_postcode);
-  addVertical('sender_address', lines.sender_address);
-  addVertical('sender_name', lines.sender_name);
-  addVertical('sender_phone', lines.sender_phone);
+  // Address is one vertical column. Name and phone share the other column;
+  // sender_phone is not drawn again.
+  addVertical('sender_address', lines.sender_address, { oneColumn: true });
+  addVertical('sender_name', lines.sender_name, { oneColumn: true });
   return out;
 }
 
@@ -249,7 +264,8 @@ function renderPreview() {
       return `<div class="sheet-field postcode-char" data-key="${esc(el.key)}"
         style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
     }
-    return `<div class="sheet-field${el.vertical ? ' vertical' : ''}" data-key="${esc(el.key)}"
+    const column = el.oneColumn ? ' one-column' : '';
+    return `<div class="sheet-field${el.vertical ? ' vertical' : ''}${column}" data-key="${esc(el.key)}"
       style="left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;font-size:${el.fontSize}pt">${esc(el.text)}</div>`;
   }).join('');
 }
@@ -388,7 +404,7 @@ async function init() {
     renderFieldEditor();
     validatePaper();
     renderPreview();
-    setFeedback('已在畫面套用新版寄件區位置，寄件人與電話不重疊；尚未保存。');
+    setFeedback('已套用寄件兩行直書：地址一行、姓名與電話一行，郵遞區號方格未改。尚未保存，確認後再按「保存定位」。');
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();

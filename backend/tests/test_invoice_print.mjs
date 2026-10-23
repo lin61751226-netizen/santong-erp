@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/invoice_overprint.js',import.meta.url),'utf8');
 const {taipeiDate,positionedFields,backupMessage,paperGeometry,applySampleLayout,
-       applyRequestedCalibration,printAllowed,normalizeLayout,moveFieldWithinPaper,esc}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+       applyRequestedCalibration,printAllowed,normalizeLayout,moveFieldWithinPaper,esc,
+       PHOTO_CALIBRATION}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 const FIELD_ORDER=['buyer','tax_id','address','year','month','day','description','quantity',
   'unit_price','amount','subtotal','tax','total','uppercase','note'];
@@ -103,15 +104,25 @@ test('sample layout resets all fields, paper and feed but keeps font/offset',()=
   assert.deepEqual(Object.keys(result.fields).sort(),FIELD_ORDER.slice().sort());
 });
 
-test('requested calibration changes only tax spacing and uppercase box',()=>{
+test('requested calibration changes only tax squares and uppercase box',()=>{
   const original=layout();
   const snapshot=JSON.stringify(original);
   const result=applyRequestedCalibration(original);
-  assert.equal(result.tax_id_spacing,6.5);
-  assert.equal(result.fields.tax_id.width,52);
-  assert.deepEqual(result.fields.uppercase,{...original.fields.uppercase,x:26.7,y:85.9,width:81,font_size:11});
+  assert.equal(result.tax_id_spacing,PHOTO_CALIBRATION.tax_id_spacing);
+  assert.equal(result.fields.tax_id.x,47.1);
+  assert.equal(result.fields.tax_id.y,16.4);
+  assert.equal(result.fields.tax_id.width,47.4);
+  assert.equal(result.fields.tax_id.height,5.5);
+  assert.deepEqual(result.fields.uppercase,{...original.fields.uppercase,x:47.0,y:85.9,width:86.5,font_size:11});
   assert.deepEqual(result.fields.buyer,original.fields.buyer);
+  assert.deepEqual(result.fields.address,original.fields.address);
   assert.equal(JSON.stringify(original),snapshot);
+  const digits=positionedFields({...result,offset_x:0,offset_y:0},draft,calc).filter(x=>x.key==='tax_id');
+  assert.equal(digits.length,8);
+  assert.equal(digits[0].x,47.1);
+  assert.equal(digits[0].width,5.92);
+  assert.equal(digits[7].x,Number((47.1+7*5.92).toFixed(2)));
+  assert.equal(digits[0].height,5.5);
 });
 
 test('legacy layouts are normalized read-only (unit hidden, address added, feed set)',()=>{
@@ -135,8 +146,10 @@ test('legacy layouts are normalized read-only (unit hidden, address added, feed 
 test('photo drag assets keep the original photo out of print',()=>{
   const html=readFileSync(new URL('../app/templates/invoice_overprint.html',import.meta.url),'utf8');
   const css=readFileSync(new URL('../app/static/invoice_overprint.css',import.meta.url),'utf8');
-  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=invoice-calibration-20261023"/);
-  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=invoice-calibration-20261023"/);
+  assert.match(html,/href="\/static\/invoice_overprint\.css\?v=invoice-slots-20261023"/);
+  assert.match(html,/src="\/static\/invoice_overprint\.js\?v=invoice-slots-20261023"/);
+  assert.match(css,/\.sheet-field\.field-uppercase span \{ text-align: center; \}/);
+  assert.match(source,/field\.key === 'tax_id' \? 'center'/);
   assert.match(html,/src="\/api\/invoice-print\/reference-image"/);
   assert.match(html,/id="showCoordinates" checked/);
   assert.match(html,/id="showPhoto" checked/);

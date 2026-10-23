@@ -13,6 +13,14 @@ const FIELD_LABELS = {
 };
 const ROW_DETAIL_KEYS = ['description', 'quantity', 'unit_price', 'amount'];
 const NUMERIC_KEYS = new Set(['unit_price', 'amount', 'subtotal', 'tax', 'total', 'year', 'month', 'day']);
+
+// Measured on invoice_reference_619151.jpg once it is stretched to 195×103.
+// Keep these in sync with TAX_ID_* / UPPERCASE_* in services/invoice_print.py.
+export const PHOTO_CALIBRATION = {
+  tax_id_spacing: 5.92,
+  tax_id: { x: 47.1, y: 16.4, width: 47.4, height: 5.5 },
+  uppercase: { x: 47.0, y: 85.9, width: 86.5, font_size: 11 },
+};
 const MAX_ITEMS = 5;
 
 export function esc(value) {
@@ -107,8 +115,8 @@ export function positionedFields(layout, draft, result) {
       base.key = 'tax_id';
       base.numeric = true;
       base.x = Number((fields.tax_id.x + Number(layout.offset_x || 0)
-        + index * Number(layout.tax_id_spacing ?? 6.5)).toFixed(2));
-      base.width = Number(layout.tax_id_spacing ?? 6.5);
+        + index * Number(layout.tax_id_spacing ?? PHOTO_CALIBRATION.tax_id_spacing)).toFixed(2));
+      base.width = Number(layout.tax_id_spacing ?? PHOTO_CALIBRATION.tax_id_spacing);
     });
   }
   add('address', draft.address);
@@ -350,10 +358,11 @@ function renderPreview() {
     const text = field.key === 'uppercase'
       ? [...field.text].map((digit) => `<span>${esc(digit)}</span>`).join('')
       : esc(field.text);
+    const justify = field.key === 'tax_id' ? 'center' : (field.numeric ? 'flex-end' : 'flex-start');
     return `<div class="${cls}" data-key="${esc(field.key)}"
       style="left:${field.x}mm;top:${field.y}mm;${heightStyle}
       width:${field.width}mm;font-size:${size}pt;
-      justify-content:${field.numeric ? 'flex-end' : 'flex-start'}">${text}</div>`;
+      justify-content:${justify}">${text}</div>`;
   }).join('');
 }
 
@@ -478,12 +487,13 @@ function bindPhotoEditing() {
   });
   $('setUppercaseReference').addEventListener('click', () => {
     const key = 'uppercase';
-    for (const [dim, value] of Object.entries({ x: 26.7, y: 85.9, width: 81, font_size: 11 })) {
+    for (const [dim, value] of Object.entries(PHOTO_CALIBRATION.uppercase)) {
       document.querySelector(`[data-field="${key}"][data-dim="${dim}"]`).value = value;
     }
     liveRefresh();
     selectField(key);
-    setFeedback('已在畫面套用大寫九格 X26.7／Y85.9、較窄間距；對照相片後再按「保存定位」。');
+    const box = PHOTO_CALIBRATION.uppercase;
+    setFeedback(`已在畫面套用大寫九格 X${box.x}／Y${box.y}／寬${box.width}mm（九字置中對準億到元）；對照相片後再按「保存定位」。`);
   });
 }
 
@@ -572,13 +582,14 @@ export function applySampleLayout(original, sample) {
 }
 
 export function applyRequestedCalibration(original) {
+  const photo = PHOTO_CALIBRATION;
   return {
     ...original,
-    tax_id_spacing: 6.5,
+    tax_id_spacing: photo.tax_id_spacing,
     fields: {
       ...original.fields,
-      tax_id: { ...original.fields.tax_id, width: 52 },
-      uppercase: { ...original.fields.uppercase, x: 26.7, y: 85.9, width: 81, font_size: 11 },
+      tax_id: { ...original.fields.tax_id, ...photo.tax_id },
+      uppercase: { ...original.fields.uppercase, ...photo.uppercase },
     },
   };
 }
@@ -680,7 +691,8 @@ async function init() {
     renderFieldEditor();
     renderPreview();
     validatePaper();
-    setFeedback('已預填本次統編6.5mm及中文大寫X26.7／Y85.9／寬81mm；尚未保存，請先核對底圖。');
+    const photo = PHOTO_CALIBRATION;
+    setFeedback(`已預填統編 X${photo.tax_id.x}／Y${photo.tax_id.y}／每碼 ${photo.tax_id_spacing}mm，以及大寫 X${photo.uppercase.x}／Y${photo.uppercase.y}／寬${photo.uppercase.width}mm；尚未保存，請先核對底圖。`);
   });
   $('saveLayout').addEventListener('click', async () => {
     const content = gatherLayout();

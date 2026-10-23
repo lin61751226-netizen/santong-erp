@@ -11,7 +11,7 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.models import AdminAuditLog, Employee, InvoicePrintRevision, Role
 from app.services.google_drive import google_drive_worklog_service as drive
-from app.services.envelope_print import EnvelopeDraft, EnvelopeLayout, render_lines
+from app.services.envelope_print import EnvelopeDraft, EnvelopeLayout, render_lines, sender_column_text
 
 
 @pytest.fixture
@@ -67,7 +67,28 @@ def test_default_sender_is_santong():
     assert draft.sender_phone == '0978-909-078'
     lines = render_lines(draft)
     assert lines['receiver_name'] == '王大明收'
-    assert lines['sender_name'] == '三通工程行 林金生緘'
+    assert lines['sender_name'] == '三通工程行 林金生緘  電話：0978-909-078'
+    assert lines['sender_phone'] == ''
+    assert '0978-909-0781' not in lines['sender_name']
+    assert lines['sender_address'] == '桃園市桃園區永安路385巷6號8樓之3'
+
+
+def test_sender_is_two_vertical_columns_and_postcode_stays():
+    layout = EnvelopeLayout()
+    address = layout.fields['sender_address']
+    name = layout.fields['sender_name']
+    phone = layout.fields['sender_phone']
+    assert address.x > name.x
+    assert address.y == name.y == 32
+    assert address.height == name.height == 140
+    assert address.width <= 12 and name.width <= 12
+    assert phone.x == name.x and phone.y == name.y
+    postcode = layout.fields['sender_postcode']
+    assert (postcode.x, postcode.y) == (8, 178)
+    assert name.y + name.height <= postcode.y
+    no_phone = EnvelopeDraft(receiver_address='臺北市測試路1號', receiver_name='王大明', sender_phone='')
+    assert sender_column_text(no_phone) == '三通工程行 林金生緘'
+    assert '電話' not in sender_column_text(no_phone)
 
 
 def test_validate_and_calculate(ctx):

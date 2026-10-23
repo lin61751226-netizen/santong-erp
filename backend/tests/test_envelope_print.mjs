@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 const source=readFileSync(new URL('../app/static/envelope_overprint.js',import.meta.url),'utf8');
-const {positionedElements,applySenderLayout,backupMessage}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+const {positionedElements,applySenderLayout,backupMessage,verticalFontSize}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
 
 const layout={
   paper_width:100,paper_height:200,font_size:12.5,name_font_size:20,small_font_size:10,
@@ -13,16 +13,16 @@ const layout={
     receiver_address:{x:58,y:34,width:24,height:118},
     receiver_name:{x:30,y:40,width:24,height:112},
     sender_postcode:{x:8,y:178,width:30,height:7},
-    sender_address:{x:8,y:40,width:20,height:80},
-    sender_name:{x:8,y:121,width:20,height:41},
-    sender_phone:{x:8,y:164,width:50,height:8},
+    sender_address:{x:18,y:32,width:10,height:140},
+    sender_name:{x:6,y:32,width:10,height:140},
+    sender_phone:{x:6,y:32,width:10,height:140},
   },
 };
 const draft={
   receiver_postcode:'10603',receiver_company:'齊裕營造股份有限公司',
   receiver_address:'臺北市大安區金山南路2段55號',receiver_name:'王大明收',
   sender_postcode:'33059',sender_address:'桃園市桃園區永安路385巷6號8樓之3',
-  sender_name:'三通工程行 林金生緘',sender_phone:'0978-909-078',
+  sender_name:'三通工程行 林金生緘  電話：0978-909-078',sender_phone:'',
 };
 const lines=draft;
 
@@ -53,23 +53,36 @@ test('address and name are vertical fields with correct font sizes',()=>{
   assert.equal(sender.fontSize,10);
 });
 
-test('sender phone has its own horizontal line; sender postcode is five chars',()=>{
+test('sender address and name+phone are one vertical column each',()=>{
   const out=positionedElements(layout,draft,lines);
-  const phone=out.find(x=>x.key==='sender_phone');
-  assert.equal(phone.text,'0978-909-078');
-  assert.equal(phone.vertical,false);
-  assert.equal(phone.y,164);
+  const address=out.find(x=>x.key==='sender_address');
+  const name=out.find(x=>x.key==='sender_name');
+  assert.equal(out.find(x=>x.key==='sender_phone'),undefined);
+  assert.equal(address.vertical,true);
+  assert.equal(address.oneColumn,true);
+  assert.equal(address.text,'桃園市桃園區永安路385巷6號8樓之3');
+  assert.equal(address.x,18);
+  assert.equal(address.height,140);
+  assert.equal(name.oneColumn,true);
+  assert.equal(name.vertical,true);
+  assert.equal(name.x,6);
+  assert.match(name.text,/三通工程行 林金生緘 {2}電話：0978-909-078/);
+  assert.equal(name.fontSize,10);
+  assert.equal(verticalFontSize(name.text,30,10),5);
   const senderCode=out.filter(x=>x.key==='sender_postcode').map(c=>c.text);
   assert.deepEqual(senderCode,['3','3','0','5','9']);
+  assert.equal(out.find(x=>x.key==='sender_postcode').y,178);
 });
 
 test('sender-only layout update retains recipient positioning',()=>{
   const older=structuredClone(layout);
   older.fields.sender_name.y=120;
   older.fields.sender_phone.y=146;
+  older.fields.sender_address.x=8;
   const result=applySenderLayout(older,layout);
-  assert.equal(result.fields.sender_name.y,121);
-  assert.equal(result.fields.sender_phone.y,164);
+  assert.equal(result.fields.sender_name.y,32);
+  assert.equal(result.fields.sender_address.x,18);
+  assert.equal(result.fields.sender_phone.y,32);
   assert.deepEqual(result.fields.receiver_address,older.fields.receiver_address);
   assert.equal(older.fields.sender_name.y,120);
 });
@@ -85,6 +98,9 @@ test('CSS page is 100x200 portrait with vertical writing',()=>{
   const css=readFileSync(new URL('../app/static/envelope_overprint.css',import.meta.url),'utf8');
   assert.match(css,/@page\s*\{\s*size:\s*100mm 200mm;\s*margin:\s*0/);
   assert.match(css,/writing-mode:\s*vertical-rl/);
+  assert.match(css,/\.sheet-field\.vertical\.one-column/);
+  assert.match(css,/text-orientation:\s*upright/);
+  assert.match(source,/oneColumn: true/);
   assert.match(css,/body:not\(\.print-armed\)/);
 });
 
@@ -94,8 +110,9 @@ test('HTML pre-fills the confirmed Santong sender and ships versioned assets',()
   assert.match(html,/value="三通工程行 林金生"/);
   assert.match(html,/value="0978-909-078"/);
   assert.match(html,/value="桃園市桃園區永安路385巷6號8樓之3"/);
-  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=sender-20261023"/);
-  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=sender-20261023"/);
+  assert.match(html,/href="\/static\/envelope_overprint\.css\?v=sender-columns-20261023"/);
+  assert.match(html,/src="\/static\/envelope_overprint\.js\?v=sender-columns-20261023"/);
+  assert.match(html,/套用寄件地址／姓名電話各一行（尚未保存）/);
 });
 
 test('backup messages stay honest',()=>{
