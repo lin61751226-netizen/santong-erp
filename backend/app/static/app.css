@@ -1055,3 +1055,34 @@ body.map-open { overflow: hidden; }
 .photo-import-results li { margin: 7px 0; }
 .photo-import-results [data-status="failed"], .photo-import-results [data-status="backup-warning"] { color: #a13926; }
 #drivePhotoExceptions { max-height: 180px; overflow: auto; overflow-wrap: anywhere; }
+.cost-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 16px 0;
+}
+.cost-grid-toolbar > div { min-width: 180px; flex: 1 1 220px; }
+.cost-grid-toolbar label { display: block; margin-bottom: 5px; }
+.cost-grid-toolbar select, .cost-grid-toolbar input { width: 100%; }
+.cost-grid-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 5px 0 10px; }
+.cost-grid-tabs button { white-space: nowrap; background: #e9f0ed; color: #183d36; border: 1px solid #a8beb5; }
+.cost-grid-tabs button.active { background: #176b58; color: white; }
+.cost-grid-caption { background: #174969; color: white; padding: 12px 16px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.cost-grid-caption span { font-size: .9rem; }
+.cost-grid-scroll { overflow: auto; max-height: 64vh; border: 1px solid #b4c4ca; }
+.cost-grid-scroll table { border-collapse: collapse; width: 100%; min-width: 1040px; font-size: .92rem; }
+.cost-grid-scroll th, .cost-grid-scroll td { border: 1px solid #cbd5d7; padding: 2px 5px; text-align: center; }
+.cost-grid-scroll thead th { position: sticky; top: 0; z-index: 2; background: #2473a5; color: white; min-width: 84px; }
+.cost-grid-scroll thead th:first-child { min-width: 92px; }
+.cost-grid-scroll tbody th { position: sticky; left: 0; z-index: 1; background: #eaf3f8; white-space: nowrap; }
+.cost-grid-scroll tbody tr.cost-grid-holiday th { color: #a43732; background: #fff0ed; }
+.cost-grid-scroll tbody tr.cost-grid-holiday td { background: #fff5f3; }
+.cost-grid-scroll td.cost-grid-calculated { background: #edf5f8; font-variant-numeric: tabular-nums; }
+.cost-grid-scroll input { box-sizing: border-box; width: 100%; min-width: 68px; border: 1px solid transparent; border-radius: 3px; background: transparent; padding: 6px; text-align: right; font: inherit; }
+.cost-grid-scroll input[type="text"] { text-align: left; min-width: 110px; }
+.cost-grid-scroll input:hover, .cost-grid-scroll input:focus { background: white; border-color: #287695; outline: 1px solid #287695; }
+.cost-grid-scroll input:invalid { border-color: #c7453c; background: #fff0ed; }
+.cost-grid-actions { margin: 14px 0; align-items: center; }
+.cost-grid-actions label { display: inline-flex; align-items: center; gap: 6px; }
+#costGridReview { white-space: pre-wrap; max-height: 260px; overflow: auto; }

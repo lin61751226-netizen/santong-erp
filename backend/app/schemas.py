@@ -201,6 +201,27 @@ class CostHourImportRequest(BaseModel):
     confirm_amount_change: bool = False
 
 
+class CostGridRowUpdate(BaseModel):
+    day: date
+    normal_hours: Optional[float] = Field(default=None, ge=0, le=10000)
+    overtime_hours: Optional[float] = Field(default=None, ge=0, le=10000)
+    support_hours: Optional[float] = Field(default=None, ge=0, le=10000)
+    external_customer: Optional[str] = Field(default=None, max_length=200)
+    fuel_cost: Optional[float] = Field(default=None, ge=0, le=1000000000)
+    payer: Optional[str] = Field(default=None, max_length=200)
+
+
+class CostGridSaveRequest(BaseModel):
+    document_id: int = Field(ge=1)
+    year: int = Field(ge=2020, le=2200)
+    month: int = Field(ge=1, le=12)
+    label: str = Field(min_length=1, max_length=100)
+    expected_sha256: str = Field(min_length=64, max_length=64)
+    rows: list[CostGridRowUpdate] = Field(min_length=1, max_length=31)
+    confirm_amount_changes: bool = False
+    preview_only: bool = False
+
+
 class WorksiteJournalHoursUpdate(BaseModel):
     worksite_id: int
     work_date: date

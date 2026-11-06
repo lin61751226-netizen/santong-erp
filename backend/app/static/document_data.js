@@ -13,8 +13,9 @@ async function openDocumentData(id) {
   const documentItem = state.managedDocuments.find(item => item.id === id);
   if (!documentItem) return;
   if (documentItem.category === '推高機計價') {
-    openDocumentTask(1);
-    document.getElementById('costMonthDocument').value = String(id);
+    openPanelFor('costGridDocument');
+    document.getElementById('costGridDocument').value = String(id);
+    await loadCostGrid();
     return;
   }
   openPanelFor('dataDocument');

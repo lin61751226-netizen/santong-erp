@@ -114,6 +114,9 @@ class MonthRow:
     e_formula: Optional[str] = None
     g_formula: Optional[str] = None
     sheet_holiday: bool = False
+    external_customer: Optional[str] = None
+    fuel_cost: Optional[float] = None
+    payer: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -785,6 +788,9 @@ def read_month_cost_data(content: bytes, file_name: str, period: str) -> MonthCo
                     support_hours=_clean_number(worksheet.cell(row=row_number, column=6).value),
                     is_holiday=is_canonical_holiday(day),
                     sheet_holiday=_row_is_holiday(worksheet, row_number),
+                    external_customer=str(worksheet.cell(row=row_number, column=8).value or "") or None,
+                    fuel_cost=_clean_number(worksheet.cell(row=row_number, column=9).value),
+                    payer=str(worksheet.cell(row=row_number, column=10).value or "") or None,
                     c_formula=_formula_text(worksheet.cell(row=row_number, column=3).value),
                     e_formula=_formula_text(worksheet.cell(row=row_number, column=5).value),
                     g_formula=_formula_text(worksheet.cell(row=row_number, column=7).value),
@@ -794,6 +800,46 @@ def read_month_cost_data(content: bytes, file_name: str, period: str) -> MonthCo
         if not sheets:
             raise CostWorkbookError(f"計價表內找不到 {period} 月份的工時表")
         return MonthCostData(period=period, parameters=parameters, sheets=sheets)
+    finally:
+        workbook.close()
+
+
+def import_cost_grid_rows(content: bytes, file_name: str, period: str, label: str, updates: list[dict]) -> bytes:
+    """Save selected month-grid cells without replacing the workbook's formulas or VBA."""
+    workbook = _load_workbook(content, file_name, read_only=False)
+    try:
+        sheet_name = f"{period}-{label}"
+        if sheet_name not in workbook.sheetnames:
+            raise CostWorkbookError(f"找不到工作表「{sheet_name}」")
+        sheet = workbook[sheet_name]
+        hours_changed = False
+        rows = {
+            _as_date(sheet.cell(row=index, column=1).value): index
+            for index in range(5, sheet.max_row + 1)
+        }
+        seen = set()
+        for update in updates:
+            day = update["day"]
+            if day in seen or roc_period(day) != period or day not in rows:
+                raise CostWorkbookError(f"日期重複、月份錯誤或找不到日期列：{day}")
+            seen.add(day)
+            row = rows[day]
+            for key, column in (("normal_hours", 2), ("overtime_hours", 4), ("support_hours", 6),
+                                ("external_customer", 8), ("fuel_cost", 9), ("payer", 10)):
+                if update[key] == update["previous"][key]:
+                    continue
+                cell = sheet.cell(row=row, column=column)
+                if cell.data_type == "f":
+                    raise CostWorkbookError(f"{sheet_name}!{cell.coordinate} 原本是公式，不能線上覆蓋")
+                value = update[key]
+                cell.value = _store_value(value) if key in ("normal_hours", "overtime_hours", "support_hours", "fuel_cost") and value is not None else value
+                hours_changed = hours_changed or key in ("normal_hours", "overtime_hours", "support_hours")
+        if hours_changed:
+            align_overtime_holiday_rules(workbook, period)
+        cache_fills = collect_month_formula_cache(workbook, period)
+        output = io.BytesIO()
+        workbook.save(output)
+        return fill_formula_caches(output.getvalue(), cache_fills)
     finally:
         workbook.close()
 

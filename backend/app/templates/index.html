@@ -632,7 +632,25 @@
     </section>
 
     <section class="panel span-12" data-workspace="pricing" id="panel-excel-editor" data-panel="excel-editor" data-nav-order="3" data-legacy="documents:5" data-nav-aliases="線上編輯,收支修改">
-      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p></div></div>
+      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">像 Excel 月表格逐日輸入計價資料；收支與通訊錄仍可用下方原有介面處理。</p></div></div>
+      <div class="cost-grid-toolbar">
+        <div><label for="costGridDocument">推高機計價檔</label><select id="costGridDocument" onchange="loadCostGrid()"></select></div>
+        <div><label for="costGridMonth">月份</label><input id="costGridMonth" type="month" onchange="loadCostGrid()"></div>
+        <button type="button" class="button-secondary" onclick="loadCostGrid()">重新載入</button>
+      </div>
+      <p id="costGridStatus" class="notice" role="status" aria-live="polite">選擇計價檔與月份後載入月表格。未按保存前不會寫入 Google Drive。</p>
+      <div id="costGridTabs" class="cost-grid-tabs" role="tablist" aria-label="計價標別"></div>
+      <div id="costGridSheet" class="cost-grid-sheet"></div>
+      <div class="button-row cost-grid-actions">
+        <button type="button" class="button-secondary" id="costGridPreview" onclick="previewCostGrid()" disabled>核對變更與金額</button>
+        <label><input type="checkbox" id="costGridConfirm" disabled> 我已核對金額與簽單差異</label>
+        <button type="button" id="costGridSave" onclick="saveCostGrid()" disabled>保存月表格到 Google Drive</button>
+        <button type="button" class="button-secondary" id="costGridBackup" onclick="retryCostGridBackup()">重試資料庫雲端備份</button>
+      </div>
+      <div id="costGridReview" class="console" hidden></div>
+      <p class="muted">只修改已變動日期的 B／D／F／H／I／J 欄；工時變更時沿用原系統的平日／假日公式校正，C／E／G 金額由活頁簿公式計算。切換標別或離開時會提醒未保存內容；別人更新檔案後須重新載入，避免覆蓋。保存後有 Drive 修訂、系統稽核與資料庫備份。</p>
+      <details class="pricing-rules"><summary>收支與通訊錄線上處理（原有功能）</summary>
+      <p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p>
       <div class="form-grid">
         <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
         <div><label for="dataKind">處理資料</label><select id="dataKind" onchange="loadDocumentData(true)"><option value="finance">收支明細</option><option value="contacts">公司通訊錄</option></select></div>
@@ -647,6 +665,7 @@
       <div class="button-row"><button id="dataExport" type="button" onclick="exportDocumentData()" disabled>匯出新的 Excel 到 Drive</button><button id="dataBackup" type="button" class="button-secondary" onclick="retryDataBackup()">重試雲端備份</button></div>
       <p class="muted">匯出此來源檔、此類型的全部已存資料，不受目前篩選或分頁影響。產生新的標準資料表，不含原檔特殊排版、公式或巨集；不新增公開分享。</p>
       <details class="pricing-rules"><summary>修改與匯出版本記錄</summary><div id="dataHistory">尚未載入</div></details>
+      </details>
     </section>
 
     <section id="panel-invoice-overprint" class="panel span-12" data-workspace="pricing" data-panel="invoice-overprint" data-nav-order="5" data-nav-aliases="發票,三聯式,套印,印模,校正">
@@ -1365,6 +1384,7 @@
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
+  <script src="/static/cost_grid.js?v=20261107"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
@@ -2918,6 +2938,7 @@
         renderCostHourImportOptions();
         renderFinanceImportOptions();
         renderDataDocumentOptions();
+        renderCostGridDocumentOptions();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>

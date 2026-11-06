@@ -4,6 +4,8 @@ import csv
 import asyncio
 import calendar
 import io
+import hashlib
+import json
 import re
 import secrets
 import zipfile
@@ -79,6 +81,7 @@ from app.schemas import (
     SimulateLineMessage,
     WorksiteLocationUpdate,
     CostHourImportRequest,
+    CostGridSaveRequest,
     CostMonthImportRequest,
     WorksiteJournalHoursUpdate,
     CertificateCreate,
@@ -118,6 +121,7 @@ from app.services.cost_workbook import (
     find_cost_sheet_target,
     holiday_reason,
     import_cost_hours,
+    import_cost_grid_rows,
     import_month_hours,
     list_cost_sheet_targets,
     match_label_for_site,
@@ -2731,6 +2735,188 @@ def _amount_payload(cost) -> dict:
         "support_amount": cost.support_amount,
         "total": cost.total,
     }
+
+
+def _cost_grid_row_values(row) -> dict:
+    return {
+        "normal_hours": row.normal_hours,
+        "overtime_hours": row.overtime_hours,
+        "support_hours": row.support_hours,
+        "external_customer": row.external_customer,
+        "fuel_cost": row.fuel_cost,
+        "payer": row.payer,
+    }
+
+
+async def _download_cost_grid_content(document: ManagedDocument) -> bytes:
+    try:
+        return await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
+    except Exception as exc:
+        raise HTTPException(502, detail=f"無法讀取 Google Drive 計價檔：{exc}") from exc
+
+
+@router.get("/cost-hour-imports/grid")
+async def read_cost_hour_grid(
+    document_id: int = Query(..., ge=1),
+    year: int = Query(..., ge=2020, le=2200),
+    month: int = Query(..., ge=1, le=12),
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, document_id)
+    content = await _download_cost_grid_content(document)
+    period = roc_period(date(year, month, 1))
+    try:
+        data = read_month_cost_data(content, document.original_file_name, period)
+        sheets = []
+        for label, rows in data.sheets.items():
+            rates = data.parameters.rates_for(label)
+            items = []
+            for row in rows:
+                cost = evaluate_day_amounts(
+                    data.parameters, rates, row.row_number,
+                    row.normal_hours, row.overtime_hours, row.support_hours,
+                    c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                    is_holiday=row.is_holiday,
+                )
+                items.append({
+                    "day": row.day.isoformat(), "row_number": row.row_number,
+                    "is_holiday": row.is_holiday, "holiday_reason": holiday_reason(row.day),
+                    **_cost_grid_row_values(row), **_amount_payload(cost),
+                })
+            sheets.append({
+                "label": label, "worksheet_name": rows[0].worksheet_name,
+                "rates": {"normal_hourly": rates.normal_hourly, "daily": rates.daily,
+                          "ot_rate": rates.ot_rate, "holiday_rate": rates.holiday_rate,
+                          "support_rate": rates.support_rate},
+                "rows": items,
+            })
+    except CostWorkbookError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    return {"document_id": document.id, "document_name": document.original_file_name,
+            "year": year, "month": month, "sha256": hashlib.sha256(content).hexdigest(),
+            "tax_rate": data.parameters.tax_rate, "sheets": sheets}
+
+
+@router.post("/cost-hour-imports/grid/backup")
+async def retry_cost_grid_backup(
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    try:
+        result = await google_drive_worklog_service.backup_database()
+    except Exception:
+        return {"backup_status": "failed"}
+    return {"backup_status": result.get("status")}
+
+
+@router.post("/cost-hour-imports/grid")
+async def save_cost_hour_grid(
+    payload: CostGridSaveRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    content = await _download_cost_grid_content(document)
+    if hashlib.sha256(content).hexdigest() != payload.expected_sha256:
+        raise HTTPException(409, detail="計價檔已被其他操作更新；請重新載入月表格，核對後再保存。")
+    period = roc_period(date(payload.year, payload.month, 1))
+    try:
+        data = read_month_cost_data(content, document.original_file_name, period)
+        if payload.label not in data.sheets:
+            raise CostWorkbookError("找不到指定月份與標別")
+        existing = {row.day: row for row in data.sheets[payload.label]}
+        rates = data.parameters.rates_for(payload.label)
+        matched_sites = [site for site in session.exec(select(Worksite)).all()
+                         if match_label_for_site(site.code, site.name, [payload.label]) == payload.label]
+        worksite = matched_sites[0] if len(matched_sites) == 1 else None
+        changes = []
+        seen = set()
+        amount_changes = []
+        slip_mismatches = []
+        for incoming in payload.rows:
+            if incoming.day in seen or incoming.day not in existing:
+                raise CostWorkbookError(f"重複日期或找不到日期列：{incoming.day}")
+            seen.add(incoming.day)
+            row = existing[incoming.day]
+            values = incoming.model_dump(exclude={"day"})
+            previous = _cost_grid_row_values(row)
+            for field in ("external_customer", "payer"):
+                values[field] = (values[field] or "").strip() or None
+                if values[field] != previous[field] and values[field] and values[field][0] in "=+-@":
+                    raise CostWorkbookError(f"{field} 不能以公式符號開頭")
+            if values == previous:
+                continue
+            old_cost = evaluate_day_amounts(
+                data.parameters, rates, row.row_number,
+                row.normal_hours, row.overtime_hours, row.support_hours,
+                c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                is_holiday=row.is_holiday,
+            )
+            new_cost = evaluate_day_amounts(
+                data.parameters, rates, row.row_number,
+                values["normal_hours"], values["overtime_hours"], values["support_hours"],
+                c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+                is_holiday=row.is_holiday,
+            )
+            if money_differs(old_cost.total, new_cost.total):
+                amount_changes.append({"day": incoming.day.isoformat(),
+                                       "previous": old_cost.total, "new": new_cost.total})
+            if worksite and any(previous[key] != values[key] for key in ("normal_hours", "overtime_hours")):
+                suggestion = billable_hours_from_texts(_slip_text_records(
+                    _slip_records_for_site_day(session, worksite.id, incoming.day)
+                ))
+                if _sign_slip_blocks_import(suggestion, values["normal_hours"] or 0, values["overtime_hours"] or 0):
+                    slip_mismatches.append(incoming.day.isoformat())
+            changes.append({"day": incoming.day, **values, "previous": previous,
+                            "row_number": row.row_number, "worksheet_name": row.worksheet_name})
+        if payload.preview_only:
+            return {"saved": 0, "changed_rows": len(changes), "amount_changes": amount_changes,
+                    "slip_mismatches": slip_mismatches,
+                    "message": "僅預覽，尚未保存。"}
+        if (amount_changes or slip_mismatches) and not payload.confirm_amount_changes:
+            raise HTTPException(409, detail="金額變動或與簽單工時不同，請先按核對變更並勾選確認，再保存。")
+        if not changes:
+            return {"saved": 0, "message": "沒有變更，未更新計價檔。"}
+        updated = import_cost_grid_rows(content, document.original_file_name, period, payload.label, changes)
+    except CostWorkbookError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    try:
+        drive_url = await google_drive_worklog_service.update_file_bytes(
+            file_id=document.drive_file_id, file_name=document.stored_file_name,
+            content=updated, content_type=document.content_type or "application/vnd.ms-excel.sheet.macroEnabled.12",
+        )
+    except Exception as exc:
+        raise HTTPException(502, detail=f"Google Drive 計價檔更新失敗，未寫入系統紀錄：{exc}") from exc
+    document.drive_url = drive_url
+    session.add(document)
+    for change in changes:
+        previous = change["previous"]
+        if any(previous[key] != change[key] for key in ("normal_hours", "overtime_hours", "support_hours")):
+            session.add(WorkHourImportLog(
+                managed_document_id=document.id, work_date=change["day"],
+                worksheet_name=change["worksheet_name"], target_label=payload.label,
+                target_row=change["row_number"], normal_hours=change["normal_hours"] or 0,
+                overtime_hours=change["overtime_hours"] or 0, support_hours=change["support_hours"] or 0,
+                previous_normal_hours=previous["normal_hours"],
+                previous_overtime_hours=previous["overtime_hours"],
+                previous_support_hours=previous["support_hours"],
+                drive_file_id=document.drive_file_id, drive_url=drive_url, imported_by_id=actor.id,
+            ))
+        session.add(AdminAuditLog(
+            actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+            action="cost_grid_edit", entity_type="cost_workbook", entity_id=document.id,
+            summary=json.dumps({"sheet": change["worksheet_name"], "date": change["day"].isoformat(),
+                                "before": previous,
+                                "after": {key: change[key] for key in previous}}, ensure_ascii=False),
+        ))
+    session.commit()
+    try:
+        backup_result = await google_drive_worklog_service.backup_database()
+    except Exception:
+        backup_result = {"status": "failed"}
+    return {"saved": len(changes), "drive_url": drive_url,
+            "backup_status": backup_result.get("status"), "amount_changes": amount_changes,
+            "slip_mismatches": slip_mismatches}
 
 
 def _sign_slip_blocks_import(suggestion: Optional[dict], normal_hours: float, overtime_hours: float) -> bool:
