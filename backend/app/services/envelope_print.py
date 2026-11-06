@@ -42,21 +42,41 @@ VERTICAL_FIELDS = {
 }
 POSTCODE_FIELDS = {"receiver_postcode", "sender_postcode"}
 
+# Measured on the 2026-10-23 printed 100×200 envelope (photo 846×1933 px).
+# Sender postcode is six preprinted squares, three then a gap then three.
+# 33059 fills the first five; the sixth stays empty. Pitch is 6.4 mm, not the
+# receiver's 6.5 mm, so the top postcode (already aligned) is left alone.
+SENDER_POSTCODE_SPACING = 6.4
+SENDER_POSTCODE_GAP = 3.0
+# x, y, width, height of each red square. y is the top edge.
+SENDER_POSTCODE_BOXES = (
+    (9.10, 182.4, 5.20, 7.8),
+    (15.60, 182.4, 5.08, 7.8),
+    (21.99, 182.4, 5.08, 7.8),
+    (31.44, 182.4, 5.08, 7.8),
+    (37.83, 182.4, 5.08, 7.8),
+    (44.21, 182.4, 5.08, 7.8),
+)
+# Preprinted stamp rectangle, top-left.
+STAMP_GUIDE = (6.7, 15.5, 20.9, 18.4)
+
 
 def default_envelope_fields() -> dict[str, FieldSpec]:
     """Coordinates for a 100 x 200 mm vertical Chinese envelope."""
     return {
-        # Recipient postcode five boxes, top-right (3+2 with a small gap).
+        # Recipient postcode five boxes, top-right (3+2). Already on the printed squares.
         "receiver_postcode": FieldSpec(x=52, y=9.5, width=42, height=7),
-        # Recipient company (rightmost column, reading order), address, name.
-        "receiver_company": FieldSpec(x=84, y=34, width=12, height=118),
-        "receiver_address": FieldSpec(x=58, y=34, width=24, height=118),
-        "receiver_name": FieldSpec(x=30, y=40, width=24, height=112),
-        # Sender zone on the left.
-        "sender_postcode": FieldSpec(x=8, y=178, width=30, height=7),
-        "sender_address": FieldSpec(x=8, y=40, width=20, height=80),
-        "sender_name": FieldSpec(x=8, y=121, width=20, height=41),
-        "sender_phone": FieldSpec(x=8, y=164, width=50, height=8),
+        # Company and name drop 20 mm. Address drops 30 mm. X and size stay.
+        "receiver_company": FieldSpec(x=84, y=54, width=12, height=118),
+        "receiver_address": FieldSpec(x=58, y=64, width=24, height=118),
+        "receiver_name": FieldSpec(x=30, y=60, width=24, height=112),
+        # Sender columns start at Y52 so they clear the stamp (bottom ~Y34)
+        # and stop at Y179, above the postcode squares (top Y182.4).
+        # Digits sit on Y184.5, centered in the first five of six squares.
+        "sender_postcode": FieldSpec(x=8.5, y=184.5, width=42, height=8),
+        "sender_address": FieldSpec(x=18, y=52, width=10, height=127),
+        "sender_name": FieldSpec(x=6, y=52, width=10, height=127),
+        "sender_phone": FieldSpec(x=6, y=52, width=10, height=127),
     }
 
 
@@ -185,15 +205,30 @@ class EnvelopeDraft(BaseModel):
         return self
 
 
+def sender_column_text(draft: EnvelopeDraft) -> str:
+    """One vertical line: 「姓名＋後綴 電話：號碼」.
+
+    A single space sits between the suffix and 電話. No phone label when blank.
+    """
+    head = f"{draft.sender_name}{draft.sender_suffix or ''}".strip()
+    phone = (draft.sender_phone or "").strip()
+    if not phone:
+        return head
+    return f"{head} 電話：{phone}"
+
+
 def render_lines(draft: EnvelopeDraft) -> dict:
-    """Compose the final text for each zone."""
+    """Compose the final text for each zone.
+
+    Sender phone is not a separate column; it is appended to the name line.
+    ``sender_phone`` is returned empty so the preview does not draw it twice.
+    """
     receiver_name = f"{draft.receiver_name}{draft.receiver_suffix or ''}"
-    sender_name = f"{draft.sender_name}{draft.sender_suffix or ''}"
     return {
         "receiver_company": draft.receiver_company,
         "receiver_address": draft.receiver_address,
         "receiver_name": receiver_name,
         "sender_address": draft.sender_address,
-        "sender_name": sender_name,
-        "sender_phone": draft.sender_phone,
+        "sender_name": sender_column_text(draft),
+        "sender_phone": "",
     }

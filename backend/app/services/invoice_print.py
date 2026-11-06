@@ -233,11 +233,29 @@ FIELD_KEYS = (
 )
 
 
+# 619151 reference photo, rotated to the 195×103 overlay (1751×934 px).
+# 統一編號: nine vertical rules at px 423,476,529,582,635,688,742,795,848
+# → left edge 47.1 mm, pitch 5.92 mm, box top 16.4 mm, box height 5.5 mm.
+# 中文大寫 unit centers (億…元): 51.78 + i×9.611 mm. Nine centered columns
+# therefore start at X 47.0 with width 86.5. Y 85.9 stays the digit top.
+TAX_ID_ORIGIN_X = 47.1
+TAX_ID_ORIGIN_Y = 16.4
+TAX_ID_BOX_WIDTH = 47.4
+TAX_ID_BOX_HEIGHT = 5.5
+TAX_ID_PITCH = 5.92
+UPPERCASE_ORIGIN_X = 47.0
+UPPERCASE_ORIGIN_Y = 85.9
+UPPERCASE_WIDTH = 86.5
+
+
 def real_invoice_fields() -> dict[str, FieldSpec]:
-    """Coordinates measured from the real 336251 sample (195 x 103 mm)."""
+    """Coordinates for the 195×103 overlay of invoice_reference_619151.jpg."""
     return {
         "buyer": FieldSpec(x=35, y=15.5, width=70),
-        "tax_id": FieldSpec(x=35, y=20.8, width=52),
+        "tax_id": FieldSpec(
+            x=TAX_ID_ORIGIN_X, y=TAX_ID_ORIGIN_Y,
+            width=TAX_ID_BOX_WIDTH, height=TAX_ID_BOX_HEIGHT,
+        ),
         "address": FieldSpec(x=35, y=24.5, width=145),
         "year": FieldSpec(x=105, y=20.8, width=8),
         "month": FieldSpec(x=120, y=20.8, width=8),
@@ -249,7 +267,7 @@ def real_invoice_fields() -> dict[str, FieldSpec]:
         "subtotal": FieldSpec(x=95, y=69, width=29),
         "tax": FieldSpec(x=95, y=75, width=29),
         "total": FieldSpec(x=95, y=81, width=29),
-        "uppercase": FieldSpec(x=26.7, y=85.9, width=81),
+        "uppercase": FieldSpec(x=UPPERCASE_ORIGIN_X, y=UPPERCASE_ORIGIN_Y, width=UPPERCASE_WIDTH),
         # 備註 is the right column (x125-175), spanning the five item rows and
         # the stamp zone; normally left blank for the seller's invoice stamp.
         "note": FieldSpec(x=127, y=38, width=46, height=52),
@@ -265,7 +283,7 @@ class PrintLayout(BaseModel):
     font: str = "11pt PMingLiU, Microsoft JhengHei, sans-serif"
     font_size: float = 11
     row_pitch: float = 6.1
-    tax_id_spacing: float = 6.5
+    tax_id_spacing: float = TAX_ID_PITCH
     offset_x: float = 0.0
     offset_y: float = 0.0
     fields: dict[str, FieldSpec] = Field(default_factory=real_invoice_fields)

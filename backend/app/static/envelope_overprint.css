@@ -172,6 +172,53 @@ button:disabled {
   overflow: hidden;
 }
 
+/* Sender columns: one fixed cell per character, no writing-mode mixing. */
+.sheet-field.stack-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  letter-spacing: 0;
+  line-height: 1;
+  white-space: normal;
+  overflow: hidden;
+}
+
+.sheet-field.stack-column .glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1.15em;
+  height: 1.15em;
+  flex: 0 0 1.15em;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sheet-field.stack-column .phone-run {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1.15em;
+  flex: 0 0 auto;
+  margin-top: 0.45em;
+  overflow: hidden;
+}
+
+.sheet-field.stack-column .phone-text {
+  display: block;
+  white-space: nowrap;
+  letter-spacing: 0;
+  line-height: 1;
+  transform: rotate(-90deg);
+}
+
 .sheet-field.postcode-char {
   display: flex;
   align-items: center;
@@ -230,6 +277,14 @@ button:disabled {
 .guide-box {
   position: absolute;
   border: 1px dashed #c46a6a;
+  box-sizing: border-box;
+}
+
+.preprint-guides {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
 }
 
 .layout-note {
@@ -278,44 +333,67 @@ button:disabled {
 @page { size: 100mm 200mm; margin: 0; }
 
 @media print {
-  body {
-    background: #fff;
+  .topbar,
+  .notice,
+  .warning,
+  .section-head,
+  .layout-note,
+  .form-inline,
+  .form-grid,
+  .button-row,
+  .preprint-guides,
+  .field-grid,
+  .table-wrap,
+  .card:not(:has(.paper-viewport)),
+  .no-print,
+  #printHint {
+    display: none !important;
   }
   body:not(.print-armed) .paper-viewport {
     display: none !important;
   }
-  .topbar,
-  .card:not(:has(.paper-viewport)),
-  .layout-note,
-  .no-print {
-    display: none !important;
-  }
-  .app-main {
-    max-width: none;
-    padding: 0;
-    margin: 0;
-  }
-  .card:has(.paper-viewport) {
-    border: none;
-    padding: 0;
-    margin: 0;
-  }
   html,
-  body {
-    width: var(--page-width);
-    height: var(--page-height);
-  }
+  body,
+  .app-main,
+  .card:has(.paper-viewport),
   .paper-viewport {
-    display: block;
-    width: var(--page-width);
-    height: var(--page-height);
-    padding: 0;
-    border-radius: 0;
-    overflow: visible;
-    background: #fff;
+    width: var(--page-width) !important;
+    height: var(--page-height) !important;
+    max-width: var(--page-width) !important;
+    max-height: var(--page-height) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    page-break-before: avoid !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-before: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
   }
-  .sheet {
-    margin: 0;
-    box-shadow: none;
+  .app-main { max-width: none !important; }
+  .paper-viewport {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+  }
+  body.print-armed .sheet {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: var(--page-width) !important;
+    height: var(--page-height) !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+    page-break-after: avoid !important;
+    page-break-inside: avoid !important;
+    break-after: avoid !important;
+    break-inside: avoid !important;
   }
 }

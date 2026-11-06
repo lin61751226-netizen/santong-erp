@@ -95,6 +95,19 @@ def test_decimal_rounding_and_roc():
     assert calculate(PrintDraft(**payload))['total'] == 152
 
 
+def test_photo_digit_centers_match_measured_squares():
+    """八個統編方格與九個大寫單位，中心須落在參考照片量到的位置。"""
+    layout = PrintLayout()
+    measured_tax = [50.06, 55.96, 61.86, 67.77, 73.67, 79.63, 85.58, 91.49]
+    tax_centers = [layout.fields['tax_id'].x + (i + 0.5) * layout.tax_id_spacing for i in range(8)]
+    assert all(abs(got - expect) < 0.12 for got, expect in zip(tax_centers, measured_tax))
+    measured_upper = [51.79, 61.27, 71.02, 80.61, 90.37, 99.84, 109.49, 118.99, 128.63]
+    pitch = layout.fields['uppercase'].width / 9
+    upper_centers = [layout.fields['uppercase'].x + (i + 0.5) * pitch for i in range(9)]
+    assert all(abs(got - expect) < 0.2 for got, expect in zip(upper_centers, measured_upper))
+    assert layout.fields['uppercase'].y == 85.9
+
+
 def test_default_layout_get_is_read_only(ctx):
     client, session, actor, backup = ctx
     response = client.get('/api/invoice-print/template')
@@ -108,10 +121,13 @@ def test_default_layout_get_is_read_only(ctx):
     assert 'address' in data['content']['fields']
     assert 'unit' not in data['content']['fields']
     assert data['content']['fields']['note']['height'] > 0
-    assert data['content']['fields']['uppercase']['x'] == 26.7
+    assert data['content']['fields']['uppercase']['x'] == 47.0
     assert data['content']['fields']['uppercase']['y'] == 85.9
-    assert data['content']['fields']['uppercase']['width'] == 81
-    assert data['content']['tax_id_spacing'] == 6.5
+    assert data['content']['fields']['uppercase']['width'] == 86.5
+    assert data['content']['fields']['tax_id']['x'] == 47.1
+    assert data['content']['fields']['tax_id']['y'] == 16.4
+    assert data['content']['fields']['tax_id']['height'] == 5.5
+    assert data['content']['tax_id_spacing'] == 5.92
     assert session.exec(select(InvoicePrintRevision)).all() == []
     assert not backup.called
     assert client.get('/invoice-overprint').headers['cache-control'] == 'no-store'
@@ -206,6 +222,7 @@ def test_private_and_roles(ctx):
     assert client.put('/api/invoice-print/template',json={'expected_revision':0,'content':PrintLayout().model_dump()}).status_code == 401
     assert client.post('/api/invoice-print/drafts',json={'record_key':'x','expected_revision':0,'content':draft()}).status_code == 401
     assert client.post('/api/invoice-print/backup').status_code == 401
+    assert client.post('/api/invoice-print/pdf', json={'layout': PrintLayout().model_dump(), 'calibration': True}).status_code == 401
 
 
 def test_draft_pagination(ctx):
@@ -274,3 +291,125 @@ def test_explicit_resize_keeps_old_revision(ctx):
     assert client.put('/api/invoice-print/template',json={'expected_revision':1,'content':new}).json()['revision']==2
     rows=session.exec(select(InvoicePrintRevision).order_by(InvoicePrintRevision.id)).all()
     assert rows[0].content['paper_width']==190 and rows[1].content['paper_width']==195
+
+
+def _page_count(data: bytes) -> int:
+    import re
+    return len(re.findall(rb"/Type\s*/Page(?!s)", data))
+
+
+def _media_box(data: bytes) -> tuple[float, float]:
+    import re
+    match = re.search(rb"/MediaBox\s*\[\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\]", data)
+    assert match, data[:200]
+    x0, y0, x1, y1 = (float(item) for item in match.groups())
+    return x1 - x0, y1 - y0
+
+
+def _pdf_text(data: bytes) -> str:
+    """Read ReportLab page text via ToUnicode bfchar and literal Tj strings."""
+    import base64
+    import re
+    import zlib
+    streams = []
+    for match in re.finditer(rb"\d+ 0 obj\n<<", data):
+        header_end = data.find(b">>", match.end())
+        header = data[match.end():header_end]
+        length_match = re.search(rb"/Length\s+(\d+)", header)
+        if not length_match:
+            continue
+        stream_at = data.find(b"stream\n", header_end)
+        if stream_at < 0 or stream_at - header_end > 8:
+            continue
+        raw = data[stream_at + 7:stream_at + 7 + int(length_match.group(1))]
+        if b"ASCII85Decode" in header:
+            raw = base64.a85decode(raw)
+        if b"FlateDecode" in header:
+            raw = zlib.decompress(raw)
+        streams.append(raw)
+    mapping = {}
+    for stream in streams:
+        for src, dst in re.findall(rb"<([0-9A-Fa-f]{2})>\s*<([0-9A-Fa-f]{4})>", stream):
+            mapping[int(src, 16)] = int(dst, 16)
+    chars = []
+    for stream in streams:
+        for literal in re.findall(rb"\((?:\\.|[^\\)])*\)\s*Tj", stream):
+            body = literal[:literal.rfind(b")")][1:]
+            decoded = bytearray()
+            index = 0
+            while index < len(body):
+                if body[index] != 0x5C:
+                    decoded.append(body[index])
+                    index += 1
+                    continue
+                nxt = body[index + 1:index + 2]
+                if nxt in b"01234567":
+                    digits = bytearray()
+                    cursor = index + 1
+                    while cursor < len(body) and cursor < index + 4 and body[cursor] in b"01234567":
+                        digits.append(body[cursor])
+                        cursor += 1
+                    decoded.append(int(digits, 8))
+                    index = cursor
+                elif nxt in b"nrtbf\\()":
+                    decoded.append({ord("n"): 10, ord("r"): 13, ord("t"): 9, ord("b"): 8, ord("f"): 12}.get(nxt[0], nxt[0]))
+                    index += 2
+                else:
+                    index += 1
+            for byte in decoded:
+                chars.append(chr(mapping[byte]) if byte in mapping else chr(byte))
+    return "".join(chars)
+
+
+def test_invoice_pdf_is_one_rotated_page_without_chrome(ctx):
+    from app.services.invoice_pdf import css_page_point, render_invoice_pdf
+    client, session, actor, backup = ctx
+    assert css_page_point("portrait_cw", 0, 0, 195, 103) == (103, 0)
+    assert css_page_point("portrait_cw", 195, 103, 195, 103) == (0, 195)
+    assert css_page_point("portrait_ccw", 0, 0, 195, 103) == (0, 195)
+    assert css_page_point("landscape", 10, 4, 195, 103) == (10, 4)
+    before = len(session.exec(select(InvoicePrintRevision)).all())
+    layout = PrintLayout().model_dump()
+    response = client.post("/api/invoice-print/pdf", json={"layout": layout, "draft": draft(), "calibration": False})
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["cache-control"] == "no-store"
+    body = response.content
+    assert body.startswith(b"%PDF")
+    assert _page_count(body) == 1
+    width, height = _media_box(body)
+    assert abs(width - 103 * 72 / 25.4) < 0.2
+    assert abs(height - 195 * 72 / 25.4) < 0.2
+    text = _pdf_text(body)
+    assert "測試買受人" in text
+    assert "12345678" in text
+    assert "堆高機作業" in text
+    assert "18,900" in text
+    assert "保存定位" not in text
+    assert "白紙校正" not in text
+    assert "列印" not in text
+    assert b"/Subtype /Image" not in body
+    assert b"DCTDecode" not in body
+    assert b"UMing" in body
+    assert len(session.exec(select(InvoicePrintRevision)).all()) == before
+    assert not backup.called
+
+    blank = client.post("/api/invoice-print/pdf", json={"layout": layout, "calibration": True})
+    assert blank.status_code == 200
+    blank_pdf = blank.content
+    assert _page_count(blank_pdf) == 1
+    blank_text = _pdf_text(blank_pdf)
+    assert "白紙校正" in blank_text
+    assert "測試買受人" not in blank_text
+    assert "保存定位" not in blank_text
+    assert b"DCTDecode" not in blank_pdf
+    assert len(session.exec(select(InvoicePrintRevision)).all()) == before
+
+    ccw = render_invoice_pdf(PrintLayout(feed_mode="portrait_ccw"), PrintDraft(**draft()))
+    land = render_invoice_pdf(PrintLayout(feed_mode="landscape"), PrintDraft(**draft()))
+    assert _page_count(ccw) == 1 and _page_count(land) == 1
+    ccw_box, land_box = _media_box(ccw), _media_box(land)
+    assert abs(ccw_box[0] - width) < 0.2 and abs(ccw_box[1] - height) < 0.2
+    assert abs(land_box[0] - 195 * 72 / 25.4) < 0.2
+    assert abs(land_box[1] - 103 * 72 / 25.4) < 0.2
+    assert client.post("/api/invoice-print/pdf", json={"layout": layout, "calibration": False}).status_code == 422

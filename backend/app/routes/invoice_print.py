@@ -13,6 +13,7 @@ from app.core.db import get_session
 from app.deps import require_roles
 from app.models import AdminAuditLog, Employee, InvoicePrintRevision, Role
 from app.services.google_drive import google_drive_worklog_service as drive
+from app.services.invoice_pdf import physical_page_mm, render_invoice_pdf
 from app.services.invoice_print import (
     FIELD_KEYS,
     PrintDraft,
@@ -145,6 +146,29 @@ def calculate_draft(payload: dict, actor: Employee = Depends(admin)):
         return calculate(draft)
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.post("/api/invoice-print/pdf")
+def download_invoice_pdf(payload: dict, actor: Employee = Depends(admin)):
+    """One-page overprint PDF. Does not save a layout, a draft, or a backup."""
+    try:
+        layout = PrintLayout(**(payload.get("layout") or {}))
+        calibration = bool(payload.get("calibration"))
+        draft = None if calibration else PrintDraft(**(payload.get("draft") or {}))
+        pdf = render_invoice_pdf(layout, draft, calibration=calibration)
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise HTTPException(422, detail=f"PDF 內容不正確：{exc}") from exc
+    page_w, page_h = physical_page_mm(layout)
+    kind = "calibration" if calibration else "invoice"
+    filename = f"{kind}-{page_w:g}x{page_h:g}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/api/invoice-print/drafts")
