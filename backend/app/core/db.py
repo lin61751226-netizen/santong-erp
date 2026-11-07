@@ -41,6 +41,14 @@ def _apply_lightweight_migrations() -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
 
+    if "worksiteforkliftcharge" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("worksiteforkliftcharge")}
+        with engine.begin() as connection:
+            if "manual_total_amount" not in columns:
+                connection.execute(text("ALTER TABLE worksiteforkliftcharge ADD COLUMN manual_total_amount FLOAT"))
+            if "manual_amount_reason" not in columns:
+                connection.execute(text("ALTER TABLE worksiteforkliftcharge ADD COLUMN manual_amount_reason VARCHAR"))
+
     if "leaverequest" in table_names:
         columns = {column["name"] for column in inspector.get_columns("leaverequest")}
         if "policy_note" not in columns:

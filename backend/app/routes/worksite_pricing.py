@@ -34,6 +34,8 @@ class ChargeRow(BaseModel):
     external_customer: str = Field(default="", max_length=200)
     fuel_cost: float = Field(ge=0, le=1_000_000_000)
     payer: str = Field(default="", max_length=200)
+    manual_total_amount: float | None = Field(default=None, ge=0, le=1_000_000_000, allow_inf_nan=False)
+    manual_amount_reason: str = Field(default="", max_length=200)
     expected_revision: int = Field(ge=0)
     request_id: str = Field(min_length=8, max_length=100)
     preview_only: bool = False
@@ -78,6 +80,8 @@ def _stored_values(item: WorksiteForkliftCharge | None) -> dict:
         "external_customer": (item.external_customer or "") if item else "",
         "fuel_cost": item.fuel_cost if item else 0,
         "payer": (item.payer or "") if item else "",
+        "manual_total_amount": item.manual_total_amount if item else None,
+        "manual_amount_reason": (item.manual_amount_reason or "") if item else "",
     }
 
 
@@ -119,9 +123,11 @@ def read_month(
                 values["holiday_reason"] = _required_holiday(day)
             normal_amount, overtime_amount = _amount(rate, values["units"], values["normal_hours"],
                                                       values["overtime_hours"], bool(values["holiday_reason"]))
+            calculated_total = normal_amount + overtime_amount
             rows.append({"day": day.isoformat(), "revision": item.revision if item else 0,
                          **values, "normal_amount": normal_amount,
-                         "overtime_amount": overtime_amount, "total_amount": normal_amount + overtime_amount})
+                         "overtime_amount": overtime_amount, "calculated_total": calculated_total,
+                         "total_amount": values["manual_total_amount"] if values["manual_total_amount"] is not None else calculated_total})
         sheets.append({"vehicle_type": rate.vehicle_type, "rate": {
             "weekday_hourly": rate.weekday_hourly, "weekday_daily": rate.weekday_daily,
             "holiday_hourly": rate.holiday_hourly, "holiday_daily": rate.holiday_daily,
@@ -153,11 +159,18 @@ async def save_row(
                                          "request_id", "preview_only", "confirmed"})
     values["external_customer"] = values["external_customer"].strip()
     values["payer"] = values["payer"].strip()
-    for key in ("external_customer", "payer"):
+    values["manual_amount_reason"] = values["manual_amount_reason"].strip()
+    if (values["manual_total_amount"] is None) != (not values["manual_amount_reason"]):
+        raise HTTPException(422, "人工核定金額與調整理由須一起填寫；不調整時兩欄皆留空")
+    if values["manual_total_amount"] is not None and payload.units == 0:
+        raise HTTPException(422, "沒有車輛不可核定請款金額")
+    for key in ("external_customer", "payer", "manual_amount_reason"):
         if values[key].startswith(("=", "+", "-", "@")):
             raise HTTPException(422, f"{key} 不能以公式符號開頭")
     normal_amount, overtime_amount = _amount(rate, payload.units, payload.normal_hours,
                                               payload.overtime_hours, bool(payload.holiday_reason))
+    calculated_total = normal_amount + overtime_amount
+    total_amount = values["manual_total_amount"] if values["manual_total_amount"] is not None else calculated_total
     current = session.exec(select(WorksiteForkliftCharge).where(
         WorksiteForkliftCharge.worksite_id == payload.worksite_id,
         WorksiteForkliftCharge.work_date == payload.work_date,
@@ -168,7 +181,9 @@ async def save_row(
             raise HTTPException(409, "同一存檔識別碼的內容不同")
         return {"saved": True, "replayed": True, "revision": current.revision,
                 "normal_amount": current.normal_amount, "overtime_amount": current.overtime_amount,
-                "total_amount": current.normal_amount + current.overtime_amount, "backup": await _backup()}
+                "calculated_total": current.normal_amount + current.overtime_amount,
+                "total_amount": current.manual_total_amount if current.manual_total_amount is not None else current.normal_amount + current.overtime_amount,
+                "backup": await _backup()}
     revision = current.revision if current else 0
     if revision != payload.expected_revision:
         raise HTTPException(409, "此日期已由其他人更新，請重新載入核對")
@@ -176,13 +191,14 @@ async def save_row(
     if payload.preview_only:
         return {"saved": False, "before": before, "after": values, "changed": before != values,
                 "normal_amount": normal_amount, "overtime_amount": overtime_amount,
-                "total_amount": normal_amount + overtime_amount, "tax_included": False}
+                "calculated_total": calculated_total, "total_amount": total_amount, "tax_included": False}
     if not payload.confirmed:
         raise HTTPException(409, "請先預覽並確認當日金額")
     if before == values:
         return {"saved": True, "unchanged": True, "revision": revision, "backup": await _backup()}
     stored = {**values, "external_customer": values["external_customer"] or None,
-              "payer": values["payer"] or None, "normal_amount": normal_amount,
+              "payer": values["payer"] or None, "manual_amount_reason": values["manual_amount_reason"] or None,
+              "normal_amount": normal_amount,
               "overtime_amount": overtime_amount}
     if current:
         result = session.execute(update(WorksiteForkliftCharge).where(
@@ -203,7 +219,8 @@ async def save_row(
         action="worksite_pricing_edit", entity_type="worksite", entity_id=payload.worksite_id,
         summary=json.dumps({"day": payload.work_date.isoformat(), "vehicle": payload.vehicle_type,
                             "before": before, "after": values, "normal_amount": normal_amount,
-                            "overtime_amount": overtime_amount}, ensure_ascii=False),
+                            "overtime_amount": overtime_amount, "calculated_total": calculated_total,
+                            "total_amount": total_amount}, ensure_ascii=False),
     ))
     try:
         session.commit()
@@ -211,5 +228,6 @@ async def save_row(
         session.rollback()
         raise HTTPException(409, "此日期已由其他人更新，請重新載入") from exc
     return {"saved": True, "revision": revision + 1, "normal_amount": normal_amount,
-            "overtime_amount": overtime_amount, "total_amount": normal_amount + overtime_amount,
+            "overtime_amount": overtime_amount, "calculated_total": calculated_total,
+            "total_amount": total_amount,
             "tax_included": False, "backup": await _backup()}

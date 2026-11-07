@@ -135,6 +135,8 @@ class WorksiteForkliftCharge(SQLModel, table=True):
     payer: Optional[str] = None
     normal_amount: float = Field(default=0)
     overtime_amount: float = Field(default=0)
+    manual_total_amount: Optional[float] = None
+    manual_amount_reason: Optional[str] = None
     revision: int = Field(default=1)
     last_request_id: str = Field(unique=True, index=True)
     updated_by_id: int = Field(foreign_key="employee.id")

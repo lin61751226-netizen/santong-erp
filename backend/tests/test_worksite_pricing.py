@@ -10,7 +10,7 @@ from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
 from app.models import AdminAuditLog, Employee, Role, WorksiteForkliftCharge
-from app.routes import worksite_pricing as routes
+from app.routes import admin as admin_routes, worksite_pricing as routes
 from app.services.bootstrap import _ensure_guotai_ciwen_rates, _ensure_worksites
 
 
@@ -93,3 +93,48 @@ def test_inactive_site_keeps_history_readable_but_blocks_new_price(ctx):
         'worksite_id': ctx.site.id, 'year': 2026, 'month': 11,
     }).status_code == 200
     assert ctx.client.post('/api/worksite-pricing/row', json=row_payload(ctx)).status_code == 409
+
+
+def test_manual_amount_keeps_formula_and_audit(ctx):
+    payload = row_payload(ctx, day='2026-11-07', units=2, normal_hours=5,
+                          overtime_hours=0, manual_total_amount=15000,
+                          manual_amount_reason='依客戶核定單調整')
+    preview = ctx.client.post('/api/worksite-pricing/row', json={**payload, 'preview_only': True})
+    assert preview.status_code == 200
+    assert preview.json()['calculated_total'] == 12000
+    assert preview.json()['total_amount'] == 15000
+    saved = ctx.client.post('/api/worksite-pricing/row', json={**payload, 'confirmed': True})
+    assert saved.status_code == 200
+    month = ctx.client.get('/api/worksite-pricing/month', params={
+        'worksite_id': ctx.site.id, 'year': 2026, 'month': 11,
+    }).json()
+    row = next(item for item in month['sheets'][0]['rows'] if item['day'] == '2026-11-07')
+    assert row['calculated_total'] == 12000
+    assert row['total_amount'] == 15000
+    assert row['manual_amount_reason'] == '依客戶核定單調整'
+    assert ctx.client.post('/api/worksite-pricing/row', json={
+        **payload, 'request_id': 'row-test-0002', 'expected_revision': 1,
+        'manual_total_amount': None, 'manual_amount_reason': '', 'confirmed': True,
+    }).status_code == 200
+    row = next(item for item in ctx.client.get('/api/worksite-pricing/month', params={
+        'worksite_id': ctx.site.id, 'year': 2026, 'month': 11,
+    }).json()['sheets'][0]['rows'] if item['day'] == '2026-11-07')
+    assert row['total_amount'] == row['calculated_total'] == 12000
+
+
+def test_manual_amount_requires_reason(ctx):
+    payload = row_payload(ctx, manual_total_amount=15000, preview_only=True)
+    assert ctx.client.post('/api/worksite-pricing/row', json=payload).status_code == 422
+    assert ctx.client.post('/api/worksite-pricing/row', json={
+        **payload, 'manual_total_amount': None, 'manual_amount_reason': '調整',
+    }).status_code == 422
+
+
+def test_guotai_cannot_write_legacy_pricing_label(ctx):
+    payload = {'document_id': 1, 'worksite_id': ctx.site.id, 'work_date': '2026-11-07',
+               'target_label': '53', 'normal_hours': 16}
+    with patch.object(admin_routes, '_cost_document_or_400', return_value=object()):
+        for endpoint in ('/api/cost-hour-imports/preview', '/api/cost-hour-imports'):
+            response = ctx.client.post(endpoint, json=payload)
+            assert response.status_code == 422
+            assert '國泰慈文' in response.json()['detail']

@@ -2971,6 +2971,8 @@ async def preview_cost_hour_import(
     worksite = session.get(Worksite, payload.worksite_id)
     if not worksite:
         raise HTTPException(status_code=404, detail="找不到工地")
+    if worksite.code == "國泰慈文":
+        raise HTTPException(status_code=422, detail="國泰慈文須使用獨立計價月表；不可匯入舊計價檔標別")
     content, _ = await _read_cost_targets(document, payload.work_date)
     try:
         target = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)
@@ -3073,6 +3075,8 @@ async def apply_cost_hour_import(
     worksite = session.get(Worksite, payload.worksite_id)
     if not worksite:
         raise HTTPException(status_code=404, detail="找不到工地")
+    if worksite.code == "國泰慈文":
+        raise HTTPException(status_code=422, detail="國泰慈文須使用獨立計價月表；不可匯入舊計價檔標別")
     content, _ = await _read_cost_targets(document, payload.work_date)
     try:
         previous = find_cost_sheet_target(content, document.original_file_name, payload.work_date, payload.target_label)

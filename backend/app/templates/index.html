@@ -668,8 +668,15 @@
         </div>
         <p id="worksitePricingStatus" class="notice" role="status" aria-live="polite">先選月份，再按車型逐日登錄；原計價 Excel 不覆蓋。</p>
         <div id="worksitePricingTabs" class="cost-grid-tabs" role="tablist" aria-label="國泰慈文車型"></div>
+        <div id="worksitePricingJournalImport" class="cost-grid-toolbar" hidden>
+          <strong id="worksitePricingJournalDate"></strong>
+          <div><label for="worksitePricingJournalUnits">本車型台數</label><input id="worksitePricingJournalUnits" type="number" min="1" max="100" step="1" value="1"></div>
+          <div><label for="worksitePricingJournalNormal">本車型正常總工時</label><input id="worksitePricingJournalNormal" type="number" min="0" max="800" step="0.5"></div>
+          <div><label for="worksitePricingJournalOvertime">本車型加班總工時</label><input id="worksitePricingJournalOvertime" type="number" min="0" max="2400" step="0.5"></div>
+          <button type="button" onclick="applyJournalToWorksitePricing()">帶入目前車型，待核對保存</button>
+        </div>
         <div id="worksitePricingTable" class="cost-grid-sheet"></div>
-        <p class="muted">2.5噸 2節桿與高4.5M各自計價。正常滿8小時採日價、不滿8小時採時價；加班時數另計。週日與元旦自動採假日價；春節需明確選擇。未稅，油錢僅記錄不加入請款金額。每列核對後才保存。</p>
+        <p class="muted">2.5噸 2節桿與高4.5M各自計價。正常滿8小時採日價、不滿8小時採時價；加班時數另計。若實際約定金額不同，可填「核定未稅金額」及理由，公式金額仍保留供比對；清空兩欄即可恢復公式。週日與元旦自動採假日價；春節需明確選擇。油錢僅記錄不加入請款金額。每列核對後才保存。</p>
       </div>
       <div id="companyWorkbookSection" hidden>
         <div class="cost-grid-toolbar">
@@ -1436,7 +1443,7 @@
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
   <script src="/static/cost_grid.js?v=20261107"></script>
-  <script src="/static/worksite_pricing.js?v=20261107"></script>
+  <script src="/static/worksite_pricing.js?v=20261108a"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
   <script src="/static/management_reports.js"></script>
@@ -3211,6 +3218,12 @@
       state.costHourPreview = null;
       document.getElementById("costHourImportSubmit").disabled = true;
       document.getElementById("costHourPreview").hidden = true;
+      if (state.worksites.find(item => Number(item.id) === worksiteId)?.code === "國泰慈文") {
+        targetSelect.disabled = true;
+        targetSelect.innerHTML = '<option value="">國泰慈文請用專屬月表</option>';
+        feedback.textContent = "國泰慈文不在舊 Excel 計價標別內；請點「Excel 線上資料處理 → 國泰慈文計價」。";
+        return;
+      }
       if (!documentId || !workDate) {
         targetSelect.disabled = true;
         targetSelect.innerHTML = '<option value="">請先選計價表與日期</option>';
@@ -3728,6 +3741,18 @@
     }
 
     async function openJournalHourImport(siteIndex) {
+      const journal = state.worksiteJournals;
+      const site = journal?.sites?.[siteIndex];
+      const worksite = state.worksites.find(item => item.id === site?.site_id);
+      if (worksite?.code === "國泰慈文") {
+        const hours = journalHoursFor(site);
+        worksitePricing.journalImport = {day: journal.date, normalHours: hours.normal_hours, overtimeHours: hours.overtime_hours};
+        worksitePricing.journalHint = `${journal.date} 工作日誌：正常總工時 ${hours.normal_hours}、加班總工時 ${hours.overtime_hours}。請依車型核對台數及每台時數後逐列保存；未自動分台、未寫入舊計價檔。`;
+        openNamedPanel('excel-editor');
+        document.getElementById('worksitePricingMonth').value = journal.date.slice(0, 7);
+        showExcelMode('sitepricing');
+        return;
+      }
       await syncJournalHoursToCostImport(siteIndex, true);
       openDocumentTask(0);
     }
