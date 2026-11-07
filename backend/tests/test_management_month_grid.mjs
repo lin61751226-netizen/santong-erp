@@ -15,10 +15,10 @@ test('salary month grid previews, saves, and keeps original source version separ
   const browser = await chromium.launch({headless: true, executablePath: chromePath});
   try {
     const page = await browser.newPage();
-    await page.setContent(`<div id="costGridSection"></div><div id="worksitePricingSection" hidden></div><div id="dataEditorSection" hidden></div>
+    await page.setContent(`<div id="costGridSection"></div><div id="worksitePricingSection" hidden></div><div id="companyWorkbookSection" hidden></div><div id="dataEditorSection" hidden></div>
       <div id="managementMonthGridSection" hidden><select id="managementGridSnapshot"></select>
       <input id="managementGridMonth" type="month"><p id="managementGridStatus"></p><div id="managementGridTable"></div></div>
-      <button id="excelModePricing"></button><button id="excelModeSitepricing"></button><button id="excelModeFinance"></button>
+      <button id="excelModePricing"></button><button id="excelModeSitepricing"></button><button id="excelModeWorkbook"></button><button id="excelModeFinance"></button>
       <button id="excelModePayroll"></button><button id="excelModeRoster"></button>`);
     await page.evaluate(() => {
       window.todayString = () => '2026-09-01';

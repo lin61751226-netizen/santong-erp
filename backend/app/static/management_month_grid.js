@@ -4,17 +4,23 @@ function managementGridDirty() { return managementGrid.edits.size > 0; }
 
 function showExcelMode(mode) {
   if (managementGridDirty() && managementGrid.mode !== mode && !confirm('薪資／排休月表格有未保存修改，確定切換嗎？')) return;
+  if (managementGrid.mode === 'workbook' && mode !== 'workbook' && companyWorkbookDirty() && !confirm('公司 Excel 月表格有未保存修改，確定切換嗎？')) return;
   if (worksitePricingDirty() && managementGrid.mode === 'sitepricing' && mode !== 'sitepricing' && !confirm('國泰慈文計價有未保存修改，確定切換嗎？')) return;
   if (managementGrid.mode !== mode) managementGrid.edits.clear();
   managementGrid.mode = mode;
-  for (const name of ['Pricing', 'Sitepricing', 'Finance', 'Payroll', 'Roster']) {
+  for (const name of ['Pricing', 'Sitepricing', 'Workbook', 'Finance', 'Payroll', 'Roster']) {
     document.getElementById(`excelMode${name}`).classList.toggle('active', name.toLowerCase() === mode);
   }
   document.getElementById('costGridSection').hidden = mode !== 'pricing';
   document.getElementById('worksitePricingSection').hidden = mode !== 'sitepricing';
+  document.getElementById('companyWorkbookSection').hidden = mode !== 'workbook';
   document.getElementById('dataEditorSection').hidden = mode !== 'finance';
   document.getElementById('managementMonthGridSection').hidden = !['payroll', 'roster'].includes(mode);
   if (mode === 'finance') loadDocumentData(true);
+  if (mode === 'workbook') {
+    renderCompanyWorkbookOptions();
+    if (document.getElementById('companyWorkbookDocument').value) loadCompanyWorkbook();
+  }
   if (mode === 'sitepricing') {
     const month = document.getElementById('worksitePricingMonth');
     if (!month.value) month.value = todayString().slice(0, 7) < '2026-11' ? '2026-11' : todayString().slice(0, 7);

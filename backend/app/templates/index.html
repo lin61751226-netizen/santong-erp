@@ -637,9 +637,10 @@
       <div class="cost-grid-tabs" role="tablist" aria-label="線上資料類型">
         <button type="button" id="excelModePricing" class="active" onclick="showExcelMode('pricing')">堆高機計價</button>
         <button type="button" id="excelModeSitepricing" onclick="showExcelMode('sitepricing')">國泰慈文計價</button>
-        <button type="button" id="excelModeFinance" onclick="showExcelMode('finance')">逐月收支／通訊錄</button>
-        <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">每月薪資</button>
-        <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">每月排休</button>
+        <button type="button" id="excelModeWorkbook" onclick="showExcelMode('workbook')">公司 Excel 月表格</button>
+        <button type="button" id="excelModeFinance" onclick="showExcelMode('finance')">系統收支／通訊錄</button>
+        <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">舊快照薪資</button>
+        <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">舊快照排休</button>
       </div>
       <div id="costGridSection">
       <div class="cost-grid-toolbar">
@@ -669,6 +670,23 @@
         <div id="worksitePricingTabs" class="cost-grid-tabs" role="tablist" aria-label="國泰慈文車型"></div>
         <div id="worksitePricingTable" class="cost-grid-sheet"></div>
         <p class="muted">2.5噸 2節桿與高4.5M各自計價。正常滿8小時採日價、不滿8小時採時價；加班時數另計。週日與元旦自動採假日價；春節需明確選擇。未稅，油錢僅記錄不加入請款金額。每列核對後才保存。</p>
+      </div>
+      <div id="companyWorkbookSection" hidden>
+        <div class="cost-grid-toolbar">
+          <div><label for="companyWorkbookDocument">Google Drive 公司 Excel 檔案</label><select id="companyWorkbookDocument" onchange="loadCompanyWorkbook()"></select></div>
+          <div><label for="companyWorkbookMonth">月份</label><input id="companyWorkbookMonth" type="month" value="2026-10" onchange="loadCompanyWorkbook()"></div>
+          <div><label for="companyWorkbookKind">工作表</label><select id="companyWorkbookKind" onchange="loadCompanyWorkbook()"><option value="finance">每月收支明細</option><option value="payroll">每月薪資</option><option value="roster">每月排休</option></select></div>
+          <button type="button" class="button-secondary" onclick="loadCompanyWorkbook()">重新載入</button>
+        </div>
+        <p id="companyWorkbookStatus" class="notice" role="status" aria-live="polite">選擇已上傳的公司 Excel 檔案、月份與工作表。</p>
+        <div id="companyWorkbookTable" class="cost-grid-sheet"></div>
+        <div class="button-row cost-grid-actions">
+          <button type="button" id="companyWorkbookPreview" class="button-secondary" onclick="previewCompanyWorkbook()" disabled>預覽逐格變更</button>
+          <label><input type="checkbox" id="companyWorkbookConfirm" disabled> 我已核對資料與原檔差異</label>
+          <button type="button" id="companyWorkbookSave" onclick="saveCompanyWorkbook()" disabled>保存為 Google Drive 新版本</button>
+        </div>
+        <div id="companyWorkbookReview" class="console" hidden></div>
+        <p class="muted">直接讀取所選 Excel 工作表；只允許修改資料欄，不修改公式、其他工作表或原檔。保存會在 Google Drive 建立私人新版本與逐列稽核紀錄；薪資／排休內容不會自動變成正式薪資或請假核准。</p>
       </div>
       <div id="managementMonthGridSection" hidden>
         <div class="cost-grid-toolbar">
@@ -1420,6 +1438,7 @@
   <script src="/static/cost_grid.js?v=20261107"></script>
   <script src="/static/worksite_pricing.js?v=20261107"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
+  <script src="/static/company_workbook_grid.js?v=20261107b"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
@@ -2974,6 +2993,7 @@
         renderFinanceImportOptions();
         renderDataDocumentOptions();
         renderCostGridDocumentOptions();
+        renderCompanyWorkbookOptions();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>
