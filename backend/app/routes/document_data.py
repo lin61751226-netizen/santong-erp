@@ -1,6 +1,7 @@
 """Authenticated Excel-derived business data editing and versioned exports."""
 
 import asyncio
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import uuid4
@@ -61,7 +62,7 @@ def audit(session, actor, action, entity_id, summary):
 
 @router.get("/{document_id}")
 def list_data(
-    document_id: int, kind: Kind = "finance", sheet: str = "", keyword: str = "",
+    document_id: int, kind: Kind = "finance", sheet: str = "", keyword: str = "", month: str = "",
     offset: int = Query(0, ge=0), limit: int = Query(25, ge=1, le=100),
     session: Session = Depends(get_session), actor: Employee = Depends(admin),
 ):
@@ -70,6 +71,10 @@ def list_data(
     dataset_hash = digest([snapshot(row) for row in rows])
     sheets = sorted({row.source_sheet or "線上新增" for row in rows})
     selected = [row for row in rows if not sheet or (row.source_sheet or "線上新增") == sheet]
+    if month and kind == "finance":
+        if not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", month):
+            raise HTTPException(422, "月份格式不正確")
+        selected = [row for row in selected if row.entry_date and row.entry_date.strftime("%Y-%m") == month]
     if keyword.strip():
         needle = keyword.strip().casefold()
         selected = [row for row in selected if any(

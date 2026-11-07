@@ -1,10 +1,12 @@
 ﻿from __future__ import annotations
 
+from datetime import date
+
 from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.security import hash_password
-from app.models import Employee, EmployeeStatus, Forklift, ForkliftStatus, MasterOption, Role, Worksite
+from app.models import Employee, EmployeeStatus, Forklift, ForkliftStatus, MasterOption, Role, Worksite, WorksiteForkliftRate
 
 
 WORKSITE_DEFINITIONS = [
@@ -18,6 +20,7 @@ WORKSITE_DEFINITIONS = [
     {"code": "新竹寶山1", "name": "新竹寶山1"},
     {"code": "新竹寶山2", "name": "新竹寶山2"},
     {"code": "新竹寶山3", "name": "新竹寶山3"},
+    {"code": "國泰慈文", "name": "國泰慈文", "address": "桃園市桃園區中路二段", "reactivate": False},
 ]
 
 
@@ -35,7 +38,16 @@ SITE_ALIASES = {
     "新竹寶山1": "新竹寶山1",
     "新竹寶山2": "新竹寶山2",
     "新竹寶山3": "新竹寶山3",
+    "國泰慈文": "國泰慈文",
 }
+
+
+GUOTAI_CIWEN_RATES = [
+    {"vehicle_type": "2.5噸（2節桿）", "weekday_hourly": 1200, "weekday_daily": 8000,
+     "holiday_hourly": 1500, "holiday_daily": 10000, "overtime_hourly": 1500},
+    {"vehicle_type": "2.5噸（高4.5M）", "weekday_hourly": 1800, "weekday_daily": 12000,
+     "holiday_hourly": 2000, "holiday_daily": 14000, "overtime_hourly": 2000},
+]
 
 
 EMPLOYEE_ROSTER = [
@@ -205,7 +217,7 @@ def _ensure_worksites(session: Session) -> dict[str, Worksite]:
         name = definition["name"]
         site = site_by_code.get(code) or site_by_name.get(name)
         if site is None:
-            site = Worksite(code=code, name=name, is_active=True)
+            site = Worksite(code=code, name=name, address=definition.get("address"), is_active=True)
             session.add(site)
             changed = True
             continue
@@ -216,7 +228,7 @@ def _ensure_worksites(session: Session) -> dict[str, Worksite]:
         if site.name != name:
             site.name = name
             changed = True
-        if not site.is_active:
+        if not site.is_active and definition.get("reactivate", True):
             site.is_active = True
             changed = True
         session.add(site)
@@ -225,6 +237,23 @@ def _ensure_worksites(session: Session) -> dict[str, Worksite]:
         session.commit()
 
     return {site.name: site for site in session.exec(select(Worksite)).all()}
+
+
+def _ensure_guotai_ciwen_rates(session: Session, worksites: dict[str, Worksite]) -> None:
+    site = worksites.get("國泰慈文")
+    if not site or site.id is None:
+        return
+    for definition in GUOTAI_CIWEN_RATES:
+        existing = session.exec(select(WorksiteForkliftRate).where(
+            WorksiteForkliftRate.worksite_id == site.id,
+            WorksiteForkliftRate.vehicle_type == definition["vehicle_type"],
+        )).first()
+        if existing is None:
+            session.add(WorksiteForkliftRate(
+                worksite_id=site.id, **definition, effective_from=date(2026, 11, 1), source_date=date(2026, 10, 28),
+                source_note="景觀工資確認單；未稅；週日、元旦、春節採假日價；每日8小時，超時另計",
+            ))
+    session.commit()
 
 
 def _rename_legacy_employee_codes(session: Session) -> None:
@@ -369,6 +398,7 @@ def _ensure_master_options(session: Session) -> None:
 
 def seed_demo_data(session: Session) -> None:
     worksites = _ensure_worksites(session)
+    _ensure_guotai_ciwen_rates(session, worksites)
     _rename_legacy_employee_codes(session)
 
     for payload in EMPLOYEE_ROSTER:

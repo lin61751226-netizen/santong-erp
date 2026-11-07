@@ -19,6 +19,7 @@ async function openDocumentData(id) {
     return;
   }
   openPanelFor('dataDocument');
+  showExcelMode('finance');
   document.getElementById('dataDocument').value = String(id);
   await loadDocumentData(true);
 }
@@ -40,6 +41,7 @@ async function loadDocumentData(reset = false, offset = 0) {
   }
   const sheet = document.getElementById('dataSheet').value;
   const params = new URLSearchParams({kind, sheet, keyword: document.getElementById('dataKeyword').value, offset, limit: 25});
+  if (kind === 'finance' && document.getElementById('dataMonth').value) params.set('month', document.getElementById('dataMonth').value);
   document.getElementById('dataStatus').textContent = '讀取已保存的資料…';
   try {
     const result = await api(`/api/document-data/${id}?${params}`);

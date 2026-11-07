@@ -93,6 +93,18 @@ def test_save_history_provenance_and_retry(ctx):
     assert save(ctx, data).status_code == 409
 
 
+def test_finance_month_filter_preserves_dataset_total(ctx):
+    all_rows = listed(ctx, 'finance')
+    month = all_rows['rows'][0]['values']['entry_date'][:7]
+    matching = ctx.client.get(f'/api/document-data/{ctx.document.id}', params={'kind': 'finance', 'month': month})
+    assert matching.status_code == 200
+    assert matching.json()['total'] >= 1
+    assert matching.json()['dataset_total'] == all_rows['dataset_total']
+    other = ctx.client.get(f'/api/document-data/{ctx.document.id}', params={'kind': 'finance', 'month': '2025-01'})
+    assert other.status_code == 200 and other.json()['total'] == 0
+    assert ctx.client.get(f'/api/document-data/{ctx.document.id}', params={'month': 'wrong'}).status_code == 422
+
+
 def test_stale_revision_never_overwrites(ctx):
     first = payload(ctx, summary='最新')
     stale = payload(ctx, summary='過期')

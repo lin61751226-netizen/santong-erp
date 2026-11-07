@@ -58,6 +58,7 @@ from app.models import (
     WorkAssignment,
     WorkReportEvent,
     Worksite,
+    WorksiteForkliftRate,
 )
 from app.schemas import (
     AssignmentCreate,
@@ -646,6 +647,38 @@ def list_worksites(
         }
         for site in session.exec(statement.order_by(Worksite.name)).all()
     ]
+
+
+@router.get("/worksites/{site_id}/forklift-rates")
+def get_worksite_forklift_rates(
+    site_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.accounting)),
+):
+    site = session.get(Worksite, site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    rates = session.exec(select(WorksiteForkliftRate).where(
+        WorksiteForkliftRate.worksite_id == site_id,
+    ).order_by(WorksiteForkliftRate.vehicle_type)).all()
+    return {
+        "site_id": site.id,
+        "site_name": site.name,
+        "daily_hours": 8,
+        "holiday_rule": "週日、元旦、春節；其他日期採週一至週六費率，春節需人工確認",
+        "tax_included": False,
+        "rates": [{
+            "vehicle_type": rate.vehicle_type,
+            "weekday_hourly": rate.weekday_hourly,
+            "weekday_daily": rate.weekday_daily,
+            "holiday_hourly": rate.holiday_hourly,
+            "holiday_daily": rate.holiday_daily,
+            "overtime_hourly": rate.overtime_hourly,
+            "effective_from": rate.effective_from.isoformat(),
+            "source_date": rate.source_date.isoformat(),
+            "source_note": rate.source_note,
+        } for rate in rates],
+    }
 
 
 @router.post("/worksites", status_code=status.HTTP_201_CREATED)

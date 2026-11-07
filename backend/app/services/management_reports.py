@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+from copy import deepcopy
 import hashlib
 import math
 import re
@@ -18,7 +19,7 @@ from sqlmodel import Session, select
 
 from app.models import (
     AssignmentMember, AttendanceEvent, BusinessContact, DocumentDataRevision,
-    Employee, FinanceEntry, LeaveRequest, LeaveStatus, MeetingRecord,
+    Employee, FinanceEntry, LeaveRequest, LeaveStatus, MeetingRecord, ManagementWorkbookEdit,
     WorkAssignment, Worksite,
 )
 from app.services.finance_import import _parse_contacts, finance_dedupe_key
@@ -233,7 +234,22 @@ def report(session: Session, snapshot, month: str, kind: str):
     year, number_month = map(int, month.split("-"))
     first = date(year, number_month, 1)
     last = date(year, number_month, calendar.monthrange(year, number_month)[1])
-    data = snapshot.data if snapshot else {key: [] for key in ("finance", "payroll", "roster", "calendar", "contacts")}
+    data = deepcopy(snapshot.data) if snapshot else {key: [] for key in ("finance", "payroll", "roster", "calendar", "contacts")}
+    if snapshot:
+        rows_by_source = {
+            (group, item["source"]): item
+            for group in ("payroll", "roster") for item in data[group]
+        }
+        for edit in session.exec(select(ManagementWorkbookEdit).where(ManagementWorkbookEdit.snapshot_id == snapshot.id)).all():
+            target = rows_by_source.get((edit.kind, edit.source))
+            if target is None:
+                continue
+            target.update(edit.values)
+            if edit.kind == "payroll":
+                target["gross"] = money_sum(target[key] for key in PAY_FIELDS[:6])
+                target["deductions"] = money_sum(target[key] for key in PAY_FIELDS[6:])
+                target["net"] = (round(target["gross"] - target["deductions"], 2)
+                                 if target["gross"] is not None and target["deductions"] is not None else None)
     mapping = snapshot.employee_mapping if snapshot else {}
     employees = session.exec(select(Employee).order_by(Employee.employee_code)).all()
     by_code = {row.employee_code: row for row in employees}
@@ -280,7 +296,7 @@ def report(session: Session, snapshot, month: str, kind: str):
             rows.append([month, item["name"], f"{employee.employee_code} {employee.name}" if employee else "待對應", item["title"],
                          *(item[key] for key in PAY_FIELDS), item["gross"], item["deductions"], item["net"], item["status"],
                          "已對應" if employee else "待對應（未改員工資料）", item["note"], item["source"]])
-        summary = {"薪資人數": len(rows), "Excel實領合計": money_sum(item["net"] for item in source_rows("payroll")),
+        summary = {"薪資人數": len(rows), "原表加系統修訂實領合計": money_sum(item["net"] for item in source_rows("payroll")),
                    "尚未對應": sum(not by_code.get(mapping.get(item["name"])) for item in source_rows("payroll"))}
     elif kind == "roster":
         days = list(range(1, last.day + 1))
@@ -335,7 +351,7 @@ def report(session: Session, snapshot, month: str, kind: str):
         rows.sort(key=lambda item: (item[0], item[1]))
         summary = {"Excel事項": len(source_rows("calendar")), "系統派工": len(assignments), "系統會議": len(meetings), "核准請假筆數": len(leaves)}
     elif kind == "annual":
-        fields = ["月份", "系統收入", "系統支出", "系統淨額", "Excel原始收入（含結餘）", "Excel原始支出（含轉帳）", "Excel實領薪資", "薪資人數", "排休/休假", "特休", "病假", "事假", "例休/例假", "Excel行事曆事項"]
+        fields = ["月份", "系統收入", "系統支出", "系統淨額", "Excel原始收入（含結餘）", "Excel原始支出（含轉帳）", "原表加系統修訂實領薪資", "薪資人數", "排休/休假", "特休", "病假", "事假", "例休/例假", "Excel行事曆事項"]
         for m in range(1, 13):
             period = f"{year}-{m:02d}"
             system = [item for item in finance if item.entry_date.month == m]
@@ -377,6 +393,6 @@ def report(session: Session, snapshot, month: str, kind: str):
         summary = {"系統公司通訊錄": len(contacts), "系統員工": len(employees), "Excel通訊錄": len(data["contacts"])}
     return {"kind": kind, "title": KINDS[kind], "month": month, "fields": fields, "rows": rows, "summary": summary,
             "snapshot_id": snapshot.id if snapshot else None,
-            "notes": ["Excel版本與系統值分開保存；未入帳資料不計入系統收入支出。",
+            "notes": ["Excel原檔與系統修訂分開保存；未入帳資料不計入系統收入支出。",
                       "薪資依原表F:K加給、L:P扣款計算，未依打卡自動扣薪或自動付款。",
                       "排休原註記完整保留；空白不等於休假，核准請假與實際打卡另列。"]}

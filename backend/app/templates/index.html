@@ -372,6 +372,7 @@
       </div>
       <p id="worksiteMissingCoords" class="notice" role="status" aria-live="polite"></p>
       <p id="worksiteFeedback" class="notice" role="status" aria-live="polite">新增或刪除工地後，相關下拉選單會自動更新。</p>
+      <div id="worksiteRateCard" class="inline-form-card" hidden></div>
     </section>
 
     <section class="panel span-12" data-workspace="files" id="panel-audit" data-panel="audit" data-nav-order="6" data-legacy="fleet:3" data-nav-aliases="操作紀錄,稽核">
@@ -632,7 +633,15 @@
     </section>
 
     <section class="panel span-12" data-workspace="pricing" id="panel-excel-editor" data-panel="excel-editor" data-nav-order="3" data-legacy="documents:5" data-nav-aliases="線上編輯,收支修改">
-      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">像 Excel 月表格逐日輸入計價資料；收支與通訊錄仍可用下方原有介面處理。</p></div></div>
+      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">依檔案與月份處理計價、收支、薪資與排休；保存前逐列核對，原始 Excel 保留。</p></div></div>
+      <div class="cost-grid-tabs" role="tablist" aria-label="線上資料類型">
+        <button type="button" id="excelModePricing" class="active" onclick="showExcelMode('pricing')">堆高機計價</button>
+        <button type="button" id="excelModeSitepricing" onclick="showExcelMode('sitepricing')">國泰慈文計價</button>
+        <button type="button" id="excelModeFinance" onclick="showExcelMode('finance')">逐月收支／通訊錄</button>
+        <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">每月薪資</button>
+        <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">每月排休</button>
+      </div>
+      <div id="costGridSection">
       <div class="cost-grid-toolbar">
         <div><label for="costGridDocument">推高機計價檔</label><select id="costGridDocument" onchange="loadCostGrid()"></select></div>
         <div><label for="costGridMonth">月份</label><input id="costGridMonth" type="month" onchange="loadCostGrid()"></div>
@@ -649,11 +658,35 @@
       </div>
       <div id="costGridReview" class="console" hidden></div>
       <p class="muted">只修改已變動日期的 B／D／F／H／I／J 欄；工時變更時沿用原系統的平日／假日公式校正，C／E／G 金額由活頁簿公式計算。切換標別或離開時會提醒未保存內容；別人更新檔案後須重新載入，避免覆蓋。保存後有 Drive 修訂、系統稽核與資料庫備份。</p>
-      <details class="pricing-rules"><summary>收支與通訊錄線上處理（原有功能）</summary>
+      <p class="muted">國泰慈文的獨立費率可在「工地管理 → 查看堆高機計價」核對；它不是既有計價活頁簿標別，未匯入至此表的公式。</p>
+      </div>
+      <div id="worksitePricingSection" hidden>
+        <div class="cost-grid-toolbar">
+          <div><label for="worksitePricingMonth">月份（自 115 年 11 月起）</label><input id="worksitePricingMonth" type="month" min="2026-11" onchange="loadWorksitePricing()"></div>
+          <button type="button" class="button-secondary" onclick="loadWorksitePricing()">重新載入</button>
+        </div>
+        <p id="worksitePricingStatus" class="notice" role="status" aria-live="polite">先選月份，再按車型逐日登錄；原計價 Excel 不覆蓋。</p>
+        <div id="worksitePricingTabs" class="cost-grid-tabs" role="tablist" aria-label="國泰慈文車型"></div>
+        <div id="worksitePricingTable" class="cost-grid-sheet"></div>
+        <p class="muted">2.5噸 2節桿與高4.5M各自計價。正常滿8小時採日價、不滿8小時採時價；加班時數另計。週日與元旦自動採假日價；春節需明確選擇。未稅，油錢僅記錄不加入請款金額。每列核對後才保存。</p>
+      </div>
+      <div id="managementMonthGridSection" hidden>
+        <div class="cost-grid-toolbar">
+          <div><label for="managementGridSnapshot">全年管理 Excel 版本</label><select id="managementGridSnapshot" onchange="loadManagementMonthGrid()"></select></div>
+          <div><label for="managementGridMonth">月份</label><input id="managementGridMonth" type="month" onchange="loadManagementMonthGrid()"></div>
+          <button type="button" class="button-secondary" onclick="loadManagementMonthGrid()">重新載入</button>
+        </div>
+        <p id="managementGridStatus" class="notice" role="status" aria-live="polite">先在「月度與年度管理對照」保存全年管理檔版本，再選月份。</p>
+        <div id="managementGridTable" class="cost-grid-sheet"></div>
+        <p class="muted">修改只存為資料庫修訂，原始 Excel 不覆蓋；每列先核對再保存，留稽核與 Google Drive 資料庫備份。排休表的修改不是請假核准；正式休假仍須走核准流程。</p>
+        <button type="button" class="button-secondary" onclick="openLeaveSettings(true)">前往正式休假／排休設定</button>
+      </div>
+      <div id="dataEditorSection" hidden>
       <p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p>
       <div class="form-grid">
         <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
         <div><label for="dataKind">處理資料</label><select id="dataKind" onchange="loadDocumentData(true)"><option value="finance">收支明細</option><option value="contacts">公司通訊錄</option></select></div>
+        <div><label for="dataMonth">月份（收支篩選）</label><input id="dataMonth" type="month" onchange="loadDocumentData(false,0)"></div>
         <div><label for="dataSheet">來源工作表</label><select id="dataSheet" onchange="loadDocumentData(false,0)"><option value="">全部工作表</option></select></div>
         <div><label for="dataKeyword">搜尋</label><input id="dataKeyword" placeholder="公司、摘要或工地"></div>
         <div class="button-row"><button type="button" onclick="loadDocumentData(false,0)">查詢／重新載入</button><button type="button" class="button-secondary" onclick="editDocumentData()">新增資料</button></div>
@@ -665,7 +698,7 @@
       <div class="button-row"><button id="dataExport" type="button" onclick="exportDocumentData()" disabled>匯出新的 Excel 到 Drive</button><button id="dataBackup" type="button" class="button-secondary" onclick="retryDataBackup()">重試雲端備份</button></div>
       <p class="muted">匯出此來源檔、此類型的全部已存資料，不受目前篩選或分頁影響。產生新的標準資料表，不含原檔特殊排版、公式或巨集；不新增公開分享。</p>
       <details class="pricing-rules"><summary>修改與匯出版本記錄</summary><div id="dataHistory">尚未載入</div></details>
-      </details>
+      </div>
     </section>
 
     <section id="panel-invoice-overprint" class="panel span-12" data-workspace="pricing" data-panel="invoice-overprint" data-nav-order="5" data-nav-aliases="發票,三聯式,套印,印模,校正">
@@ -1385,6 +1418,8 @@
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
   <script src="/static/cost_grid.js?v=20261107"></script>
+  <script src="/static/worksite_pricing.js?v=20261107"></script>
+  <script src="/static/management_month_grid.js?v=20261107"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
@@ -4020,6 +4055,20 @@
       document.getElementById("worksiteFeedback").textContent = `已解析定位：${coordinates.latitude}, ${coordinates.longitude}；請按該工地的「儲存」。`;
     }
 
+    async function showWorksiteRates(id) {
+      const card = document.getElementById("worksiteRateCard");
+      card.hidden = false;
+      card.textContent = "正在讀取工地計價…";
+      try {
+        const data = await api(`/api/worksites/${id}/forklift-rates`);
+        const money = value => Number(value).toLocaleString("zh-TW");
+        card.innerHTML = `<h3>${escapeHtml(data.site_name)}｜堆高機計價（未稅）</h3>
+          <p class="muted">每日 ${data.daily_hours} 小時，超時另計。${escapeHtml(data.holiday_rule)}；不足整日及特殊工時請依簽單核對。</p>
+          <div class="table-wrap"><table><thead><tr><th>車型</th><th>週一至六／小時</th><th>週一至六／天</th><th>週日、元旦、春節／小時</th><th>週日、元旦、春節／天</th><th>加班／小時</th></tr></thead><tbody>${data.rates.map(rate => `<tr><td>${escapeHtml(rate.vehicle_type)}</td><td>${money(rate.weekday_hourly)}</td><td>${money(rate.weekday_daily)}</td><td>${money(rate.holiday_hourly)}</td><td>${money(rate.holiday_daily)}</td><td>${money(rate.overtime_hourly)}</td></tr>`).join("")}</tbody></table></div>
+          <p class="muted">來源：${data.rates[0] ? escapeHtml(data.rates[0].source_date + " 景觀工資確認單") : "尚無費率"}。只顯示費率，不自動建立正式請款。</p>`;
+      } catch (error) { card.textContent = `工地計價讀取失敗：${error.message}`; }
+    }
+
     async function loadWorksites() {
       const rows = document.getElementById("worksiteRows");
       const canManage = ["owner", "admin"].includes(state.actor?.role);
@@ -4027,7 +4076,7 @@
       rows.innerHTML = sites.length ? sites.map((site) => `
         <tr>
           <td>${escapeHtml(site.code || "-")}</td>
-          <td>${escapeHtml(site.name)}</td>
+          <td>${escapeHtml(site.name)}${site.code === "國泰慈文" && canManage ? `<br><button type="button" class="button-secondary button-compact" onclick="showWorksiteRates(${site.id})">查看堆高機計價</button>` : ""}</td>
           <td><input id="worksite-address-${site.id}" class="table-input" value="${escapeAttr(site.address || "")}" ${canManage && site.is_active ? "" : "disabled"}></td>
           <td>
             <input id="worksite-maps-url-${site.id}" class="table-input" type="url" value="${escapeAttr(site.google_maps_url || "")}" ${canManage && site.is_active ? "" : "disabled"}>

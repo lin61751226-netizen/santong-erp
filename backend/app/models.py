@@ -103,6 +103,44 @@ class Worksite(SQLModel, table=True):
     is_active: bool = Field(default=True)
 
 
+class WorksiteForkliftRate(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("worksite_id", "vehicle_type", name="uq_worksite_vehicle_rate"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    worksite_id: int = Field(foreign_key="worksite.id", index=True)
+    vehicle_type: str
+    weekday_hourly: int
+    weekday_daily: int
+    holiday_hourly: int
+    holiday_daily: int
+    overtime_hourly: int
+    effective_from: date
+    source_date: date
+    source_note: str
+
+
+class WorksiteForkliftCharge(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("worksite_id", "work_date", "vehicle_type", name="uq_worksite_vehicle_day"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    worksite_id: int = Field(foreign_key="worksite.id", index=True)
+    work_date: date = Field(index=True)
+    vehicle_type: str
+    units: int = Field(default=0)
+    normal_hours: float = Field(default=0)
+    overtime_hours: float = Field(default=0)
+    holiday_reason: str = Field(default="")
+    external_customer: Optional[str] = None
+    fuel_cost: float = Field(default=0)
+    payer: Optional[str] = None
+    normal_amount: float = Field(default=0)
+    overtime_amount: float = Field(default=0)
+    revision: int = Field(default=1)
+    last_request_id: str = Field(unique=True, index=True)
+    updated_by_id: int = Field(foreign_key="employee.id")
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Employee(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     employee_code: str = Field(index=True, unique=True)
@@ -556,6 +594,20 @@ class ManagementWorkbookSnapshot(SQLModel, table=True):
     data: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_by_id: int = Field(foreign_key="employee.id")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class ManagementWorkbookEdit(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("snapshot_id", "kind", "source", name="uq_management_month_edit"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: int = Field(foreign_key="managementworkbooksnapshot.id", index=True)
+    kind: str
+    source: str
+    values: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    revision: int = Field(default=1)
+    last_request_id: str = Field(unique=True, index=True)
+    updated_by_id: int = Field(foreign_key="employee.id")
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class LineLinkStatus(str, Enum):

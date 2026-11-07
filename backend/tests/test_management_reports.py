@@ -107,6 +107,49 @@ def test_formula_inputs_never_become_zero():
     assert any('公式' in row['reason'] for row in data['warnings'])
 
 
+def test_month_grid_payroll_revision_and_report(ctx):
+    params = {'snapshot_id': ctx.snapshot.id, 'month': '2026-09', 'kind': 'payroll'}
+    grid = ctx.client.get('/api/management-reports/month-grid', params=params)
+    assert grid.status_code == 200
+    row = grid.json()['rows'][0]
+    assert row['revision'] == 0
+    values = {**row['values'], '底薪': 60000}
+    payload = {**params, 'source': row['source'], 'expected_revision': 0,
+               'request_id': 'payroll-test-0001', 'values': values}
+    preview = ctx.client.post('/api/management-reports/month-grid', json={**payload, 'preview_only': True})
+    assert preview.status_code == 200 and preview.json()['changed']
+    assert ctx.client.post('/api/management-reports/month-grid', json=payload).status_code == 409
+    saved = ctx.client.post('/api/management-reports/month-grid', json={**payload, 'confirmed': True})
+    assert saved.status_code == 200 and saved.json()['revision'] == 1
+    assert ctx.client.post('/api/management-reports/month-grid', json={**payload, 'confirmed': True}).json()['replayed']
+    assert ctx.client.post('/api/management-reports/month-grid', json={**payload, 'request_id': 'payroll-test-0002', 'confirmed': True}).status_code == 409
+    report_data = ctx.client.get('/api/management-reports/report', params=params).json()
+    assert report_data['rows'][0][15] == 67600  # 應領合計
+    assert report_data['rows'][0][17] == 62600  # 實領薪資
+    assert ctx.snapshot.data['payroll'][0]['底薪'] == 55000  # 原始快照未覆蓋
+    assert ctx.session.exec(select(AdminAuditLog).where(AdminAuditLog.action == 'management_month_edit')).first()
+
+
+def test_month_grid_roster_is_not_approved_leave(ctx):
+    params = {'snapshot_id': ctx.snapshot.id, 'month': '2026-09', 'kind': 'roster'}
+    row = ctx.client.get('/api/management-reports/month-grid', params=params).json()['rows'][0]
+    payload = {**params, 'source': row['source'], 'expected_revision': 0,
+               'request_id': 'roster-test-0001', 'values': {**row['values'], 'marks': {'2': '排休'}}}
+    assert ctx.client.post('/api/management-reports/month-grid', json={**payload, 'confirmed': True}).status_code == 200
+    roster = ctx.client.get('/api/management-reports/report', params=params).json()
+    assert roster['rows'][0][4] == '排休'
+    assert not ctx.session.exec(select(LeaveRequest)).all()
+
+
+def test_month_grid_rejects_invalid_pay_and_wrong_month(ctx):
+    params = {'snapshot_id': ctx.snapshot.id, 'month': '2026-09', 'kind': 'payroll'}
+    row = ctx.client.get('/api/management-reports/month-grid', params=params).json()['rows'][0]
+    payload = {**params, 'source': row['source'], 'expected_revision': 0,
+               'request_id': 'invalid-pay-0001', 'values': {**row['values'], '底薪': -1}, 'confirmed': True}
+    assert ctx.client.post('/api/management-reports/month-grid', json=payload).status_code == 422
+    assert ctx.client.post('/api/management-reports/month-grid', json={**payload, 'month': '2026-10'}).status_code == 404
+
+
 @pytest.mark.parametrize('kind', list(KINDS))
 def test_all_seven_reports_and_column_alignment(ctx, kind):
     response = ctx.client.get('/api/management-reports/report', params={'month': '2026-09', 'kind': kind, 'snapshot_id': ctx.snapshot.id})
