@@ -129,6 +129,8 @@ class WorksiteForkliftCharge(SQLModel, table=True):
     units: int = Field(default=0)
     normal_hours: float = Field(default=0)
     overtime_hours: float = Field(default=0)
+    normal_hours_detail: Optional[str] = None
+    overtime_hours_detail: Optional[str] = None
     holiday_reason: str = Field(default="")
     external_customer: Optional[str] = None
     fuel_cost: float = Field(default=0)

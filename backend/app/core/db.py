@@ -44,6 +44,10 @@ def _apply_lightweight_migrations() -> None:
     if "worksiteforkliftcharge" in table_names:
         columns = {column["name"] for column in inspector.get_columns("worksiteforkliftcharge")}
         with engine.begin() as connection:
+            if "normal_hours_detail" not in columns:
+                connection.execute(text("ALTER TABLE worksiteforkliftcharge ADD COLUMN normal_hours_detail VARCHAR"))
+            if "overtime_hours_detail" not in columns:
+                connection.execute(text("ALTER TABLE worksiteforkliftcharge ADD COLUMN overtime_hours_detail VARCHAR"))
             if "manual_total_amount" not in columns:
                 connection.execute(text("ALTER TABLE worksiteforkliftcharge ADD COLUMN manual_total_amount FLOAT"))
             if "manual_amount_reason" not in columns:

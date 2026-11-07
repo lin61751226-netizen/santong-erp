@@ -30,6 +30,8 @@ class ChargeRow(BaseModel):
     units: int = Field(ge=0, le=100)
     normal_hours: float = Field(ge=0, le=8)
     overtime_hours: float = Field(ge=0, le=24)
+    normal_hours_detail: str = Field(default="", max_length=1000)
+    overtime_hours_detail: str = Field(default="", max_length=1000)
     holiday_reason: Literal["", "週日", "元旦", "春節"] = ""
     external_customer: str = Field(default="", max_length=200)
     fuel_cost: float = Field(ge=0, le=1_000_000_000)
@@ -62,12 +64,36 @@ def _required_holiday(day: date) -> str:
     return ""
 
 
-def _amount(rate: WorksiteForkliftRate, units: int, normal: float, overtime: float, holiday: bool) -> tuple[float, float]:
+def _hour_details(raw: str, units: int, maximum: int) -> list[Decimal]:
+    parts = raw.replace("，", ",").split(",")
+    if len(parts) != units:
+        raise HTTPException(422, f"逐台工時須填 {units} 個數值，以逗號分隔")
+    result = []
+    for part in parts:
+        try:
+            hours = Decimal(part.strip())
+        except Exception as exc:
+            raise HTTPException(422, "逐台工時只能填數字，以逗號分隔") from exc
+        if not hours.is_finite() or hours < 0 or hours > maximum or hours * 2 != (hours * 2).to_integral_value():
+            raise HTTPException(422, f"每台工時須介於 0 至 {maximum} 小時，並以半小時為單位")
+        result.append(hours)
+    return result
+
+
+def _amount(rate: WorksiteForkliftRate, units: int, normal: float, overtime: float, holiday: bool,
+            normal_detail: str = "", overtime_detail: str = "") -> tuple[float, float]:
     hourly = rate.holiday_hourly if holiday else rate.weekday_hourly
     daily = rate.holiday_daily if holiday else rate.weekday_daily
-    base = Decimal(daily) if normal == 8 else Decimal(str(normal)) * Decimal(hourly)
-    normal_amount = Decimal(units) * base
-    overtime_amount = Decimal(units) * Decimal(str(overtime)) * Decimal(rate.overtime_hourly)
+    if normal_detail:
+        per_unit_normal = _hour_details(normal_detail, units, 8)
+        per_unit_overtime = _hour_details(overtime_detail, units, 24) if overtime_detail else [Decimal(0)] * units
+        normal_amount = sum((Decimal(daily) if hours == 8 else hours * Decimal(hourly)
+                             for hours in per_unit_normal), Decimal(0))
+        overtime_amount = sum((hours * Decimal(rate.overtime_hourly) for hours in per_unit_overtime), Decimal(0))
+    else:
+        base = Decimal(daily) if normal == 8 else Decimal(str(normal)) * Decimal(hourly)
+        normal_amount = Decimal(units) * base
+        overtime_amount = Decimal(units) * Decimal(str(overtime)) * Decimal(rate.overtime_hourly)
     return float(normal_amount), float(overtime_amount)
 
 
@@ -76,6 +102,8 @@ def _stored_values(item: WorksiteForkliftCharge | None) -> dict:
         "units": item.units if item else 0,
         "normal_hours": item.normal_hours if item else 0,
         "overtime_hours": item.overtime_hours if item else 0,
+        "normal_hours_detail": (item.normal_hours_detail or "") if item else "",
+        "overtime_hours_detail": (item.overtime_hours_detail or "") if item else "",
         "holiday_reason": item.holiday_reason if item else "",
         "external_customer": (item.external_customer or "") if item else "",
         "fuel_cost": item.fuel_cost if item else 0,
@@ -122,11 +150,17 @@ def read_month(
             if not item:
                 values["holiday_reason"] = _required_holiday(day)
             normal_amount, overtime_amount = _amount(rate, values["units"], values["normal_hours"],
-                                                      values["overtime_hours"], bool(values["holiday_reason"]))
+                                                      values["overtime_hours"], bool(values["holiday_reason"]),
+                                                      values["normal_hours_detail"], values["overtime_hours_detail"])
             calculated_total = normal_amount + overtime_amount
+            normal_total_hours = (sum(_hour_details(values["normal_hours_detail"], values["units"], 8))
+                                  if values["normal_hours_detail"] else Decimal(values["units"]) * Decimal(str(values["normal_hours"])))
+            overtime_total_hours = (sum(_hour_details(values["overtime_hours_detail"], values["units"], 24))
+                                    if values["overtime_hours_detail"] else Decimal(values["units"]) * Decimal(str(values["overtime_hours"])))
             rows.append({"day": day.isoformat(), "revision": item.revision if item else 0,
                          **values, "normal_amount": normal_amount,
                          "overtime_amount": overtime_amount, "calculated_total": calculated_total,
+                         "normal_total_hours": float(normal_total_hours), "overtime_total_hours": float(overtime_total_hours),
                          "total_amount": values["manual_total_amount"] if values["manual_total_amount"] is not None else calculated_total})
         sheets.append({"vehicle_type": rate.vehicle_type, "rate": {
             "weekday_hourly": rate.weekday_hourly, "weekday_daily": rate.weekday_daily,
@@ -155,10 +189,20 @@ async def save_row(
         raise HTTPException(422, "此日不是週日或元旦；春節請明確選擇春節")
     if payload.units == 0 and (payload.normal_hours or payload.overtime_hours):
         raise HTTPException(422, "有工時時車輛數量須大於零")
+    if payload.overtime_hours_detail and not payload.normal_hours_detail:
+        raise HTTPException(422, "逐台加班工時需與逐台正常工時一起填寫")
+    if payload.normal_hours_detail:
+        if payload.normal_hours or payload.overtime_hours:
+            raise HTTPException(422, "使用逐台明細時，統一每台工時須清為 0，避免重複計價")
+        _hour_details(payload.normal_hours_detail, payload.units, 8)
+        if payload.overtime_hours_detail:
+            _hour_details(payload.overtime_hours_detail, payload.units, 24)
     values = payload.model_dump(exclude={"worksite_id", "work_date", "vehicle_type", "expected_revision",
                                          "request_id", "preview_only", "confirmed"})
     values["external_customer"] = values["external_customer"].strip()
     values["payer"] = values["payer"].strip()
+    values["normal_hours_detail"] = values["normal_hours_detail"].strip().replace("，", ",")
+    values["overtime_hours_detail"] = values["overtime_hours_detail"].strip().replace("，", ",")
     values["manual_amount_reason"] = values["manual_amount_reason"].strip()
     if (values["manual_total_amount"] is None) != (not values["manual_amount_reason"]):
         raise HTTPException(422, "人工核定金額與調整理由須一起填寫；不調整時兩欄皆留空")
@@ -168,7 +212,8 @@ async def save_row(
         if values[key].startswith(("=", "+", "-", "@")):
             raise HTTPException(422, f"{key} 不能以公式符號開頭")
     normal_amount, overtime_amount = _amount(rate, payload.units, payload.normal_hours,
-                                              payload.overtime_hours, bool(payload.holiday_reason))
+                                              payload.overtime_hours, bool(payload.holiday_reason),
+                                              values["normal_hours_detail"], values["overtime_hours_detail"])
     calculated_total = normal_amount + overtime_amount
     total_amount = values["manual_total_amount"] if values["manual_total_amount"] is not None else calculated_total
     current = session.exec(select(WorksiteForkliftCharge).where(
@@ -198,6 +243,8 @@ async def save_row(
         return {"saved": True, "unchanged": True, "revision": revision, "backup": await _backup()}
     stored = {**values, "external_customer": values["external_customer"] or None,
               "payer": values["payer"] or None, "manual_amount_reason": values["manual_amount_reason"] or None,
+              "normal_hours_detail": values["normal_hours_detail"] or None,
+              "overtime_hours_detail": values["overtime_hours_detail"] or None,
               "normal_amount": normal_amount,
               "overtime_amount": overtime_amount}
     if current:

@@ -673,10 +673,12 @@
           <div><label for="worksitePricingJournalUnits">本車型台數</label><input id="worksitePricingJournalUnits" type="number" min="1" max="100" step="1" value="1"></div>
           <div><label for="worksitePricingJournalNormal">本車型正常總工時</label><input id="worksitePricingJournalNormal" type="number" min="0" max="800" step="0.5"></div>
           <div><label for="worksitePricingJournalOvertime">本車型加班總工時</label><input id="worksitePricingJournalOvertime" type="number" min="0" max="2400" step="0.5"></div>
+          <div><label for="worksitePricingJournalDetail">逐台正常工時（如 2,3；不同時數請填）</label><input id="worksitePricingJournalDetail" placeholder="例：2,3"></div>
+          <div><label for="worksitePricingJournalOvertimeDetail">逐台加班工時（有加班時請填）</label><input id="worksitePricingJournalOvertimeDetail" placeholder="例：0,1"></div>
           <button type="button" onclick="applyJournalToWorksitePricing()">帶入目前車型，待核對保存</button>
         </div>
         <div id="worksitePricingTable" class="cost-grid-sheet"></div>
-        <p class="muted">2.5噸 2節桿與高4.5M各自計價。正常滿8小時採日價、不滿8小時採時價；加班時數另計。若實際約定金額不同，可填「核定未稅金額」及理由，公式金額仍保留供比對；清空兩欄即可恢復公式。週日與元旦自動採假日價；春節需明確選擇。油錢僅記錄不加入請款金額。每列核對後才保存。</p>
+        <p class="muted">同型車輛時數相同，可填「統一每台時數」；不同時數請填逐台明細（如 2,3），統一欄須為 0，系統依各台時數分別計價並顯示合計台時。正常滿8小時採日價、不滿8小時採時價；加班另計。若實際約定金額不同，可填「核定未稅金額」及理由，公式金額仍保留供比對；清空兩欄即可恢復公式。週日與元旦自動採假日價；春節需明確選擇。油錢僅記錄不加入請款金額。每列核對後才保存。</p>
       </div>
       <div id="companyWorkbookSection" hidden>
         <div class="cost-grid-toolbar">
@@ -1443,7 +1445,7 @@
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
   <script src="/static/cost_grid.js?v=20261107"></script>
-  <script src="/static/worksite_pricing.js?v=20261108a"></script>
+  <script src="/static/worksite_pricing.js?v=20261108b"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
   <script src="/static/management_reports.js"></script>

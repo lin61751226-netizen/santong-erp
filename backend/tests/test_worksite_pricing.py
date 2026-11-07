@@ -138,3 +138,40 @@ def test_guotai_cannot_write_legacy_pricing_label(ctx):
             response = ctx.client.post(endpoint, json=payload)
             assert response.status_code == 422
             assert '國泰慈文' in response.json()['detail']
+
+
+def test_two_forklifts_with_different_hours_are_priced_separately(ctx):
+    original = row_payload(ctx, day='2026-11-07', units=2, normal_hours=5, overtime_hours=0)
+    assert ctx.client.post('/api/worksite-pricing/row', json={**original, 'confirmed': True}).json()['total_amount'] == 12000
+    corrected = {**original, 'normal_hours': 0, 'normal_hours_detail': '2,3',
+                 'overtime_hours_detail': '', 'expected_revision': 1, 'request_id': 'row-test-0002'}
+    preview = ctx.client.post('/api/worksite-pricing/row', json={**corrected, 'preview_only': True})
+    assert preview.status_code == 200
+    assert preview.json()['before']['normal_hours'] == 5
+    assert preview.json()['after']['normal_hours_detail'] == '2,3'
+    assert preview.json()['calculated_total'] == preview.json()['total_amount'] == 6000
+    saved = ctx.client.post('/api/worksite-pricing/row', json={**corrected, 'confirmed': True})
+    assert saved.status_code == 200 and saved.json()['revision'] == 2
+    rows = ctx.client.get('/api/worksite-pricing/month', params={
+        'worksite_id': ctx.site.id, 'year': 2026, 'month': 11,
+    }).json()['sheets'][0]['rows']
+    corrected_row = next(row for row in rows if row['day'] == '2026-11-07')
+    assert corrected_row['normal_hours_detail'] == '2,3'
+    assert corrected_row['normal_total_hours'] == 5
+    assert corrected_row['total_amount'] == 6000
+    assert corrected_row['manual_total_amount'] is None
+    assert len(ctx.session.exec(select(AdminAuditLog).where(AdminAuditLog.action == 'worksite_pricing_edit')).all()) == 2
+
+
+def test_per_forklift_hours_must_be_complete_and_not_double_counted(ctx):
+    base = row_payload(ctx, day='2026-11-07', units=2, normal_hours=0, overtime_hours=0,
+                       normal_hours_detail='2,3', preview_only=True)
+    for change in ({'normal_hours_detail': '2'}, {'normal_hours_detail': '2,9'},
+                   {'normal_hours': 5}, {'overtime_hours_detail': '0,1,2'}):
+        assert ctx.client.post('/api/worksite-pricing/row', json={**base, **change}).status_code == 422
+    day_rate = ctx.client.post('/api/worksite-pricing/row', json={
+        **base, 'normal_hours_detail': '8,2', 'overtime_hours_detail': '0,1',
+    })
+    assert day_rate.status_code == 200
+    assert day_rate.json()['normal_amount'] == 10400
+    assert day_rate.json()['overtime_amount'] == 1500

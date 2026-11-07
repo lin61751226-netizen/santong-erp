@@ -15,7 +15,7 @@ test('Guotai November pricing previews and saves per vehicle and day',
   const browser = await chromium.launch({headless: true, executablePath: chromePath});
   try {
     const page = await browser.newPage();
-    await page.setContent('<input id="worksitePricingMonth" type="month" value="2026-11"><p id="worksitePricingStatus"></p><div id="worksitePricingTabs"></div><div id="worksitePricingJournalImport" hidden><strong id="worksitePricingJournalDate"></strong><input id="worksitePricingJournalUnits" type="number" value="2"><input id="worksitePricingJournalNormal" type="number"><input id="worksitePricingJournalOvertime" type="number"></div><div id="worksitePricingTable"></div>');
+    await page.setContent('<input id="worksitePricingMonth" type="month" value="2026-11"><p id="worksitePricingStatus"></p><div id="worksitePricingTabs"></div><div id="worksitePricingJournalImport" hidden><strong id="worksitePricingJournalDate"></strong><input id="worksitePricingJournalUnits" type="number" value="2"><input id="worksitePricingJournalNormal" type="number"><input id="worksitePricingJournalOvertime" type="number"><input id="worksitePricingJournalDetail"><input id="worksitePricingJournalOvertimeDetail"></div><div id="worksitePricingTable"></div>');
     await page.evaluate(() => {
       window.escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;');
       window.escapeAttr = window.escapeHtml;
@@ -58,6 +58,15 @@ test('Guotai November pricing previews and saves per vehicle and day',
     assert.equal(await page.locator('input[data-field="normal_hours"]').inputValue(), '5');
     assert.equal(await page.locator('input[data-field="overtime_hours"]').inputValue(), '2');
     assert.equal(await page.locator('input[data-field="manual_total_amount"]').inputValue(), '');
-    assert.match(await page.locator('#worksitePricingStatus').textContent(), /已帶入每台 5\/2 小時/);
+    assert.match(await page.locator('#worksitePricingStatus').textContent(), /平均每台 5\/2 小時/);
+    await page.evaluate(() => {
+      worksitePricing.journalImport = {day: '2026-11-02', normalHours: 5, overtimeHours: 0};
+      renderWorksitePricingJournalImport();
+    });
+    await page.locator('#worksitePricingJournalDetail').fill('2,3');
+    await page.evaluate(() => applyJournalToWorksitePricing());
+    assert.equal(await page.locator('input[data-field="normal_hours_detail"]').inputValue(), '2,3');
+    assert.equal(await page.locator('input[data-field="normal_hours"]').inputValue(), '0');
+    assert.match(await page.locator('#worksitePricingStatus').textContent(), /逐台 2,3 小時/);
   } finally { await browser.close(); }
 });
