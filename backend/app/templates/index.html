@@ -647,6 +647,7 @@
         <div><label for="costGridDocument">推高機計價檔</label><select id="costGridDocument" onchange="loadCostGrid()"></select></div>
         <div><label for="costGridMonth">月份</label><input id="costGridMonth" type="month" onchange="loadCostGrid()"></div>
         <button type="button" class="button-secondary" onclick="loadCostGrid()">重新載入</button>
+        <button type="button" class="button-secondary" onclick="openPricingPrint('legacy')">A4 計價表預覽／列印</button>
       </div>
       <p id="costGridStatus" class="notice" role="status" aria-live="polite">選擇計價檔與月份後載入月表格。未按保存前不會寫入 Google Drive。</p>
       <div id="costGridTabs" class="cost-grid-tabs" role="tablist" aria-label="計價標別"></div>
@@ -665,6 +666,7 @@
         <div class="cost-grid-toolbar">
           <div><label for="worksitePricingMonth">月份（自 115 年 11 月起）</label><input id="worksitePricingMonth" type="month" min="2026-11" onchange="loadWorksitePricing()"></div>
           <button type="button" class="button-secondary" onclick="loadWorksitePricing()">重新載入</button>
+          <button type="button" class="button-secondary" onclick="openPricingPrint('worksite')">A4 計價表預覽／列印</button>
         </div>
         <p id="worksitePricingStatus" class="notice" role="status" aria-live="polite">先選月份，再按車型逐日登錄；原計價 Excel 不覆蓋。</p>
         <div id="worksitePricingTabs" class="cost-grid-tabs" role="tablist" aria-label="國泰慈文車型"></div>
@@ -1446,6 +1448,7 @@
   <script src="/static/document_data.js"></script>
   <script src="/static/cost_grid.js?v=20261107"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
+  <script src="/static/pricing_print.js?v=20261108"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
   <script src="/static/management_reports.js"></script>

@@ -79,6 +79,10 @@ class TestCostGrid:
         data = response.json()
         assert set(sheet["label"] for sheet in data["sheets"]) == {"45", "新竹寶山1"}
         assert data["sheets"][0]["rows"][0]["day"] == date(2026, 9, 1).isoformat()
+        for sheet in data["sheets"]:
+            totals = sheet["totals"]
+            assert round(totals["untaxed"], 2) == round(sum(row["total"] for row in sheet["rows"]), 2)
+            assert totals["taxed"] == totals["untaxed"] + totals["tax"]
         payload = self.payload(data["sha256"])
         preview = self.client.post("/api/cost-hour-imports/grid", json={**payload, "preview_only": True})
         assert preview.status_code == 200, preview.text

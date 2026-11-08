@@ -2805,6 +2805,7 @@ async def read_cost_hour_grid(
         for label, rows in data.sheets.items():
             rates = data.parameters.rates_for(label)
             items = []
+            daily_costs = []
             for row in rows:
                 cost = evaluate_day_amounts(
                     data.parameters, rates, row.row_number,
@@ -2812,16 +2813,19 @@ async def read_cost_hour_grid(
                     c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
                     is_holiday=row.is_holiday,
                 )
+                daily_costs.append(cost)
                 items.append({
                     "day": row.day.isoformat(), "row_number": row.row_number,
                     "is_holiday": row.is_holiday, "holiday_reason": holiday_reason(row.day),
                     **_cost_grid_row_values(row), **_amount_payload(cost),
                 })
+            totals = totals_from_day_costs(rates, daily_costs, month, data.parameters.tax_rate, data.parameters.safety_rate)
             sheets.append({
                 "label": label, "worksheet_name": rows[0].worksheet_name,
                 "rates": {"normal_hourly": rates.normal_hourly, "daily": rates.daily,
                           "ot_rate": rates.ot_rate, "holiday_rate": rates.holiday_rate,
                           "support_rate": rates.support_rate},
+                "totals": {"untaxed": totals.untaxed, "tax": totals.tax, "taxed": totals.taxed},
                 "rows": items,
             })
     except CostWorkbookError as exc:
