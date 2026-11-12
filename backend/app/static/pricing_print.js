@@ -40,19 +40,17 @@ function pricingPrintNonZero(value) {
   return Math.abs(Number(value || 0)) > 0.0001;
 }
 
-// 核定額是當日未稅合計。只有一個金額欄有公式金額時，整筆核定額放進該欄；
+// 核定額是當日未稅合計，直接改寫金額欄，不寫進紙本備註。
+// 只有一個金額欄有公式金額時，整筆核定額放進該欄；
 // 正常與加班（或支援）同時有金額、無法拆開時，差額併入正常金額。
+// 公式已變的舊核定不套用，避免印出過期金額。
 function pricingPrintApprovedSplit(row) {
   const normal = Number(row.normal_amount || 0);
   const overtime = Number(row.overtime_amount || 0);
   const support = Number(row.support_amount || 0);
   const formula = pricingPrintRound(row.total ?? normal + overtime + support);
-  const split = {normal, overtime, support, note: ''};
-  if (row.adjustment_stale) {
-    const previous = pricingPrintMoney(row.manual_total_amount);
-    split.note = previous ? `舊核定 ${previous} 待重核，暫採公式` : '舊核定待重核，暫採公式';
-    return split;
-  }
+  const split = {normal, overtime, support};
+  if (row.adjustment_stale) return split;
   if (row.manual_total_amount == null || row.manual_total_amount === '') return split;
   const approved = pricingPrintRound(row.effective_total ?? row.manual_total_amount);
   const delta = pricingPrintRound(approved - formula);
@@ -61,8 +59,6 @@ function pricingPrintApprovedSplit(row) {
     .filter(([, value]) => pricingPrintNonZero(value));
   if (buckets.length === 1) split[buckets[0][0]] = approved;
   else split.normal = pricingPrintRound(normal + delta);
-  const reason = String(row.amount_adjustment_reason || '未註明');
-  split.note = `核定 ${pricingPrintAmount(formula)}→${pricingPrintAmount(approved)}（${reason}）`;
   return split;
 }
 
@@ -77,7 +73,7 @@ function pricingPrintLegacyHtml(data, sheet) {
   ));
   const columns = showSupport
     ? [['date', '18%'], ['hours', '9%'], ['money', '12%'], ['hours', '9%'], ['money', '12%'], ['hours', '9%'], ['money', '12%'], ['note', '19%']]
-    : [['date', '19%'], ['hours', '10%'], ['money', '14%'], ['hours', '10%'], ['money', '14%'], ['note', '33%']];
+    : [['date', '20%'], ['hours', '13%'], ['money', '16%'], ['hours', '13%'], ['money', '16%'], ['note', '22%']];
   const headers = ['日期', '正常<br>時數', '正常<br>金額', '加班<br>時數', '加班<br>金額'];
   if (showSupport) headers.push('支援<br>時數', '支援<br>金額');
   headers.push('備註');
@@ -94,7 +90,7 @@ function pricingPrintLegacyHtml(data, sheet) {
     if (showSupport) {
       cells.push(['hours', pricingPrintHours(row.support_hours)], ['money', pricingPrintMoney(split.support)]);
     }
-    cells.push(['note', split.note]);
+    cells.push(['note', '']);
     return `<tr${off ? ' class="off"' : ''}>${cells.map(([kind, value]) => `<td class="${kind}">${safe(value)}</td>`).join('')}</tr>`;
   }).join('');
   const subtotalCells = [
@@ -145,14 +141,16 @@ function pricingPrintLegacyHtml(data, sheet) {
     tr.grand td.boxed.untaxed { font-size: 13pt; }
     tr.grand td.boxed.taxed { font-size: 15pt; }
     .billing-sign { display: flex; justify-content: space-between; gap: 8mm; margin: 4mm 1mm 0; font-size: 9pt; color: #000; }
+    .screen-only { margin: 0; padding: 8px 16px; background: #fff4e5; color: #7a3e00; text-align: center; font-size: 13px; }
     @media print {
       html, body { background: #fff; }
-      .toolbar { display: none; }
+      .toolbar, .screen-only { display: none; }
       .page { width: auto; margin: 0; padding: 0; box-shadow: none; }
       tr { break-inside: avoid; }
       .billing-sign { break-inside: avoid; }
     }
   </style></head><body><div class="toolbar">A4 直式列印預覽 · 請先核對內容，再選 A4／實際大小 100%<button id="pricingPrintButton" type="button">列印 A4</button></div>
+    ${sheet.rows.some(row => row.adjustment_stale) ? `<p class="screen-only">舊核定未印上表：${sheet.rows.filter(row => row.adjustment_stale).map(row => safe(pricingPrintBillingDate(row.day))).join('、')}。公式已變，紙本暫採公式金額。</p>` : ''}
     <main class="page"><table class="billing"><colgroup>${columns.map(([kind, width]) => `<col class="${kind}" style="width:${width}">`).join('')}</colgroup>
       <thead><tr class="title"><th colspan="${columns.length}">${safe(title)}</th></tr><tr>${headers.map(label => `<th>${label}</th>`).join('')}</tr></thead>
       <tbody>${rows}</tbody><tfoot>${summary}</tfoot></table>

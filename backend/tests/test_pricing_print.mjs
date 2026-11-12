@@ -146,15 +146,16 @@ test('October 53 legacy billing sheet matches the company Excel layout on one A4
       const texts = marker => rowCells(html, marker).cells.map(cell => cell.text);
       assert.deepEqual(texts(billingDate('2026-10-01')), ['10月1日(週四)', '16', '12,000', '0', '', '']);
       assert.deepEqual(texts(billingDate('2026-10-04')), ['10月4日(週日)', '0', '', '4', '4,000', '']);
-      assert.deepEqual(texts(billingDate('2026-10-23')), [
-        '10月23日(週五)', '8', '6,400', '0', '', '核定 6,000→6,400（依當日簽單核定）',
-      ]);
+      assert.deepEqual(texts(billingDate('2026-10-23')), ['10月23日(週五)', '8', '6,400', '0', '', '']);
       assert.deepEqual(texts(billingDate('2026-10-25')), ['10月25日(週日)', '0', '', '0', '', '']);
       assert.deepEqual(texts('>小計<'), ['小計', '500', '377,600', '48', '48,000', '']);
       assert.match(html, /<td class="boxed untaxed">425,600<\/td>/);
       assert.match(html, /<td class="boxed taxed">446,880<\/td>/);
-      assert.equal((html.match(/(?<!\d)6,400(?!\d)/g) || []).length, 2);
-      assert.equal((html.match(/(?<!\d)6,000(?!\d)/g) || []).length, 1);
+      assert.equal((html.match(/(?<!\d)6,400(?!\d)/g) || []).length, 1);
+      assert.equal((html.match(/(?<!\d)6,000(?!\d)/g) || []).length, 0);
+      assert.doesNotMatch(html, /依當日簽單核定|核定 /);
+      const printed = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+      assert.doesNotMatch(printed, /備註[^<]*核定|待重核|舊核定/);
       assert.match(rowCells(html, billingDate('2026-10-01')).cells[0].className, /^date$/);
       assert.match(rowCells(html, billingDate('2026-10-01')).cells[2].className, /^money$/);
 
@@ -207,12 +208,16 @@ test('legacy billing keeps backend totals, support money, and print safeguards',
       assert.ok(header.indexOf('加班<br>金額') < header.indexOf('支援<br>時數'));
       assert.ok(header.indexOf('支援<br>金額') < header.indexOf('備註'));
       const texts = marker => rowCells(html, marker).cells.map(cell => cell.text);
-      assert.deepEqual(texts('10月1日(週四)'), ['10月1日(週四)', '8', '6,400', '1', '1,000', '0', '', '核定 7,000→7,400（無法拆分）']);
-      assert.deepEqual(texts('10月2日(週五)'), ['10月2日(週五)', '0', '', '1', '1,200', '0', '', '核定 1,000→1,200（加班簽單）']);
+      assert.deepEqual(texts('10月1日(週四)'), ['10月1日(週四)', '8', '6,400', '1', '1,000', '0', '', '']);
+      assert.deepEqual(texts('10月2日(週五)'), ['10月2日(週五)', '0', '', '1', '1,200', '0', '', '']);
       assert.deepEqual(texts('10月3日(週六)'), ['10月3日(週六)', '0', '', '0', '', '2', '1,600', '']);
       assert.match(rowCells(html, '10月3日(週六)').row, /^<tr class="off">/);
-      assert.deepEqual(texts('10月4日(週日)'), ['10月4日(週日)', '8', '6,000', '0', '', '0', '', '舊核定 6,400 待重核，暫採公式']);
+      assert.deepEqual(texts('>10月4日(週日)<'), ['10月4日(週日)', '8', '6,000', '0', '', '0', '', '']);
       assert.deepEqual(texts('>小計<'), ['小計', '16', '12,400', '2', '2,200', '2', '1,600', '']);
+      const printed = html.slice(html.indexOf('<main'), html.indexOf('</main>'));
+      assert.doesNotMatch(printed, /無法拆分|加班簽單|舊簽單|待重核|舊核定/);
+      assert.match(html, /<p class="screen-only">舊核定未印上表：10月4日\(週日\)。公式已變，紙本暫採公式金額。<\/p>/);
+      assert.match(html, /@media print[\s\S]*\.toolbar,\s*\.screen-only\s*\{\s*display:\s*none/);
       assert.match(html, /<td class="boxed untaxed">16,200<\/td>/);
       assert.match(html, /<td class="boxed taxed">17,010<\/td>/);
 
@@ -255,6 +260,10 @@ test('legacy billing keeps backend totals, support money, and print safeguards',
       await page.evaluate(() => { window.costGridDirty = () => true; window.opened = 0; openPricingPrint('legacy'); });
       assert.match(await page.locator('#costGridStatus').innerText(), /未保存/);
       assert.equal(await page.evaluate(() => window.opened), 0);
+      await page.setContent(html);
+      await page.emulateMedia({media: 'print'});
+      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.screen-only')).display), 'none');
+      assert.equal(await page.evaluate(() => document.querySelector('.page').innerText.includes('舊核定')), false);
     });
   });
 
