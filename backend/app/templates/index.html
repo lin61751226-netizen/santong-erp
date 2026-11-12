@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=20261112">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -652,6 +652,20 @@
       <p id="costGridStatus" class="notice" role="status" aria-live="polite">選擇計價檔與月份後載入月表格。未按保存前不會寫入 Google Drive。</p>
       <div id="costGridTabs" class="cost-grid-tabs" role="tablist" aria-label="計價標別"></div>
       <div id="costGridSheet" class="cost-grid-sheet"></div>
+      <section id="costGridAdjustment" class="cost-grid-adjustment" hidden aria-label="核定金額調整">
+        <h3 id="costGridAdjustmentTitle">核定金額調整</h3>
+        <p id="costGridAdjustmentFormula" class="muted"></p>
+        <div class="cost-grid-toolbar">
+          <div><label for="costGridAdjustmentAmount">核定未稅金額（留空恢復公式）</label><input id="costGridAdjustmentAmount" type="number" min="0" max="1000000000" step="0.01" oninput="editCostGridAdjustment()"></div>
+          <div><label for="costGridAdjustmentReason">調整原因（核定金額必填）</label><input id="costGridAdjustmentReason" maxlength="200" oninput="editCostGridAdjustment()"></div>
+        </div>
+        <div class="button-row cost-grid-actions">
+          <button type="button" class="button-secondary" id="costGridAdjustmentPreview" onclick="previewCostGridAdjustment()">預覽調整差異</button>
+          <button type="button" id="costGridAdjustmentSave" onclick="saveCostGridAdjustment()" disabled>確認保存核定金額</button>
+          <button type="button" class="button-secondary" onclick="cancelCostGridAdjustment()">取消</button>
+        </div>
+        <div id="costGridAdjustmentReview" class="console" hidden></div>
+      </section>
       <div class="button-row cost-grid-actions">
         <button type="button" class="button-secondary" id="costGridPreview" onclick="previewCostGrid()" disabled>核對變更與金額</button>
         <label><input type="checkbox" id="costGridConfirm" disabled> 我已核對金額與簽單差異</label>
@@ -659,7 +673,7 @@
         <button type="button" class="button-secondary" id="costGridBackup" onclick="retryCostGridBackup()">重試資料庫雲端備份</button>
       </div>
       <div id="costGridReview" class="console" hidden></div>
-      <p class="muted">只修改已變動日期的 B／D／F／H／I／J 欄；工時變更時沿用原系統的平日／假日公式校正，C／E／G 金額由活頁簿公式計算。切換標別或離開時會提醒未保存內容；別人更新檔案後須重新載入，避免覆蓋。保存後有 Drive 修訂、系統稽核與資料庫備份。</p>
+      <p class="muted">工時與備註只修改已變動日期的 B／D／F／H／I／J 欄；C／E／G 仍由原 Excel 公式計算。核定金額另存系統調整紀錄，需填原因、不覆蓋原公式；公式之後改變時須重新核對。切換標別或離開時會提醒未保存內容。</p>
       <p class="muted">國泰慈文的獨立費率可在「工地管理 → 查看堆高機計價」核對；它不是既有計價活頁簿標別，未匯入至此表的公式。</p>
       </div>
       <div id="worksitePricingSection" hidden>
@@ -1446,9 +1460,9 @@
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
-  <script src="/static/cost_grid.js?v=20261107"></script>
+  <script src="/static/cost_grid.js?v=20261112"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
-  <script src="/static/pricing_print.js?v=20261108"></script>
+  <script src="/static/pricing_print.js?v=20261112"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
   <script src="/static/management_reports.js"></script>
@@ -3460,7 +3474,7 @@
       }).join("");
       box.innerHTML = `
         <p><strong>${escapeHtml(data.document_name || "")}｜${data.year} 年 ${data.month} 月（${data.period}）</strong>｜預計寫入 ${data.counts.write} 日、略過已填 ${data.counts.skipped_exists} 日、無作業 ${data.counts.empty} 日</p>
-        <p>全標請款合計：未稅 <strong id="cm-inv-total-untaxed">0</strong>、營業稅 <span id="cm-inv-total-tax">0</span>、含稅 <strong id="cm-inv-total-taxed">0</strong>（僅計正常＋加班，不含支援）。可直接在表格調整工時，金額即時重算，並可用「列印當月請款單」輸出。</p>
+        <p>全標請款合計：未稅 <strong id="cm-inv-total-untaxed">0</strong>、營業稅 <span id="cm-inv-total-tax">0</span>、含稅 <strong id="cm-inv-total-taxed">0</strong>（僅計正常＋加班，不含支援）。此整月匯入預覽仍依工時公式試算，不含「Excel 線上資料處理」的人工核定金額；正式核定請回月表確認並用該頁 A4 計價表預覽。可直接在表格調整工時，金額即時重算，並可用「列印當月請款單」輸出。</p>
         ${warnings ? `<ul style="color:#a33;">${warnings}</ul>` : ""}
         <div class="pricing-toolbar">
           <div><label for="costMonthLabel">檢視標別</label><select id="costMonthLabel" onchange="selectCostMonthLabel(this.value)">${data.labels.map((item,index)=>`<option value="${index}">${escapeHtml(item.label)}｜${escapeHtml(item.worksite_name || "未對應工地")}</option>`).join("")}</select></div>

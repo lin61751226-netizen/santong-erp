@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
-from app.models import AdminAuditLog, Employee, ManagedDocument, Role, WorkHourImportLog
+from app.models import AdminAuditLog, CostGridAmountAdjustment, Employee, ManagedDocument, Role, WorkHourImportLog
 from app.routes import admin as admin_routes
 from test_cost_month_api import _cost_workbook_bytes
 
@@ -137,4 +137,76 @@ class TestCostGrid:
         assert self.read().status_code == 403
         assert self.client.post("/api/cost-hour-imports/grid", json=self.payload("a" * 64)).status_code == 403
         assert self.client.post("/api/cost-hour-imports/grid/backup").status_code == 403
+        self.upload.assert_not_called()
+
+    def test_reviewed_amount_is_separate_from_formula_and_stales_after_formula_change(self):
+        workbook = openpyxl.load_workbook(BytesIO(self.content), keep_vba=True)
+        workbook["11509-45"]["B5"] = 8
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        self.content = output.getvalue()
+        original_content = self.content
+        data = self.read().json()
+        sheet = next(item for item in data["sheets"] if item["label"] == "45")
+        assert sheet["rows"][0]["total"] == 6000
+        payload = {"document_id": self.document.id, "day": "2026-09-01", "label": "45",
+                   "expected_sha256": data["sha256"], "expected_revision": 0,
+                   "manual_total_amount": 6400, "reason": "依當日簽單核定"}
+        endpoint = "/api/cost-hour-imports/grid/amount-adjustment"
+        preview = self.client.post(endpoint, json={**payload, "preview_only": True})
+        assert preview.status_code == 200, preview.text
+        assert (preview.json()["formula_amount"], preview.json()["after"]) == (6000, 6400)
+        assert self.client.post(endpoint, json=payload).status_code == 409
+        assert self.client.post(endpoint, json={**payload, "reason": "", "confirmed": True}).status_code == 422
+        saved = self.client.post(endpoint, json={**payload, "confirmed": True})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["backup_status"] == "saved"
+        assert self.content == original_content
+        self.upload.assert_not_called()
+        row = next(item for item in self.read().json()["sheets"] if item["label"] == "45")
+        assert row["rows"][0]["total"] == 6000
+        assert row["rows"][0]["effective_total"] == 6400
+        assert row["totals"]["untaxed"] == 6400
+        assert row["totals"]["tax"] == 320
+        assert self.session.exec(select(CostGridAmountAdjustment)).one().revision == 1
+        assert self.session.exec(select(AdminAuditLog).where(
+            AdminAuditLog.action == "cost_grid_amount_adjustment")).one().actor_code == "ADMIN001"
+        assert self.client.post(endpoint, json={**payload, "confirmed": True}).status_code == 409
+
+        workbook = openpyxl.load_workbook(BytesIO(self.content), keep_vba=True)
+        workbook["11509-45"]["B5"] = 4
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        self.content = output.getvalue()
+        changed_data = self.read().json()
+        changed_row = next(item for item in changed_data["sheets"] if item["label"] == "45")["rows"][0]
+        assert changed_row["adjustment_stale"] is True
+        assert changed_row["effective_total"] == changed_row["total"] == 3200
+        reviewed = self.client.post(endpoint, json={**payload, "expected_sha256": changed_data["sha256"],
+                                                   "expected_revision": 1, "preview_only": True})
+        assert reviewed.json()["changed"] is True
+        cleared = self.client.post(endpoint, json={**payload, "expected_sha256": changed_data["sha256"],
+                                                  "expected_revision": 1, "manual_total_amount": None,
+                                                  "reason": "", "confirmed": True})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["after"] == 3200
+        restored = next(item for item in self.read().json()["sheets"] if item["label"] == "45")["rows"][0]
+        assert restored["effective_total"] == restored["total"] == 3200
+        assert restored["adjustment_revision"] == 2
+
+    def test_amount_adjustment_requires_admin_and_current_file(self):
+        data = self.read().json()
+        payload = {"document_id": self.document.id, "day": "2026-09-01", "label": "45",
+                   "expected_sha256": "0" * 64, "expected_revision": 0,
+                   "manual_total_amount": 6400, "reason": "核對簽單", "confirmed": True}
+        endpoint = "/api/cost-hour-imports/grid/amount-adjustment"
+        assert self.client.post(endpoint, json=payload).status_code == 409
+        payload["expected_sha256"] = data["sha256"]
+        worker = Employee(employee_code="D001", name="員工", role=Role.employee, bind_token="worker")
+        self.session.add(worker)
+        self.session.commit()
+        app.dependency_overrides[get_current_actor] = lambda: worker
+        assert self.client.post(endpoint, json=payload).status_code == 403
         self.upload.assert_not_called()

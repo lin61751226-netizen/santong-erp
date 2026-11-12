@@ -1085,4 +1085,8 @@ body.map-open { overflow: hidden; }
 .cost-grid-scroll input:invalid { border-color: #c7453c; background: #fff0ed; }
 .cost-grid-actions { margin: 14px 0; align-items: center; }
 .cost-grid-actions label { display: inline-flex; align-items: center; gap: 6px; }
+.cost-grid-adjustment { margin: 15px 0; padding: 16px; border: 1px solid #b4c4ca; border-radius: 12px; background: #f7faf8; }
+.cost-grid-adjustment h3 { margin: 0 0 6px; }
+.cost-grid-adjusted { font-weight: 700; color: #175f50; }
+.cost-grid-stale { color: #a43732; font-weight: 700; }
 #costGridReview { white-space: pre-wrap; max-height: 260px; overflow: auto; }

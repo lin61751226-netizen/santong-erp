@@ -222,6 +222,18 @@ class CostGridSaveRequest(BaseModel):
     preview_only: bool = False
 
 
+class CostGridAmountAdjustmentRequest(BaseModel):
+    document_id: int = Field(ge=1)
+    day: date
+    label: str = Field(min_length=1, max_length=100)
+    expected_sha256: str = Field(min_length=64, max_length=64)
+    expected_revision: int = Field(ge=0)
+    manual_total_amount: Optional[float] = Field(default=None, ge=0, le=1_000_000_000, allow_inf_nan=False)
+    reason: str = Field(default="", max_length=200)
+    preview_only: bool = False
+    confirmed: bool = False
+
+
 class WorksiteJournalHoursUpdate(BaseModel):
     worksite_id: int
     work_date: date

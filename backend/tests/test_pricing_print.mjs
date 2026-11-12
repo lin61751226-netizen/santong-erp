@@ -27,15 +27,21 @@ test('saved legacy pricing renders one A4 page with monthly totals',
       await page.addScriptTag({path: script});
       const html = await page.evaluate(input => pricingPrintHtml('legacy', input.data, input.sheet), {
         data: {year: 2026, month: 11, tax_rate: 0.05, document_name: '正式計價.xlsm'},
-        sheet: {label: '53', worksheet_name: '11511-53', totals: {untaxed: 6000, tax: 300, taxed: 6300}, rows: days(2026, 11).map((day, index) => ({
+        sheet: {label: '53', worksheet_name: '11511-53', totals: {untaxed: 6400, tax: 320, taxed: 6720}, rows: days(2026, 11).map((day, index) => ({
           day, is_holiday: false, normal_hours: index === 0 ? 8 : 0,
           normal_amount: index === 0 ? 6000 : 0, overtime_hours: 0, overtime_amount: 0,
-          support_hours: 0, support_amount: 0, external_customer: '', fuel_cost: 0, payer: '',
+          support_hours: 0, support_amount: 0, total: index === 0 ? 6000 : 0,
+          effective_total: index === 0 ? 6400 : 0,
+          manual_total_amount: index === 0 ? 6400 : null,
+          amount_adjustment_reason: index === 0 ? '依簽單核定' : '',
+          external_customer: '', fuel_cost: 0, payer: '',
         }))},
       });
       assert.match(html, /115 年 11 月 53 計價表/);
       assert.match(html, /6,000/);
-      assert.match(html, /6,300/);
+      assert.match(html, /6,400/);
+      assert.match(html, /6,720/);
+      assert.match(html, /依簽單核定/);
       assert.match(html, /@page\{size:A4 portrait/);
       await page.setContent(html);
       await page.emulateMedia({media: 'print'});

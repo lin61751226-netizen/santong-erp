@@ -403,6 +403,26 @@ class WorkHourImportLog(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class CostGridAmountAdjustment(SQLModel, table=True):
+    """Keep a reviewed billing amount separate from the original Excel formula."""
+
+    __table_args__ = (
+        UniqueConstraint("managed_document_id", "target_label", "work_date",
+                         name="uq_cost_grid_amount_adjustment_day"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    managed_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    target_label: str = Field(index=True)
+    work_date: date = Field(index=True)
+    manual_total_amount: Optional[float] = None
+    formula_amount_at_review: float = 0
+    reason: str = ""
+    revision: int = 1
+    updated_by_id: Optional[int] = Field(default=None, foreign_key="employee.id")
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class WorksiteJournalHours(SQLModel, table=True):
     """每日各工地確認後的計價工時，供單日與整月計價匯入共用。"""
 

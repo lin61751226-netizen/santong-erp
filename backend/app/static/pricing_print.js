@@ -24,8 +24,8 @@ function pricingPrintHtml(kind, data, sheet) {
   let summary;
   let notes = '';
   if (isLegacy) {
-    header = '<tr><th>日期</th><th>正常<br>時數</th><th>正常<br>金額</th><th>加班<br>時數</th><th>加班<br>金額</th><th>支援<br>時數</th><th>支援<br>金額</th></tr>';
-    rows = sheet.rows.map(row => `<tr class="${rowClass(row)}"><td>${pricingPrintDay(row.day)}</td><td>${safe(pricingPrintMoney(row.normal_hours))}</td><td>${safe(pricingPrintMoney(row.normal_amount))}</td><td>${safe(pricingPrintMoney(row.overtime_hours))}</td><td>${safe(pricingPrintMoney(row.overtime_amount))}</td><td>${safe(pricingPrintMoney(row.support_hours))}</td><td>${safe(pricingPrintMoney(row.support_amount))}</td></tr>`).join('');
+    header = '<tr><th>日期</th><th>正常<br>時數</th><th>正常<br>金額</th><th>加班<br>時數</th><th>加班<br>金額</th><th>支援<br>時數</th><th>支援<br>金額</th><th>核定<br>未稅金額</th></tr>';
+    rows = sheet.rows.map(row => `<tr class="${rowClass(row)}"><td>${pricingPrintDay(row.day)}</td><td>${safe(pricingPrintMoney(row.normal_hours))}</td><td>${safe(pricingPrintMoney(row.normal_amount))}</td><td>${safe(pricingPrintMoney(row.overtime_hours))}</td><td>${safe(pricingPrintMoney(row.overtime_amount))}</td><td>${safe(pricingPrintMoney(row.support_hours))}</td><td>${safe(pricingPrintMoney(row.support_amount))}</td><td>${safe(pricingPrintMoney(row.effective_total ?? row.total))}${row.manual_total_amount != null && !row.adjustment_stale ? ' *' : ''}</td></tr>`).join('');
     const normal = pricingPrintSum(sheet.rows, 'normal_amount');
     const overtime = pricingPrintSum(sheet.rows, 'overtime_amount');
     const support = pricingPrintSum(sheet.rows, 'support_amount');
@@ -33,11 +33,12 @@ function pricingPrintHtml(kind, data, sheet) {
     const taxRate = Number(data.tax_rate || 0);
     const tax = Number(sheet.totals?.tax ?? Math.round(subtotal * taxRate));
     const taxed = Number(sheet.totals?.taxed ?? subtotal + tax);
-    summary = `<tr class="total"><th>合計（未稅）</th><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'normal_hours')))}</td><td>${safe(pricingPrintMoney(normal))}</td><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'overtime_hours')))}</td><td>${safe(pricingPrintMoney(overtime))}</td><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'support_hours')))}</td><td>${safe(pricingPrintMoney(support))}</td></tr>
-      <tr class="total"><th colspan="5">未稅計價合計</th><td colspan="2" class="amount">${safe(pricingPrintMoney(subtotal))}</td></tr>
-      <tr class="total"><th colspan="5">營業稅試算（${safe((taxRate * 100).toLocaleString('zh-TW'))}%）</th><td colspan="2" class="amount">${safe(pricingPrintMoney(tax))}</td></tr>
-      <tr class="total grand"><th colspan="5">含稅計價合計</th><td colspan="2" class="amount">${safe(pricingPrintMoney(taxed))}</td></tr>`;
-    notes = '金額依已保存原計價檔公式計算；正式請款仍須核對原計價檔與簽單。油錢另記，不併入請款。';
+    summary = `<tr class="total"><th>合計（未稅）</th><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'normal_hours')))}</td><td>${safe(pricingPrintMoney(normal))}</td><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'overtime_hours')))}</td><td>${safe(pricingPrintMoney(overtime))}</td><td>${safe(pricingPrintMoney(pricingPrintSum(sheet.rows, 'support_hours')))}</td><td>${safe(pricingPrintMoney(support))}</td><td>${safe(pricingPrintMoney(subtotal))}</td></tr>
+      <tr class="total"><th colspan="6">營業稅試算（${safe((taxRate * 100).toLocaleString('zh-TW'))}%）</th><td colspan="2" class="amount">${safe(pricingPrintMoney(tax))}</td></tr>
+      <tr class="total grand"><th colspan="6">含稅計價合計</th><td colspan="2" class="amount">${safe(pricingPrintMoney(taxed))}</td></tr>`;
+    const adjusted = sheet.rows.filter(row => row.manual_total_amount != null && !row.adjustment_stale);
+    const stale = sheet.rows.filter(row => row.adjustment_stale);
+    notes = `核定金額標 *；${adjusted.length ? adjusted.map(row => `${pricingPrintDay(row.day)}：${pricingPrintMoney(row.total)} → ${pricingPrintMoney(row.effective_total)}（${row.amount_adjustment_reason || '未註明'}）`).join('；') : '本月未另行核定調整。'}${stale.length ? ` 舊核定待重核：${stale.map(row => pricingPrintDay(row.day)).join('、')}，暫採公式。` : ''} 正式請款仍須核對原計價檔與簽單；油錢不併入請款。`;
   } else {
     header = '<tr><th>日期</th><th>台數</th><th>正常工時<br>逐台明細</th><th>加班工時<br>逐台明細</th><th>總台時<br>正／加</th><th>正常金額</th><th>加班金額</th><th>實際未稅</th><th>外叫客戶</th></tr>';
     rows = sheet.rows.map(row => {

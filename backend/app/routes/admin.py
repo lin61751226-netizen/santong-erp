@@ -18,7 +18,8 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, update
+from sqlalchemy.exc import IntegrityError
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -40,6 +41,7 @@ from app.models import (
     AttendanceSiteRevision,
     CertificateRecord,
     ContractRecord,
+    CostGridAmountAdjustment,
     LeaveRequest,
     LeaveStatus,
     LoginLog,
@@ -83,6 +85,7 @@ from app.schemas import (
     WorksiteLocationUpdate,
     CostHourImportRequest,
     CostGridSaveRequest,
+    CostGridAmountAdjustmentRequest,
     CostMonthImportRequest,
     WorksiteJournalHoursUpdate,
     CertificateCreate,
@@ -2781,6 +2784,13 @@ def _cost_grid_row_values(row) -> dict:
     }
 
 
+def _cost_grid_effective_amount(formula_amount: float, adjustment: Optional[CostGridAmountAdjustment]) -> tuple[float, bool]:
+    if adjustment is None or adjustment.manual_total_amount is None:
+        return formula_amount, False
+    stale = abs(adjustment.formula_amount_at_review - formula_amount) > 0.005
+    return (formula_amount if stale else adjustment.manual_total_amount), stale
+
+
 async def _download_cost_grid_content(document: ManagedDocument) -> bytes:
     try:
         return await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
@@ -2799,6 +2809,14 @@ async def read_cost_hour_grid(
     document = _cost_document_or_400(session, document_id)
     content = await _download_cost_grid_content(document)
     period = roc_period(date(year, month, 1))
+    first_day = date(year, month, 1)
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    adjustments = session.exec(select(CostGridAmountAdjustment).where(
+        CostGridAmountAdjustment.managed_document_id == document.id,
+        CostGridAmountAdjustment.work_date >= first_day,
+        CostGridAmountAdjustment.work_date <= last_day,
+    )).all()
+    by_day = {(item.target_label, item.work_date): item for item in adjustments}
     try:
         data = read_month_cost_data(content, document.original_file_name, period)
         sheets = []
@@ -2806,6 +2824,7 @@ async def read_cost_hour_grid(
             rates = data.parameters.rates_for(label)
             items = []
             daily_costs = []
+            adjustment_delta = 0.0
             for row in rows:
                 cost = evaluate_day_amounts(
                     data.parameters, rates, row.row_number,
@@ -2814,18 +2833,30 @@ async def read_cost_hour_grid(
                     is_holiday=row.is_holiday,
                 )
                 daily_costs.append(cost)
+                adjustment = by_day.get((label, row.day))
+                effective_total, stale = _cost_grid_effective_amount(cost.total, adjustment)
+                adjustment_delta += effective_total - cost.total
                 items.append({
                     "day": row.day.isoformat(), "row_number": row.row_number,
                     "is_holiday": row.is_holiday, "holiday_reason": holiday_reason(row.day),
                     **_cost_grid_row_values(row), **_amount_payload(cost),
+                    "effective_total": effective_total,
+                    "manual_total_amount": adjustment.manual_total_amount if adjustment else None,
+                    "amount_adjustment_reason": adjustment.reason if adjustment else "",
+                    "adjustment_revision": adjustment.revision if adjustment else 0,
+                    "adjustment_stale": stale,
                 })
             totals = totals_from_day_costs(rates, daily_costs, month, data.parameters.tax_rate, data.parameters.safety_rate)
+            adjusted_untaxed = round(totals.untaxed + adjustment_delta, 2)
+            adjusted_tax = excel_round(adjusted_untaxed * data.parameters.tax_rate, 0)
             sheets.append({
                 "label": label, "worksheet_name": rows[0].worksheet_name,
                 "rates": {"normal_hourly": rates.normal_hourly, "daily": rates.daily,
                           "ot_rate": rates.ot_rate, "holiday_rate": rates.holiday_rate,
                           "support_rate": rates.support_rate},
-                "totals": {"untaxed": totals.untaxed, "tax": totals.tax, "taxed": totals.taxed},
+                "totals": {"untaxed": adjusted_untaxed, "tax": adjusted_tax,
+                           "taxed": adjusted_untaxed + adjusted_tax,
+                           "formula_untaxed": totals.untaxed, "adjustment_delta": round(adjustment_delta, 2)},
                 "rows": items,
             })
     except CostWorkbookError as exc:
@@ -2833,6 +2864,99 @@ async def read_cost_hour_grid(
     return {"document_id": document.id, "document_name": document.original_file_name,
             "year": year, "month": month, "sha256": hashlib.sha256(content).hexdigest(),
             "tax_rate": data.parameters.tax_rate, "sheets": sheets}
+
+
+@router.post("/cost-hour-imports/grid/amount-adjustment")
+async def save_cost_grid_amount_adjustment(
+    payload: CostGridAmountAdjustmentRequest,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    document = _cost_document_or_400(session, payload.document_id)
+    content = await _download_cost_grid_content(document)
+    if hashlib.sha256(content).hexdigest() != payload.expected_sha256:
+        raise HTTPException(409, detail="原計價檔已變更，請重新載入並核對公式金額。")
+    try:
+        data = read_month_cost_data(content, document.original_file_name, roc_period(payload.day))
+        rows = data.sheets.get(payload.label)
+        row = next((item for item in rows or [] if item.day == payload.day), None)
+        if row is None:
+            raise CostWorkbookError("找不到指定日期與標別")
+        rates = data.parameters.rates_for(payload.label)
+        cost = evaluate_day_amounts(
+            data.parameters, rates, row.row_number,
+            row.normal_hours, row.overtime_hours, row.support_hours,
+            c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
+            is_holiday=row.is_holiday,
+        )
+    except CostWorkbookError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    adjustment = session.exec(select(CostGridAmountAdjustment).where(
+        CostGridAmountAdjustment.managed_document_id == document.id,
+        CostGridAmountAdjustment.target_label == payload.label,
+        CostGridAmountAdjustment.work_date == payload.day,
+    )).one_or_none()
+    revision = adjustment.revision if adjustment else 0
+    if payload.expected_revision != revision:
+        raise HTTPException(409, detail="這筆核定金額已被其他人修改，請重新載入。")
+    amount = payload.manual_total_amount
+    if amount is not None and round(amount, 2) != amount:
+        raise HTTPException(422, detail="核定金額最多只能有小數點後兩位。")
+    reason = payload.reason.strip() if amount is not None else ""
+    if amount is not None and not reason:
+        raise HTTPException(422, detail="調整核定金額須填寫原因。")
+    before, stale = _cost_grid_effective_amount(cost.total, adjustment)
+    after = cost.total if amount is None else amount
+    result = {"day": payload.day.isoformat(), "label": payload.label,
+              "formula_amount": cost.total, "before": before, "after": after,
+              "previous_manual_amount": adjustment.manual_total_amount if adjustment else None,
+              "previous_stale": stale, "reason": reason,
+              "revision": revision, "changed": (amount is not None if adjustment is None else
+                  adjustment.manual_total_amount != amount or adjustment.reason != reason or stale)}
+    if payload.preview_only:
+        return {**result, "saved": False}
+    if not payload.confirmed:
+        raise HTTPException(409, detail="請先預覽並確認金額差異。")
+    if not result["changed"]:
+        return {**result, "saved": False, "backup_status": "not_needed"}
+    previous = {"manual_total_amount": adjustment.manual_total_amount,
+                "formula_amount_at_review": adjustment.formula_amount_at_review,
+                "reason": adjustment.reason} if adjustment else None
+    updated_at = datetime.utcnow()
+    if adjustment is None:
+        session.add(CostGridAmountAdjustment(
+            managed_document_id=document.id, target_label=payload.label, work_date=payload.day,
+            manual_total_amount=amount, formula_amount_at_review=cost.total, reason=reason,
+            revision=1, updated_by_id=actor.id, updated_at=updated_at,
+        ))
+    else:
+        changed = session.execute(update(CostGridAmountAdjustment).where(
+            CostGridAmountAdjustment.id == adjustment.id,
+            CostGridAmountAdjustment.revision == revision,
+        ).values(manual_total_amount=amount, formula_amount_at_review=cost.total,
+                 reason=reason, revision=revision + 1, updated_by_id=actor.id,
+                 updated_at=updated_at))
+        if changed.rowcount != 1:
+            session.rollback()
+            raise HTTPException(409, detail="這筆核定金額已被其他人修改，請重新載入。")
+    session.add(AdminAuditLog(
+        actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+        action="cost_grid_amount_adjustment", entity_type="cost_workbook", entity_id=document.id,
+        summary=json.dumps({"sheet": row.worksheet_name, "date": payload.day.isoformat(),
+                            "formula_amount": cost.total, "before": previous,
+                            "after": {"manual_total_amount": amount, "reason": reason}}, ensure_ascii=False),
+    ))
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(409, detail="這筆核定金額已被其他人新增，請重新載入。") from exc
+    try:
+        backup_result = await google_drive_worklog_service.backup_database()
+    except Exception:
+        backup_result = {"status": "failed"}
+    return {**result, "saved": True, "revision": revision + 1,
+            "backup_status": backup_result.get("status")}
 
 
 @router.post("/cost-hour-imports/grid/backup")
