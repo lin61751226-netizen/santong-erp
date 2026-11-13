@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261112d">
+  <link rel="stylesheet" href="/static/app.css?v=20261113b">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -601,6 +601,13 @@
         </div>
       </div>
 
+      <div class="editor-recovery" aria-label="簽單保存與復原">
+        <p id="signSlipSaveStatus" role="status">正式簽單尚未修改。</p>
+        <p id="signSlipDraftStatus" role="status">登入後檢查未完成草稿。</p>
+        <button id="signSlipDraftRestore" type="button" hidden onclick="DraftRecovery.restore('sign-slip')">恢復簽單草稿</button>
+        <button id="signSlipDraftDiscard" type="button" hidden onclick="DraftRecovery.close('sign-slip')">捨棄草稿</button>
+        <button type="button" class="button-secondary" onclick="DraftRecovery.backup('sign-slip')">備份草稿</button>
+      </div>
       <form id="signSlipForm" class="form-grid">
         <input id="signSlipId" type="hidden">
         <div><label for="signSlipNo">單號</label><input id="signSlipNo" required placeholder="0002761"></div>
@@ -680,6 +687,13 @@
         <label><input type="checkbox" id="costGridConfirm" disabled> 我已核對金額與簽單差異</label>
         <button type="button" id="costGridSave" onclick="saveCostGrid()" disabled>保存月表格到 Google Drive</button>
         <button type="button" class="button-secondary" id="costGridBackup" onclick="retryCostGridBackup()">重試資料庫雲端備份</button>
+      </div>
+      <div class="editor-recovery" aria-label="月表保存與復原">
+        <p id="costGridSaveStatus" role="status">月表未寫入；預覽不等於保存。</p>
+        <p id="costGridDraftStatus" role="status">登入後檢查未完成草稿。</p>
+        <button id="costGridDraftRestore" type="button" hidden onclick="DraftRecovery.restore('cost-grid')">恢復月表草稿</button>
+        <button id="costGridDraftDiscard" type="button" hidden onclick="DraftRecovery.close('cost-grid')">捨棄草稿</button>
+        <button type="button" class="button-secondary" onclick="DraftRecovery.backup('cost-grid')">備份草稿</button>
       </div>
       <div id="costGridReview" class="console" hidden></div>
       <div id="costGridSlipAmountReason" class="cost-grid-slip-reason" hidden><label for="costGridSlipReasonInput">簽認金額與公式不同，請填核定原因</label><input id="costGridSlipReasonInput" maxlength="200" placeholder="例如：依當日簽單核定" oninput="costGridReviewReset()"><p class="muted">只在簽單帶入且金額不同時使用，原 Excel 公式不改寫。</p></div>
@@ -1470,7 +1484,8 @@
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
-  <script src="/static/cost_grid.js?v=20261112d"></script>
+  <script src="/static/cost_grid.js?v=20261113b"></script>
+  <script src="/static/editing_recovery.js?v=20261113b"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
   <script src="/static/pricing_print.js?v=20261112c"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
@@ -2825,6 +2840,7 @@
         const minutes = start && end ? (Number(end.slice(0, 2)) * 60 + Number(end.slice(3)) - Number(start.slice(0, 2)) * 60 - Number(start.slice(3))) : 0;
         const normal = minutes > 0 ? Math.min(8, Math.floor(minutes / 30) / 2) : 0;
         renderSignSlipVehicleHours(Array.from({length: count}, () => ({normal_hours: normal, overtime_hours: 0})));
+        window.DraftRecovery?.captureSign();
         hint.textContent = `依派工預填 ${count} 台，每台正常 ${normal} 小時；休息、跨工地與加班尚未計入，請依現場簽單逐台修正後保存。`;
       } catch (error) { hint.textContent = `派工預填失敗：${error.message}`; }
     }
@@ -2994,11 +3010,17 @@
       printWindow.document.close();
     }
 
+    let signSlipSaving = false;
     document.getElementById("signSlipForm").addEventListener("submit", async event => {
       event.preventDefault();
+      if (signSlipSaving) return;
       const feedback = document.getElementById("signSlipFeedback");
       const id = document.getElementById("signSlipId").value;
       const payload = collectSignSlipPayload();
+      signSlipSaving = true;
+      const controls = [...event.currentTarget.querySelectorAll('input,textarea,button')].map(el => [el,el.disabled]);
+      controls.forEach(([el]) => { el.disabled = true; });
+      window.DraftRecovery?.formal('sign-slip','saving');
       try {
         let result;
         if (id) {
@@ -3011,6 +3033,8 @@
         if (result.backup_status === "failed" || result.backup_status === "skipped_regression") {
           feedback.textContent += " 注意：雲端備份未完成，重新部署前請先確認備份狀態。";
         }
+        await window.DraftRecovery?.close('sign-slip',false);
+        window.DraftRecovery?.formal('sign-slip','saved',result.backup_status);
         resetSignSlipForm();
         document.getElementById("signSlipMonth").value = payload.slip_date.slice(0, 7);
         await loadSignSlips();
@@ -3021,7 +3045,8 @@
         shortcut.hidden = !payload.site_code;
       } catch (error) {
         feedback.textContent = error.message;
-      }
+        window.DraftRecovery?.formal('sign-slip','failed');
+      } finally { signSlipSaving = false; controls.forEach(([el,disabled]) => { el.disabled = disabled; }); }
     });
 
     async function bootstrap() {
@@ -3076,6 +3101,7 @@
       const selectedJournalIndex = selectedJournalSiteIndex();
       if (selectedJournalIndex >= 0) await syncJournalHoursToCostImport(selectedJournalIndex, true);
       if (!applyDeepLink(location.hash)) setWorkspace("today", false);
+      await window.DraftRecovery?.configure(state.actor);
     }
 
     async function loadMeta() {
@@ -4886,6 +4912,7 @@
 
     // ---- 登入 / 登出 / 改密碼 ----
     function showLogin() {
+      window.DraftRecovery?.pause();
       closeDocumentReader();
       document.getElementById("loginOverlay").classList.remove("hidden");
       document.getElementById("changePasswordOverlay").classList.add("hidden");

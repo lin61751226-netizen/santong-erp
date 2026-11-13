@@ -17,6 +17,18 @@ class Role(str, Enum):
     external = "external"
 
 
+class EditingDraftRevision(SQLModel, table=True):
+    """Private, append-only editor recovery; never a posted business record."""
+    __table_args__ = (UniqueConstraint("actor_id", "kind", "revision"),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    actor_id: int = Field(foreign_key="employee.id", index=True)
+    kind: str = Field(index=True)
+    revision: int
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class EmployeeStatus(str, Enum):
     active = "active"
     inactive = "inactive"

@@ -114,6 +114,7 @@ function costGridReviewReset() {
 }
 
 function editCostGridCell(input) {
+  if (costGrid.busy) return;
   const active = costGrid.data?.sheets.find(sheet => sheet.label === costGrid.label);
   const row = active?.rows.find(item => item.day === input.dataset.day);
   if (!row) return;
@@ -128,6 +129,7 @@ function editCostGridCell(input) {
   else costGrid.edits.set(row.day, values);
   costGridReviewReset();
   document.getElementById('costGridStatus').textContent = `未保存 ${costGrid.edits.size} 個日期。金額欄尚未重新計算，請按「核對變更與金額」。`;
+  window.DraftRecovery?.captureGrid();
 }
 
 async function stageCostGridSignSlip(day) {
@@ -152,6 +154,7 @@ async function stageCostGridSignSlip(day) {
   costGridReviewReset();
   renderCostGrid();
   await previewCostGrid();
+  window.DraftRecovery?.captureGrid();
   if (!costGrid.reviewed) return;
   const note = `簽單 ${slip.slip_no}：正常 ${slip.normal_hours}、加班 ${slip.overtime_hours} 小時；原表正常 ${row.normal_hours ?? 0}、加班 ${row.overtime_hours ?? 0}。`;
   const review = document.getElementById('costGridReview');
@@ -208,9 +211,12 @@ async function saveCostGrid() {
     if (JSON.stringify({rows: payload.rows, source_sign_slip_id: payload.source_sign_slip_id,
       sign_slip_amount_reason: payload.sign_slip_amount_reason}) !== costGrid.reviewed) throw new Error('內容已改變，請重新核對。');
     costGrid.busy = true;
+    window.DraftRecovery?.formal('cost-grid','saving');
     document.getElementById('costGridSave').disabled = true;
     document.getElementById('costGridStatus').textContent = '正在保存至 Google Drive 並建立資料庫備份…';
     const result = await api('/api/cost-hour-imports/grid', {method: 'POST', body: JSON.stringify(payload)});
+    await window.DraftRecovery?.close('cost-grid',false);
+    window.DraftRecovery?.formal('cost-grid','saved',result.backup_status);
     const savedLabel = costGrid.label;
     costGrid.edits.clear();
     costGrid.sourceSlip = null;
@@ -224,6 +230,7 @@ async function saveCostGrid() {
     document.getElementById('costGridStatus').textContent = `已保存 ${result.saved} 個日期。${result.backup_status === 'saved' ? 'Google Drive 資料庫備份成功。' : '資料庫雲端備份未成功；在重試備份前請勿重新部署。'}`;
   } catch (error) {
     document.getElementById('costGridStatus').textContent = `保存未確認：${error.message}。修改仍保留；請先重新核對雲端狀態，勿直接重複送出。`;
+    window.DraftRecovery?.formal('cost-grid','failed');
   } finally { costGrid.busy = false; }
 }
 
@@ -272,6 +279,7 @@ function editCostGridAdjustment() {
   draft.reviewed = null;
   document.getElementById('costGridAdjustmentReview').hidden = true;
   document.getElementById('costGridAdjustmentSave').disabled = true;
+  window.DraftRecovery?.captureGrid();
 }
 
 function cancelCostGridAdjustment() {
@@ -320,9 +328,12 @@ async function saveCostGridAdjustment() {
     }
     if (!confirm(`${payload.day} ${payload.label} 核定金額調整：確定保存並留下稽核紀錄嗎？`)) return;
     costGrid.adjustmentBusy = true;
+    window.DraftRecovery?.formal('cost-grid','saving');
     document.getElementById('costGridAdjustmentSave').disabled = true;
     const result = await api('/api/cost-hour-imports/grid/amount-adjustment',
       {method: 'POST', body: JSON.stringify({...payload, confirmed: true})});
+    await window.DraftRecovery?.close('cost-grid',false);
+    window.DraftRecovery?.formal('cost-grid','saved',result.backup_status);
     costGrid.adjustmentDraft = null;
     document.getElementById('costGridAdjustment').hidden = true;
     const savedLabel = costGrid.label;
@@ -336,6 +347,7 @@ async function saveCostGridAdjustment() {
       : '核定金額沒有變更。';
   } catch (error) {
     status.textContent = `保存未確認：${error.message}。請先重新載入核對，不要直接重複送出。`;
+    window.DraftRecovery?.formal('cost-grid','failed');
   } finally { costGrid.adjustmentBusy = false; }
 }
 

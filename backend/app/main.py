@@ -12,6 +12,7 @@ from app.core.db import init_db, session_scope
 from app.routes.admin import router as admin_router
 from app.routes.ai_ops import router as ai_ops_router
 from app.routes.auth import router as auth_router
+from app.routes.editing_drafts import router as editing_drafts_router
 from app.routes.forklift import router as forklift_router
 from app.routes.finance_imports import router as finance_import_router
 from app.routes.document_data import router as document_data_router
@@ -84,6 +85,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 app.include_router(admin_router)
 app.include_router(ai_ops_router)
 app.include_router(auth_router)
+app.include_router(editing_drafts_router)
 app.include_router(line_router)
 app.include_router(line_management_api_router)
 app.include_router(line_management_page_router)
