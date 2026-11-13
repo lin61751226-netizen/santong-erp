@@ -41,6 +41,12 @@ def _apply_lightweight_migrations() -> None:
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
 
+    if "signsliprecord" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("signsliprecord")}
+        if "vehicle_hours" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE signsliprecord ADD COLUMN vehicle_hours JSON"))
+
     if "worksiteforkliftcharge" in table_names:
         columns = {column["name"] for column in inspector.get_columns("worksiteforkliftcharge")}
         with engine.begin() as connection:

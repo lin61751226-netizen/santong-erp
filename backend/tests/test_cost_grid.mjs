@@ -24,6 +24,7 @@ test('month grid edits, previews, confirms and saves without losing the selected
         <button id="costGridAdjustmentSave" disabled></button><div id="costGridAdjustmentReview" hidden></div></section>
       <button id="costGridPreview"></button><input id="costGridConfirm" type="checkbox">
       <button id="costGridSave"></button><div id="costGridReview" hidden></div>
+      <div id="costGridSlipAmountReason" hidden><input id="costGridSlipReasonInput"></div>
       <button id="costGridBackup"></button>
     `);
     await page.evaluate(() => {
@@ -77,6 +78,7 @@ test('53 adjustment previews 6000 to 6400 and saves without changing Excel hours
         <button id="costGridAdjustmentSave" disabled></button><div id="costGridAdjustmentReview" hidden></div></section>
       <button id="costGridPreview"></button><input id="costGridConfirm" type="checkbox">
       <button id="costGridSave"></button><div id="costGridReview" hidden></div>
+      <div id="costGridSlipAmountReason" hidden><input id="costGridSlipReasonInput"></div>
     `);
     await page.evaluate(() => {
       window.state = {managedDocuments: [{id: 7, category: '推高機計價', original_file_name: '計價.xlsm'}]};
@@ -122,5 +124,67 @@ test('53 adjustment previews 6000 to 6400 and saves without changing Excel hours
     assert.match(result.status, /Google Drive 資料庫備份成功/);
     assert.match(await page.locator('#costGridSheet').innerText(), /6,400/);
     assert.equal(await page.locator('input[data-field="normal_hours"]').inputValue(), '8');
+  } finally { await browser.close(); }
+});
+
+test('saved slip stages one yellow row, requires a reason, and confirms hours plus signed amount together',
+  {skip: !chromium || !existsSync(chromePath)}, async () => {
+  const browser = await chromium.launch({headless: true, executablePath: chromePath});
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <select id="costGridDocument"></select><input id="costGridMonth" type="month">
+      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSheet"></div>
+      <section id="costGridAdjustment" hidden><h3 id="costGridAdjustmentTitle"></h3><p id="costGridAdjustmentFormula"></p>
+        <input id="costGridAdjustmentAmount"><input id="costGridAdjustmentReason">
+        <button id="costGridAdjustmentSave"></button><div id="costGridAdjustmentReview" hidden></div></section>
+      <button id="costGridPreview"></button><input id="costGridConfirm" type="checkbox">
+      <button id="costGridSave"></button><div id="costGridReview" hidden></div>
+      <div id="costGridSlipAmountReason" hidden><input id="costGridSlipReasonInput" oninput="costGridReviewReset()"></div>
+    `);
+    await page.evaluate(() => {
+      window.state = {managedDocuments: [{id: 7, category: '推高機計價', original_file_name: '計價.xlsm'}]};
+      window.todayString = () => '2026-10-23';
+      window.escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+      window.escapeAttr = window.escapeHtml;
+      window.confirm = () => true;
+      window.requests = [];
+      window.saved = false;
+      window.api = async (url, options) => {
+        const body = options?.body ? JSON.parse(options.body) : null;
+        window.requests.push({url, body});
+        if (body?.preview_only) return {changed_rows: 1,
+          amount_changes: [{day: '2026-10-23', previous: 6000, new: 3200}],
+          signed_adjustment: {formula: 3200, signed: 3600, reason: body.sign_slip_amount_reason}};
+        if (body) { window.saved = true; return {saved: 1, backup_status: 'saved'}; }
+        const pending = {slip_id: 11, slip_no: 'S11', slip_updated_at: '2026-10-23T12:00:00',
+          normal_hours: 4, overtime_hours: 0, vehicle_hours: [{normal_hours: 4, overtime_hours: 0}],
+          signed_amount: 3600, proposed_formula_amount: 3200, signed_amount_differs: true, hours_differ: true};
+        return {document_id: 7, document_name: '計價.xlsm', year: 2026, month: 10,
+          sha256: 'a'.repeat(64), tax_rate: 0.05,
+          sheets: [{label: '53', worksheet_name: '11510-53', rates: {normal_hourly: 800, daily: 6000,
+            ot_rate: 1000, holiday_rate: 1000, support_rate: 800},
+            rows: [{day: '2026-10-23', normal_hours: window.saved ? 4 : 8, normal_amount: 6000,
+              overtime_hours: 0, overtime_amount: 0, support_hours: 0, support_amount: 0, total: 6000,
+              effective_total: window.saved ? 3600 : 6000, adjustment_revision: 0,
+              pending_sign_slip: window.saved ? null : pending, external_customer: null,
+              fuel_cost: null, payer: null}]}]};
+      };
+    });
+    await page.addScriptTag({path: script});
+    await page.evaluate(async () => {renderCostGridDocumentOptions(); await loadCostGrid();});
+    assert.match(await page.locator('#costGridSheet tr.cost-grid-pending').innerText(), /簽單 S11/);
+    await page.getByRole('button', {name: '帶入簽單'}).click();
+    assert.equal(await page.locator('input[data-field="normal_hours"]').inputValue(), '4');
+    assert.equal(await page.locator('#costGridConfirm').isDisabled(), true);
+    await page.locator('#costGridSlipReasonInput').fill('依當日簽認單');
+    await page.evaluate(() => previewCostGrid());
+    await page.locator('#costGridConfirm').check();
+    await page.evaluate(() => saveCostGrid());
+    const posted = await page.evaluate(() => window.requests.find(item => item.body?.confirm_amount_changes));
+    assert.equal(posted.body.source_sign_slip_id, 11);
+    assert.equal(posted.body.rows[0].normal_hours, 4);
+    assert.equal(posted.body.sign_slip_amount_reason, '依當日簽認單');
+    assert.match(await page.locator('#costGridStatus').innerText(), /備份成功/);
   } finally { await browser.close(); }
 });

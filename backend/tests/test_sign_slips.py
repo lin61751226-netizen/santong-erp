@@ -80,6 +80,43 @@ class TestSignSlips:
         assert first["amount"] == 37000
         assert first["customer_name"] == "齊裕營造"
 
+    def test_structured_per_vehicle_hours_are_saved_and_must_reconcile(self):
+        details = [{"normal_hours": 4, "overtime_hours": 1},
+                   {"normal_hours": 4, "overtime_hours": 2}]
+        item = _item("0002763", "2026-09-03", normal_hours=8, overtime_hours=3,
+                     vehicle_hours=details)
+        with patch.object(google_drive_worklog_service, "backup_database", new_callable=AsyncMock) as backup:
+            backup.return_value = {"status": "saved"}
+            created = self.client.post("/api/sign-slips", json=item)
+            assert created.status_code == 201, created.text
+            slip_id = created.json()["sign_slip"]["id"]
+            assert created.json()["sign_slip"]["vehicle_hours"] == details
+            mismatched = self.client.patch(f"/api/sign-slips/{slip_id}", json={"normal_hours": 9})
+            assert mismatched.status_code == 422
+            assert self.client.get("/api/sign-slips?year=2026&month=9").json()[0]["normal_hours"] == 8
+            invalid_count = self.client.post("/api/sign-slips", json=_item(
+                "0002764", "2026-09-04", normal_hours=4, overtime_hours=1,
+                vehicle_hours=details))
+            assert invalid_count.status_code == 422
+
+    def test_existing_slip_vehicle_hours_can_be_edited_and_read_back(self):
+        with patch.object(google_drive_worklog_service, "backup_database", new_callable=AsyncMock) as backup:
+            backup.return_value = {"status": "saved"}
+            created = self.client.post("/api/sign-slips", json=_item("EDIT-HOURS", "2026-09-05"))
+            assert created.status_code == 201, created.text
+            slip_id = created.json()["sign_slip"]["id"]
+            details = [{"normal_hours": 2, "overtime_hours": 0},
+                       {"normal_hours": 3, "overtime_hours": 1}]
+            changed = self.client.patch(f"/api/sign-slips/{slip_id}", json={
+                "vehicle_hours": details, "normal_hours": 5, "overtime_hours": 1,
+                "total_hours": 6,
+            })
+            assert changed.status_code == 200, changed.text
+            saved = self.client.get("/api/sign-slips?year=2026&month=9").json()[0]
+            assert saved["vehicle_hours"] == details
+            assert saved["normal_hours"] == 5
+            assert saved["total_hours"] == 6
+
     def test_batch_skips_existing_then_overwrites(self):
         self._batch([_item("0002761", "2026-09-01", amount=37000)])
         again = self._batch([_item("0002761", "2026-09-01", amount=18000)], overwrite=False)

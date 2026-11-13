@@ -1,4 +1,4 @@
-const costGrid = {data: null, label: null, edits: new Map(), reviewed: null, busy: false, request: 0, adjustmentDraft: null, adjustmentBusy: false};
+const costGrid = {data: null, label: null, edits: new Map(), reviewed: null, busy: false, request: 0, adjustmentDraft: null, adjustmentBusy: false, sourceSlip: null};
 const costGridFields = ['normal_hours', 'overtime_hours', 'support_hours', 'external_customer', 'fuel_cost', 'payer'];
 
 function renderCostGridDocumentOptions() {
@@ -27,6 +27,8 @@ async function loadCostGrid() {
     return;
   }
   costGrid.edits.clear();
+  costGrid.sourceSlip = null;
+  document.getElementById('costGridSlipAmountReason').hidden = true;
   costGrid.adjustmentDraft = null;
   document.getElementById('costGridAdjustment').hidden = true;
   costGrid.reviewed = null;
@@ -44,7 +46,8 @@ async function loadCostGrid() {
     costGrid.data = result;
     costGrid.label = result.sheets.find(sheet => sheet.label === previousLabel)?.label || result.sheets[0]?.label || null;
     renderCostGrid();
-    document.getElementById('costGridStatus').textContent = `${result.document_name}｜${result.year}/${String(result.month).padStart(2, '0')}｜${result.sheets.length} 個標別。修改後先核對，再保存。`;
+    const pendingCount = result.sheets.reduce((count, sheet) => count + sheet.rows.filter(row => row.pending_sign_slip).length, 0);
+    document.getElementById('costGridStatus').textContent = `${result.document_name}｜${result.year}/${String(result.month).padStart(2, '0')}｜${result.sheets.length} 個標別。${pendingCount ? `已存簽單待核對 ${pendingCount} 日；標黃列可直接帶入。` : '修改後先核對，再保存。'}`;
   } catch (error) {
     if (request === costGrid.request) document.getElementById('costGridStatus').textContent = `月表格讀取失敗：${error.message}`;
   }
@@ -53,6 +56,8 @@ async function loadCostGrid() {
 function selectCostGridSheet(index) {
   if (costGridDirty() && !confirm('目前標別有未保存修改。切換會捨棄修改，確定嗎？')) return;
   costGrid.edits.clear();
+  costGrid.sourceSlip = null;
+  document.getElementById('costGridSlipAmountReason').hidden = true;
   costGrid.adjustmentDraft = null;
   document.getElementById('costGridAdjustment').hidden = true;
   costGrid.label = costGrid.data?.sheets[index]?.label || null;
@@ -82,13 +87,16 @@ function renderCostGrid() {
     const weekday = new Date(`${row.day}T12:00:00`).getDay();
     const holiday = row.is_holiday || weekday === 6;
     const input = (field, type, step = '') => `<input aria-label="${row.day} ${field}" data-day="${row.day}" data-field="${field}" type="${type}" ${type === 'number' ? `min="0" max="${field === 'fuel_cost' ? '1000000000' : '10000'}" step="${step}"` : 'maxlength="200"'} value="${escapeAttr(costGridValue(values[field]))}" oninput="editCostGridCell(this)">`;
-    return `<tr class="${holiday ? 'cost-grid-holiday' : ''}">
-      <th scope="row">${escapeHtml(row.day.slice(5))} ${'日一二三四五六'[weekday]}${row.is_holiday ? ' · 假日' : ''}</th>
+    const slip = row.pending_sign_slip;
+    const slipButton = slip ? `<button type="button" class="button-compact" onclick="stageCostGridSignSlip('${row.day}')" ${slip.conflict ? 'disabled' : ''}>${slip.conflict ? '簽單衝突' : slip.hours_differ ? '帶入簽單' : '核對簽單金額'}</button>` : '';
+    const slipHint = slip ? `<small class="cost-grid-slip-hint">${escapeHtml(slip.conflict ? slip.reason : `簽單 ${slip.slip_no}｜正常 ${slip.normal_hours} / 加班 ${slip.overtime_hours}｜公式 ${formatMoney(slip.proposed_formula_amount)}${slip.signed_amount != null ? `｜簽認 ${formatMoney(slip.signed_amount)}` : ''}`)}</small>` : '';
+    return `<tr class="${slip ? 'cost-grid-pending' : holiday ? 'cost-grid-holiday' : ''}">
+      <th scope="row">${escapeHtml(row.day.slice(5))} ${'日一二三四五六'[weekday]}${row.is_holiday ? ' · 假日' : ''}${slipHint}</th>
       <td>${input('normal_hours', 'number', 'any')}</td><td class="cost-grid-calculated">${formatMoney(row.normal_amount)}</td>
       <td>${input('overtime_hours', 'number', 'any')}</td><td class="cost-grid-calculated">${formatMoney(row.overtime_amount)}</td>
       <td>${input('support_hours', 'number', 'any')}</td><td class="cost-grid-calculated">${formatMoney(row.support_amount)}</td>
       <td class="cost-grid-calculated ${row.adjustment_stale ? 'cost-grid-stale' : row.manual_total_amount != null ? 'cost-grid-adjusted' : ''}">${formatMoney(row.effective_total ?? row.total)}${row.adjustment_stale ? ' · 需重核' : ''}</td>
-      <td><button type="button" class="button-compact" onclick="openCostGridAdjustment('${row.day}')">調整金額</button></td>
+      <td>${slipButton}<button type="button" class="button-compact" onclick="openCostGridAdjustment('${row.day}')">調整金額</button></td>
       <td>${input('external_customer', 'text')}</td><td>${input('fuel_cost', 'number', 'any')}</td><td>${input('payer', 'text')}</td>
     </tr>`;
   }).join('');
@@ -111,10 +119,44 @@ function editCostGridCell(input) {
   if (!row) return;
   const values = {...costGridCurrent(row)};
   values[input.dataset.field] = input.type === 'number' ? costGridNumber(input.value) : (input.value.trim() || null);
+  if (costGrid.sourceSlip && (input.dataset.day !== costGrid.sourceSlip.day ||
+      ['normal_hours', 'overtime_hours'].includes(input.dataset.field) && values[input.dataset.field] !== costGrid.sourceSlip[input.dataset.field])) {
+    costGrid.sourceSlip = null;
+    document.getElementById('costGridSlipAmountReason').hidden = true;
+  }
   if (costGridFields.every(field => values[field] === row[field])) costGrid.edits.delete(row.day);
   else costGrid.edits.set(row.day, values);
   costGridReviewReset();
   document.getElementById('costGridStatus').textContent = `未保存 ${costGrid.edits.size} 個日期。金額欄尚未重新計算，請按「核對變更與金額」。`;
+}
+
+async function stageCostGridSignSlip(day) {
+  if (costGridDirty()) { document.getElementById('costGridStatus').textContent = '請先保存或取消目前未保存的修改，再帶入簽單。'; return; }
+  const sheet = costGrid.data?.sheets.find(item => item.label === costGrid.label);
+  const row = sheet?.rows.find(item => item.day === day);
+  const slip = row?.pending_sign_slip;
+  if (!slip || slip.conflict) return;
+  if (!slip.hours_differ) {
+    openCostGridAdjustment(day);
+    document.getElementById('costGridAdjustmentAmount').value = slip.signed_amount ?? '';
+    editCostGridAdjustment();
+    document.getElementById('costGridStatus').textContent = '工時已一致；請填寫核定金額原因後預覽保存。';
+    return;
+  }
+  costGrid.sourceSlip = {id: slip.slip_id, updatedAt: slip.slip_updated_at, day,
+    normal_hours: slip.normal_hours, overtime_hours: slip.overtime_hours,
+    adjustmentRevision: row.adjustment_revision || 0};
+  document.getElementById('costGridSlipAmountReason').hidden = !slip.signed_amount_differs;
+  document.getElementById('costGridSlipReasonInput').value = '';
+  costGrid.edits.set(day, {...costGridCurrent(row), normal_hours: slip.normal_hours, overtime_hours: slip.overtime_hours});
+  costGridReviewReset();
+  renderCostGrid();
+  await previewCostGrid();
+  if (!costGrid.reviewed) return;
+  const note = `簽單 ${slip.slip_no}：正常 ${slip.normal_hours}、加班 ${slip.overtime_hours} 小時；原表正常 ${row.normal_hours ?? 0}、加班 ${row.overtime_hours ?? 0}。`;
+  const review = document.getElementById('costGridReview');
+  review.textContent = `${note}\n${review.textContent}${slip.signed_amount_differs ? `\n簽認金額 ${Number(slip.signed_amount).toLocaleString()} 元與公式 ${Number(slip.proposed_formula_amount).toLocaleString()} 元不同；填寫核定原因後可與工時同次保存。` : ''}`;
+  review.hidden = false;
 }
 
 function costGridPayload(previewOnly) {
@@ -125,6 +167,10 @@ function costGridPayload(previewOnly) {
     document_id: costGrid.data.document_id, year: costGrid.data.year, month: costGrid.data.month,
     label: costGrid.label, expected_sha256: costGrid.data.sha256,
     rows: [...costGrid.edits].map(([day, values]) => ({day, ...values})),
+    ...(costGrid.sourceSlip ? {source_sign_slip_id: costGrid.sourceSlip.id,
+      expected_sign_slip_updated_at: costGrid.sourceSlip.updatedAt,
+      expected_adjustment_revision: costGrid.sourceSlip.adjustmentRevision,
+      sign_slip_amount_reason: document.getElementById('costGridSlipReasonInput').value.trim()} : {}),
     preview_only: previewOnly, confirm_amount_changes: document.getElementById('costGridConfirm').checked,
   };
 }
@@ -137,11 +183,15 @@ async function previewCostGrid() {
     const result = await api('/api/cost-hour-imports/grid', {method: 'POST', body: JSON.stringify(payload)});
     const amounts = result.amount_changes || [];
     const slipMismatches = result.slip_mismatches || [];
+    const signed = result.signed_adjustment;
     review.hidden = false;
-    review.textContent = `僅預覽，未保存：${result.changed_rows} 個日期變更。${amounts.length ? '\n金額變動：\n' + amounts.map(item => `${item.day}　${Number(item.previous).toLocaleString()} → ${Number(item.new).toLocaleString()}`).join('\n') : '\n金額未變動。'}${slipMismatches.length ? '\n與已存簽單工時不同：' + slipMismatches.join('、') : ''}\n核對後再按保存。`;
-    costGrid.reviewed = JSON.stringify(payload.rows);
-    document.getElementById('costGridConfirm').disabled = amounts.length === 0 && slipMismatches.length === 0;
-    document.getElementById('costGridSave').disabled = amounts.length > 0 || slipMismatches.length > 0;
+    review.textContent = `僅預覽，未保存：${result.changed_rows} 個日期變更。${amounts.length ? '\n金額變動：\n' + amounts.map(item => `${item.day}　${Number(item.previous).toLocaleString()} → ${Number(item.new).toLocaleString()}`).join('\n') : '\n金額未變動。'}${signed ? `\n簽認金額：公式 ${Number(signed.formula).toLocaleString()} → 核定 ${Number(signed.signed).toLocaleString()}；原因：${signed.reason || '尚未填寫'}` : ''}${slipMismatches.length ? '\n與已存簽單工時不同：' + slipMismatches.join('、') : ''}\n核對後再按保存。`;
+    costGrid.reviewed = JSON.stringify({rows: payload.rows, source_sign_slip_id: payload.source_sign_slip_id,
+      sign_slip_amount_reason: payload.sign_slip_amount_reason});
+    const needsConfirm = amounts.length > 0 || slipMismatches.length > 0 || Boolean(signed);
+    document.getElementById('costGridConfirm').disabled = !needsConfirm || Boolean(signed && !signed.reason);
+    document.getElementById('costGridSave').disabled = needsConfirm;
+    if (signed && !signed.reason) document.getElementById('costGridStatus').textContent = '請先填寫簽認金額的核定原因，再重新預覽。';
   } catch (error) {
     document.getElementById('costGridStatus').textContent = `核對失敗：${error.message}`;
   } finally { document.getElementById('costGridPreview').disabled = costGrid.edits.size === 0; }
@@ -155,13 +205,16 @@ async function saveCostGrid() {
   if (costGrid.busy) return;
   try {
     const payload = costGridPayload(false);
-    if (JSON.stringify(payload.rows) !== costGrid.reviewed) throw new Error('內容已改變，請重新核對。');
+    if (JSON.stringify({rows: payload.rows, source_sign_slip_id: payload.source_sign_slip_id,
+      sign_slip_amount_reason: payload.sign_slip_amount_reason}) !== costGrid.reviewed) throw new Error('內容已改變，請重新核對。');
     costGrid.busy = true;
     document.getElementById('costGridSave').disabled = true;
     document.getElementById('costGridStatus').textContent = '正在保存至 Google Drive 並建立資料庫備份…';
     const result = await api('/api/cost-hour-imports/grid', {method: 'POST', body: JSON.stringify(payload)});
     const savedLabel = costGrid.label;
     costGrid.edits.clear();
+    costGrid.sourceSlip = null;
+    document.getElementById('costGridSlipAmountReason').hidden = true;
     costGridReviewReset();
     await loadCostGrid();
     if (costGrid.data?.sheets.some(sheet => sheet.label === savedLabel)) {

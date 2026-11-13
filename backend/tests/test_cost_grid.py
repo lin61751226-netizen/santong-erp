@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from app.core.db import get_session
 from app.deps import get_current_actor
 from app.main import app
-from app.models import AdminAuditLog, CostGridAmountAdjustment, Employee, ManagedDocument, Role, WorkHourImportLog
+from app.models import AdminAuditLog, CostGridAmountAdjustment, Employee, ManagedDocument, Role, SignSlipRecord, WorkHourImportLog, Worksite
 from app.routes import admin as admin_routes
 from test_cost_month_api import _cost_workbook_bytes
 
@@ -72,6 +72,84 @@ class TestCostGrid:
                 "payer": "會計",
             }],
         }
+
+    def add_sign_slip(self, slip_no="S-45-1", amount=12345):
+        site = self.session.exec(select(Worksite).where(Worksite.code == "45")).first()
+        if site is None:
+            site = Worksite(code="45", name="測試45工地")
+            self.session.add(site)
+            self.session.commit()
+            self.session.refresh(site)
+        slip = SignSlipRecord(
+            slip_no=slip_no, slip_date=date(2026, 9, 1), worksite_id=site.id, site_code="45",
+            vehicles={"twoPointFive": 1}, forklift_count=1, normal_hours=4,
+            overtime_hours=0, total_hours=4, amount=amount,
+            vehicle_hours=[{"normal_hours": 4, "overtime_hours": 0}],
+        )
+        self.session.add(slip)
+        self.session.commit()
+        self.session.refresh(slip)
+        return slip
+
+    def test_saved_slip_becomes_pending_and_single_confirmation_saves_hours_and_signed_amount(self):
+        slip = self.add_sign_slip()
+        before = self.read().json()
+        row = before["sheets"][0]["rows"][0]
+        pending = row["pending_sign_slip"]
+        assert pending["slip_id"] == slip.id
+        assert pending["normal_hours"] == 4
+        assert pending["signed_amount"] == 12345
+        assert pending["hours_differ"] is True
+        payload = {
+            "document_id": self.document.id, "year": 2026, "month": 9, "label": "45",
+            "expected_sha256": before["sha256"],
+            "source_sign_slip_id": slip.id,
+            "expected_sign_slip_updated_at": slip.updated_at.isoformat(),
+            "expected_adjustment_revision": 0,
+            "rows": [{"day": "2026-09-01", "normal_hours": 4, "overtime_hours": 0,
+                      "support_hours": row["support_hours"], "external_customer": row["external_customer"],
+                      "fuel_cost": row["fuel_cost"], "payer": row["payer"]}],
+        }
+        preview = self.client.post("/api/cost-hour-imports/grid", json={**payload, "preview_only": True})
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["signed_adjustment"]["signed"] == 12345
+        missing_reason = self.client.post("/api/cost-hour-imports/grid", json={**payload, "confirm_amount_changes": True})
+        assert missing_reason.status_code == 422
+        assert self.upload.await_count == 0
+        saved = self.client.post("/api/cost-hour-imports/grid", json={**payload, "confirm_amount_changes": True,
+            "sign_slip_amount_reason": "依簽認單核定"})
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["backup_status"] == "saved"
+        after = self.read().json()["sheets"][0]["rows"][0]
+        assert after["normal_hours"] == 4
+        assert after["effective_total"] == 12345
+        assert after["pending_sign_slip"] is None
+        assert len(self.session.exec(select(WorkHourImportLog)).all()) == 1
+        adjustment = self.session.exec(select(CostGridAmountAdjustment)).one()
+        assert adjustment.reason == "依簽認單核定"
+
+    def test_multiple_sign_slips_are_not_automatically_merged(self):
+        first = self.add_sign_slip()
+        self.add_sign_slip("S-45-2")
+        before = self.read().json()
+        pending = before["sheets"][0]["rows"][0]["pending_sign_slip"]
+        assert pending["conflict"] is True
+        payload = self.payload(before["sha256"])
+        payload.update(source_sign_slip_id=first.id,
+                       expected_sign_slip_updated_at=first.updated_at.isoformat())
+        denied = self.client.post("/api/cost-hour-imports/grid", json=payload)
+        assert denied.status_code == 409
+        self.upload.assert_not_called()
+
+    def test_source_slip_revision_must_match(self):
+        slip = self.add_sign_slip()
+        before = self.read().json()
+        payload = self.payload(before["sha256"])
+        payload.update(source_sign_slip_id=slip.id,
+                       expected_sign_slip_updated_at="2026-09-01T00:00:00")
+        denied = self.client.post("/api/cost-hour-imports/grid", json=payload)
+        assert denied.status_code == 409
+        self.upload.assert_not_called()
 
     def test_grid_read_preview_confirm_save_and_audit(self):
         response = self.read()

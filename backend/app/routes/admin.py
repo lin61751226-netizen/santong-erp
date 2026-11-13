@@ -1228,6 +1228,7 @@ def _serialize_sign_slip(item: SignSlipRecord) -> dict:
         "location": item.location,
         "work_content": item.work_content,
         "vehicles": item.vehicles or {},
+        "vehicle_hours": item.vehicle_hours or [],
         "forklift_count": item.forklift_count,
         "normal_hours": item.normal_hours,
         "overtime_hours": item.overtime_hours,
@@ -1297,6 +1298,7 @@ async def create_sign_slip(
         location=(payload.location or "").strip() or None,
         work_content=payload.work_content,
         vehicles=payload.vehicles or {},
+        vehicle_hours=[entry.model_dump() for entry in payload.vehicle_hours],
         forklift_count=payload.forklift_count,
         normal_hours=payload.normal_hours,
         overtime_hours=payload.overtime_hours,
@@ -1342,6 +1344,7 @@ async def batch_create_sign_slips(
             location=(data.location or "").strip() or None,
             work_content=data.work_content,
             vehicles=data.vehicles or {},
+            vehicle_hours=[entry.model_dump() for entry in data.vehicle_hours],
             forklift_count=data.forklift_count,
             normal_hours=data.normal_hours,
             overtime_hours=data.overtime_hours,
@@ -1399,6 +1402,11 @@ async def update_sign_slip(
         data["slip_no"] = new_no
     if "site_code" in data and "worksite_id" not in data:
         data["worksite_id"] = _sign_slip_worksite_id(session, None, data["site_code"])
+    if any(key in data for key in ("vehicle_hours", "vehicles", "normal_hours", "overtime_hours")):
+        try:
+            SignSlipCreate.model_validate({**item.model_dump(), **data})
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="逐台工時、車輛數量與簽單總工時不一致") from exc
     for key, value in data.items():
         if isinstance(value, str):
             value = value.strip() or None
@@ -2758,6 +2766,7 @@ def _slip_text_records(slips: list[SignSlipRecord]) -> list[dict]:
             "notes": slip.notes,
             "normal_hours": slip.normal_hours,
             "overtime_hours": slip.overtime_hours,
+            "vehicle_hours": slip.vehicle_hours or [],
             "is_active": slip.is_active,
         }
         for slip in slips
@@ -2791,6 +2800,52 @@ def _cost_grid_effective_amount(formula_amount: float, adjustment: Optional[Cost
     return (formula_amount if stale else adjustment.manual_total_amount), stale
 
 
+def _grid_slips_by_label_day(session: Session, first_day: date, last_day: date, labels: list[str]) -> dict[tuple[str, date], list[SignSlipRecord]]:
+    slips = session.exec(select(SignSlipRecord).where(
+        SignSlipRecord.is_active.is_(True), SignSlipRecord.slip_date >= first_day,
+        SignSlipRecord.slip_date <= last_day,
+    )).all()
+    worksites = {site.id: site for site in session.exec(select(Worksite)).all()}
+    grouped: dict[tuple[str, date], list[SignSlipRecord]] = {}
+    for slip in slips:
+        site = worksites.get(slip.worksite_id)
+        label = match_label_for_site(slip.site_code or (site.code if site else None), site.name if site else None, labels)
+        if label and (slip.normal_hours or slip.overtime_hours):
+            grouped.setdefault((label, slip.slip_date), []).append(slip)
+    return grouped
+
+
+def _grid_slip_pending(slips: list[SignSlipRecord], row, data, rates, cost, effective_total: float) -> Optional[dict]:
+    if not slips:
+        return None
+    if len(slips) != 1:
+        return {"conflict": True, "reason": "同日同標別有多張簽單，請人工核對", "slip_nos": [item.slip_no for item in slips]}
+    slip = slips[0]
+    if slip.forklift_count <= 0 or slip.normal_hours < 0 or slip.overtime_hours < 0:
+        return {"conflict": True, "reason": "簽單缺少有效車輛或工時", "slip_nos": [slip.slip_no]}
+    proposed = evaluate_day_amounts(
+        data.parameters, rates, row.row_number, slip.normal_hours, slip.overtime_hours,
+        row.support_hours, c_formula=row.c_formula, e_formula=row.e_formula,
+        g_formula=row.g_formula, is_holiday=row.is_holiday,
+    )
+    if (abs(float(row.normal_hours or 0) - slip.normal_hours) <= 0.001
+            and abs(float(row.overtime_hours or 0) - slip.overtime_hours) <= 0.001
+            and (slip.amount is None or not money_differs(effective_total, slip.amount))):
+        return None
+    return {
+        "conflict": False, "slip_id": slip.id, "slip_no": slip.slip_no,
+        "slip_updated_at": slip.updated_at.isoformat(),
+        "normal_hours": slip.normal_hours, "overtime_hours": slip.overtime_hours,
+        "vehicle_hours": slip.vehicle_hours or [], "signed_amount": slip.amount,
+        "current_formula_amount": cost.total, "current_effective_amount": effective_total,
+        "proposed_formula_amount": proposed.total,
+        "signed_amount_differs": slip.amount is not None and (
+            money_differs(slip.amount, proposed.total) or money_differs(slip.amount, effective_total)),
+        "hours_differ": abs(float(row.normal_hours or 0) - slip.normal_hours) > 0.001
+                        or abs(float(row.overtime_hours or 0) - slip.overtime_hours) > 0.001,
+    }
+
+
 async def _download_cost_grid_content(document: ManagedDocument) -> bytes:
     try:
         return await google_drive_worklog_service.download_file_bytes(document.drive_file_id)
@@ -2819,6 +2874,7 @@ async def read_cost_hour_grid(
     by_day = {(item.target_label, item.work_date): item for item in adjustments}
     try:
         data = read_month_cost_data(content, document.original_file_name, period)
+        slips_by_day = _grid_slips_by_label_day(session, first_day, last_day, list(data.sheets))
         sheets = []
         for label, rows in data.sheets.items():
             rates = data.parameters.rates_for(label)
@@ -2845,6 +2901,9 @@ async def read_cost_hour_grid(
                     "amount_adjustment_reason": adjustment.reason if adjustment else "",
                     "adjustment_revision": adjustment.revision if adjustment else 0,
                     "adjustment_stale": stale,
+                    "pending_sign_slip": _grid_slip_pending(
+                        slips_by_day.get((label, row.day), []), row, data, rates, cost, effective_total,
+                    ),
                 })
             totals = totals_from_day_costs(rates, daily_costs, month, data.parameters.tax_rate, data.parameters.safety_rate)
             adjusted_untaxed = round(totals.untaxed + adjustment_delta, 2)
@@ -2977,6 +3036,22 @@ async def save_cost_hour_grid(
     actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
 ):
     document = _cost_document_or_400(session, payload.document_id)
+    source_slip = None
+    if payload.source_sign_slip_id is not None:
+        slip = session.get(SignSlipRecord, payload.source_sign_slip_id)
+        if (slip is None or not slip.is_active or payload.expected_sign_slip_updated_at is None
+                or slip.updated_at != payload.expected_sign_slip_updated_at
+                or slip.slip_date.year != payload.year or slip.slip_date.month != payload.month
+                or len(payload.rows) != 1 or payload.rows[0].day != slip.slip_date
+                or abs(float(payload.rows[0].normal_hours or 0) - slip.normal_hours) > 0.001
+                or abs(float(payload.rows[0].overtime_hours or 0) - slip.overtime_hours) > 0.001):
+            raise HTTPException(409, detail="簽單已修改或待確認工時不一致，請重新載入月表格。")
+        site = session.get(Worksite, slip.worksite_id) if slip.worksite_id else None
+        if match_label_for_site(slip.site_code or (site.code if site else None), site.name if site else None, [payload.label]) != payload.label:
+            raise HTTPException(409, detail="簽單工地與計價標別不一致，請重新核對。")
+        if len(_grid_slips_by_label_day(session, slip.slip_date, slip.slip_date, [payload.label]).get((payload.label, slip.slip_date), [])) != 1:
+            raise HTTPException(409, detail="同日同標別有多張簽單，請人工核對。")
+        source_slip = slip
     content = await _download_cost_grid_content(document)
     if hashlib.sha256(content).hexdigest() != payload.expected_sha256:
         raise HTTPException(409, detail="計價檔已被其他操作更新；請重新載入月表格，核對後再保存。")
@@ -2994,6 +3069,8 @@ async def save_cost_hour_grid(
         seen = set()
         amount_changes = []
         slip_mismatches = []
+        signed_adjustment = None
+        existing_adjustment = None
         for incoming in payload.rows:
             if incoming.day in seen or incoming.day not in existing:
                 raise CostWorkbookError(f"重複日期或找不到日期列：{incoming.day}")
@@ -3019,6 +3096,18 @@ async def save_cost_hour_grid(
                 c_formula=row.c_formula, e_formula=row.e_formula, g_formula=row.g_formula,
                 is_holiday=row.is_holiday,
             )
+            if source_slip and source_slip.amount is not None:
+                existing_adjustment = session.exec(select(CostGridAmountAdjustment).where(
+                    CostGridAmountAdjustment.managed_document_id == document.id,
+                    CostGridAmountAdjustment.target_label == payload.label,
+                    CostGridAmountAdjustment.work_date == incoming.day,
+                )).one_or_none()
+                if payload.expected_adjustment_revision != (existing_adjustment.revision if existing_adjustment else 0):
+                    raise HTTPException(409, detail="核定金額已被其他人修改，請重新載入月表格。")
+                if (money_differs(source_slip.amount, new_cost.total)
+                        or existing_adjustment and money_differs(existing_adjustment.manual_total_amount, source_slip.amount)):
+                    signed_adjustment = {"day": incoming.day.isoformat(), "formula": new_cost.total,
+                                         "signed": source_slip.amount, "reason": payload.sign_slip_amount_reason.strip()}
             if money_differs(old_cost.total, new_cost.total):
                 amount_changes.append({"day": incoming.day.isoformat(),
                                        "previous": old_cost.total, "new": new_cost.total})
@@ -3032,9 +3121,11 @@ async def save_cost_hour_grid(
                             "row_number": row.row_number, "worksheet_name": row.worksheet_name})
         if payload.preview_only:
             return {"saved": 0, "changed_rows": len(changes), "amount_changes": amount_changes,
-                    "slip_mismatches": slip_mismatches,
+                    "slip_mismatches": slip_mismatches, "signed_adjustment": signed_adjustment,
                     "message": "僅預覽，尚未保存。"}
-        if (amount_changes or slip_mismatches) and not payload.confirm_amount_changes:
+        if signed_adjustment and not signed_adjustment["reason"]:
+            raise HTTPException(422, detail="簽認金額與公式不同，請填寫核定原因。")
+        if (amount_changes or slip_mismatches or signed_adjustment) and not payload.confirm_amount_changes:
             raise HTTPException(409, detail="金額變動或與簽單工時不同，請先按核對變更並勾選確認，再保存。")
         if not changes:
             return {"saved": 0, "message": "沒有變更，未更新計價檔。"}
@@ -3070,6 +3161,30 @@ async def save_cost_hour_grid(
                                 "before": previous,
                                 "after": {key: change[key] for key in previous}}, ensure_ascii=False),
         ))
+    if signed_adjustment:
+        if existing_adjustment is None:
+            session.add(CostGridAmountAdjustment(
+                managed_document_id=document.id, target_label=payload.label,
+                work_date=source_slip.slip_date, manual_total_amount=source_slip.amount,
+                formula_amount_at_review=signed_adjustment["formula"],
+                reason=signed_adjustment["reason"], revision=1, updated_by_id=actor.id,
+                updated_at=datetime.utcnow(),
+            ))
+        else:
+            existing_adjustment.manual_total_amount = source_slip.amount
+            existing_adjustment.formula_amount_at_review = signed_adjustment["formula"]
+            existing_adjustment.reason = signed_adjustment["reason"]
+            existing_adjustment.revision += 1
+            existing_adjustment.updated_by_id = actor.id
+            existing_adjustment.updated_at = datetime.utcnow()
+            session.add(existing_adjustment)
+        session.add(AdminAuditLog(
+            actor_id=actor.id, actor_code=actor.employee_code, actor_name=actor.name,
+            action="sign_slip_amount_adjustment", entity_type="cost_workbook", entity_id=document.id,
+            summary=json.dumps({"slip_no": source_slip.slip_no, "day": signed_adjustment["day"],
+                                "formula": signed_adjustment["formula"], "signed": source_slip.amount,
+                                "reason": signed_adjustment["reason"]}, ensure_ascii=False),
+        ))
     session.commit()
     try:
         backup_result = await google_drive_worklog_service.backup_database()
@@ -3077,7 +3192,7 @@ async def save_cost_hour_grid(
         backup_result = {"status": "failed"}
     return {"saved": len(changes), "drive_url": drive_url,
             "backup_status": backup_result.get("status"), "amount_changes": amount_changes,
-            "slip_mismatches": slip_mismatches}
+            "slip_mismatches": slip_mismatches, "signed_adjustment": signed_adjustment}
 
 
 def _sign_slip_blocks_import(suggestion: Optional[dict], normal_hours: float, overtime_hours: float) -> bool:

@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.models import LeaveStatus, MeetingStatus, NotificationCategory, Role
 
@@ -220,6 +220,10 @@ class CostGridSaveRequest(BaseModel):
     rows: list[CostGridRowUpdate] = Field(min_length=1, max_length=31)
     confirm_amount_changes: bool = False
     preview_only: bool = False
+    source_sign_slip_id: Optional[int] = Field(default=None, ge=1)
+    expected_sign_slip_updated_at: Optional[datetime] = None
+    expected_adjustment_revision: Optional[int] = Field(default=None, ge=0)
+    sign_slip_amount_reason: str = Field(default="", max_length=200)
 
 
 class CostGridAmountAdjustmentRequest(BaseModel):
@@ -356,6 +360,30 @@ class ForkliftRentalUpdate(BaseModel):
 
 
 # ---- 當日簽單紀錄 ----
+class SignSlipVehicleHours(BaseModel):
+    normal_hours: float = Field(ge=0, le=24)
+    overtime_hours: float = Field(default=0, ge=0, le=24)
+
+
+def _check_sign_slip_hours(data) -> None:
+    details = data.vehicle_hours
+    if not details:
+        return
+    try:
+        counts = [float(data.vehicles.get(key, 0) or 0) for key in ("twoPointFive", "threePointZero", "fourPointFive")]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("堆高機台數須為非負整數") from exc
+    if any(not value.is_integer() or value < 0 for value in counts):
+        raise ValueError("堆高機台數須為非負整數")
+    count = sum(counts)
+    if count != len(details) or count != data.forklift_count or len(details) > 30:
+        raise ValueError("逐台工時筆數須與堆高機台數相同，最多30台")
+    if abs(sum(item.normal_hours for item in details) - data.normal_hours) > 0.001:
+        raise ValueError("逐台正常工時加總與簽單正常工時不一致")
+    if abs(sum(item.overtime_hours for item in details) - data.overtime_hours) > 0.001:
+        raise ValueError("逐台加班工時加總與簽單加班工時不一致")
+
+
 class SignSlipCreate(BaseModel):
     slip_no: str
     slip_date: date
@@ -365,6 +393,7 @@ class SignSlipCreate(BaseModel):
     location: Optional[str] = None
     work_content: Optional[str] = None
     vehicles: dict = Field(default_factory=dict)
+    vehicle_hours: list[SignSlipVehicleHours] = Field(default_factory=list)
     forklift_count: float = 0
     normal_hours: float = 0
     overtime_hours: float = 0
@@ -377,6 +406,11 @@ class SignSlipCreate(BaseModel):
     source_image_url: Optional[str] = None
     notes: Optional[str] = None
 
+    @model_validator(mode="after")
+    def validate_vehicle_hours(self):
+        _check_sign_slip_hours(self)
+        return self
+
 
 class SignSlipUpdate(BaseModel):
     slip_no: Optional[str] = None
@@ -387,6 +421,7 @@ class SignSlipUpdate(BaseModel):
     location: Optional[str] = None
     work_content: Optional[str] = None
     vehicles: Optional[dict] = None
+    vehicle_hours: Optional[list[SignSlipVehicleHours]] = None
     forklift_count: Optional[float] = None
     normal_hours: Optional[float] = None
     overtime_hours: Optional[float] = None

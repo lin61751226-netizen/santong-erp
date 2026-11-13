@@ -475,6 +475,7 @@ class SignSlipRecord(SQLModel, table=True):
     location: Optional[str] = None                           # 工作地點文字
     work_content: Optional[str] = Field(default=None, sa_column=Column(Text))
     vehicles: dict = Field(default_factory=dict, sa_column=Column(JSON))  # twoPointFive/threePointZero/fourPointFive/truck
+    vehicle_hours: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     forklift_count: float = 0
     normal_hours: float = 0
     overtime_hours: float = 0

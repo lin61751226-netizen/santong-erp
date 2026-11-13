@@ -1090,3 +1090,19 @@ body.map-open { overflow: hidden; }
 .cost-grid-adjusted { font-weight: 700; color: #175f50; }
 .cost-grid-stale { color: #a43732; font-weight: 700; }
 #costGridReview { white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.quick-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0 6px; }
+.quick-actions button { display: grid; gap: 4px; min-height: 92px; padding: 15px; text-align: left; background: #eff4ed; color: #173d34; border: 1px solid #b5c9bb; border-radius: 12px; }
+.quick-actions button strong { font-size: 1.1rem; }
+.quick-actions button span { font-size: .85rem; }
+.quick-actions button:hover, .quick-actions button:focus-visible { background: #dcebe0; border-color: #22715c; }
+.sign-slip-hours-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sign-slip-hours-rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
+.sign-slip-vehicle-hour { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px; background: #f3f6f1; border: 1px solid #c3d2c5; border-radius: 9px; }
+.sign-slip-vehicle-hour strong { grid-column: 1 / -1; }
+.sign-slip-vehicle-hour label { font-size: .85rem; }
+.sign-slip-vehicle-hour input { width: 100%; }
+.cost-grid-scroll tbody tr.cost-grid-pending th, .cost-grid-scroll tbody tr.cost-grid-pending td { background: #fff1bc; }
+.cost-grid-slip-hint { display: block; max-width: 240px; margin-top: 3px; white-space: normal; text-align: left; font-size: .72rem; color: #6a4c19; }
+.cost-grid-slip-reason { margin: 10px 0; padding: 12px; background: #fff3d7; border: 1px solid #dabd76; border-radius: 8px; }
+.cost-grid-slip-reason input { display: block; width: min(500px, 100%); margin-top: 6px; }
+@media (max-width: 760px) { .quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

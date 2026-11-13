@@ -1105,6 +1105,15 @@ def billable_hours_from_texts(records: list[dict]) -> Optional[dict]:
     for record in records:
         if record.get("is_active") is False:
             continue
+        vehicle_hours = record.get("vehicle_hours") or []
+        if vehicle_hours:
+            segments = tuple(float(item.get("normal_hours") or 0) for item in vehicle_hours)
+            overtime = sum(float(item.get("overtime_hours") or 0) for item in vehicle_hours)
+            if not _hours_close(sum(segments), float(record.get("normal_hours") or 0)) or not _hours_close(overtime, float(record.get("overtime_hours") or 0)):
+                return {"conflict": True, "segments": None, "normal_hours": None, "overtime_hours": None}
+            parsed.append({"conflict": False, "segments": segments,
+                           "normal_hours": sum(segments), "overtime_hours": overtime})
+            continue
         text = "\n".join(
             part for part in (record.get("work_content"), record.get("notes")) if part
         )

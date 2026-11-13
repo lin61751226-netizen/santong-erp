@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261112">
+  <link rel="stylesheet" href="/static/app.css?v=20261112d">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -158,6 +158,12 @@
         <button type="button" onclick="loadTodayOverview()">重新整理</button>
       </div>
       <div id="todayBoardCards" class="today-grid"></div>
+      <div class="quick-actions" aria-label="常用工作捷徑">
+        <button type="button" onclick="openNamedPanel('today-board')"><strong>今日總覽</strong><span>出勤與待辦</span></button>
+        <button type="button" onclick="openTodayPanel('sign-slips')"><strong>當日簽單</strong><span>修正現場工時</span></button>
+        <button type="button" onclick="openPricingGridShortcut(false)"><strong>計價月表</strong><span>確認簽單差異</span></button>
+        <button type="button" onclick="openPricingGridShortcut(true)"><strong>A4 請款表</strong><span>預覽後再列印</span></button>
+      </div>
       <p id="todayBoardStatus" class="notice" role="status" aria-live="polite"></p>
     </section>
 
@@ -609,6 +615,8 @@
         <div><label>正常工時</label><input id="signSlipNormal" type="number" min="0" step="0.5" value="0"></div>
         <div><label>加班工時</label><input id="signSlipOvertime" type="number" min="0" step="0.5" value="0"></div>
         <div><label>總時數</label><input id="signSlipTotal" type="number" min="0" step="0.5" value="0"></div>
+        <div class="full sign-slip-hours-tools"><button type="button" class="button-secondary" onclick="prefillSignSlipFromAssignment()">依當日派工預填</button><button type="button" class="button-secondary" onclick="enableSignSlipVehicleHours()">填寫逐台工時</button><span id="signSlipAssignmentHint" class="muted">派工只供預填，現場工時請在簽單確認後保存。</span></div>
+        <div class="full" id="signSlipVehicleHoursSection" hidden><label>逐台正常／加班工時</label><div id="signSlipVehicleHoursRows" class="sign-slip-hours-rows"></div><p class="muted">逐台輸入後自動合計上方工時；車輛台數改變時請重新核對。</p></div>
         <div><label>開始</label><input id="signSlipStart" placeholder="08:00"></div>
         <div><label>結束</label><input id="signSlipEnd" placeholder="17:00"></div>
         <div><label>金額（元）</label><input id="signSlipAmount" type="number" min="0" step="1"></div>
@@ -623,6 +631,7 @@
         </div>
       </form>
       <p id="signSlipFeedback" class="notice" role="status" aria-live="polite"></p>
+      <button type="button" id="signSlipPricingShortcut" class="button-secondary" onclick="openSignSlipPendingPricing()" hidden>前往計價月表確認簽單工時</button>
 
       <div class="table-wrap" style="margin-top:16px;">
         <table>
@@ -673,6 +682,7 @@
         <button type="button" class="button-secondary" id="costGridBackup" onclick="retryCostGridBackup()">重試資料庫雲端備份</button>
       </div>
       <div id="costGridReview" class="console" hidden></div>
+      <div id="costGridSlipAmountReason" class="cost-grid-slip-reason" hidden><label for="costGridSlipReasonInput">簽認金額與公式不同，請填核定原因</label><input id="costGridSlipReasonInput" maxlength="200" placeholder="例如：依當日簽單核定" oninput="costGridReviewReset()"><p class="muted">只在簽單帶入且金額不同時使用，原 Excel 公式不改寫。</p></div>
       <p class="muted">工時與備註只修改已變動日期的 B／D／F／H／I／J 欄；C／E／G 仍由原 Excel 公式計算。核定金額另存系統調整紀錄，需填原因、不覆蓋原公式；公式之後改變時須重新核對。切換標別或離開時會提醒未保存內容。</p>
       <p class="muted">國泰慈文的獨立費率可在「工地管理 → 查看堆高機計價」核對；它不是既有計價活頁簿標別，未匯入至此表的公式。</p>
       </div>
@@ -1460,7 +1470,7 @@
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script src="/static/document_data.js"></script>
-  <script src="/static/cost_grid.js?v=20261112"></script>
+  <script src="/static/cost_grid.js?v=20261112d"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
   <script src="/static/pricing_print.js?v=20261112c"></script>
   <script src="/static/management_month_grid.js?v=20261107"></script>
@@ -1566,6 +1576,12 @@
       }
       setWorkspace("pricing");
       setWorkspaceView(view);
+    }
+
+    function openPricingGridShortcut(printHint) {
+      openNamedPanel("excel-editor");
+      showExcelMode("pricing");
+      if (printHint) document.getElementById("costGridStatus").textContent = "先選計價檔、月份與標別，確認已保存資料後，按「A4 計價表預覽／列印」；不會自動送印。";
     }
 
     function openPanelFor(elementId) {
@@ -2741,6 +2757,78 @@
     function signSlipField(id) { return document.getElementById(id).value; }
     function signSlipNum(id) { const value = parseFloat(signSlipField(id)); return Number.isFinite(value) ? value : 0; }
 
+    function signSlipVehicleDetails() {
+      if (document.getElementById("signSlipVehicleHoursSection").hidden) return [];
+      return [...document.querySelectorAll("#signSlipVehicleHoursRows .sign-slip-vehicle-hour")].map(row => ({
+        normal_hours: Number(row.querySelector('[data-hour="normal"]').value || 0),
+        overtime_hours: Number(row.querySelector('[data-hour="overtime"]').value || 0),
+      }));
+    }
+
+    function renderSignSlipVehicleHours(details = []) {
+      const count = signSlipNum("signSlipV25") + signSlipNum("signSlipV30") + signSlipNum("signSlipV45");
+      if (!Number.isInteger(count) || count < 1 || count > 30) throw new Error("請先填入 1 至 30 台堆高機數量。");
+      const labels = [
+        ...Array(signSlipNum("signSlipV25")).fill("2.5 噸"),
+        ...Array(signSlipNum("signSlipV30")).fill("3.0 噸"),
+        ...Array(signSlipNum("signSlipV45")).fill("4.5 噸"),
+      ];
+      document.getElementById("signSlipVehicleHoursRows").innerHTML = labels.map((label, index) => `
+        <div class="sign-slip-vehicle-hour"><strong>${index + 1} 台｜${label}</strong>
+          <label>正常 <input type="number" data-hour="normal" min="0" max="24" step="0.5" value="${Number(details[index]?.normal_hours || 0)}" oninput="sumSignSlipVehicleHours()"></label>
+          <label>加班 <input type="number" data-hour="overtime" min="0" max="24" step="0.5" value="${Number(details[index]?.overtime_hours || 0)}" oninput="sumSignSlipVehicleHours()"></label>
+        </div>`).join("");
+      document.getElementById("signSlipVehicleHoursSection").hidden = false;
+      document.getElementById("signSlipNormal").readOnly = true;
+      document.getElementById("signSlipOvertime").readOnly = true;
+      document.getElementById("signSlipTotal").readOnly = true;
+      sumSignSlipVehicleHours();
+    }
+
+    function sumSignSlipVehicleHours() {
+      const details = signSlipVehicleDetails();
+      const normal = details.reduce((total, item) => total + item.normal_hours, 0);
+      const overtime = details.reduce((total, item) => total + item.overtime_hours, 0);
+      document.getElementById("signSlipNormal").value = normal;
+      document.getElementById("signSlipOvertime").value = overtime;
+      document.getElementById("signSlipTotal").value = normal + overtime;
+    }
+
+    function enableSignSlipVehicleHours() {
+      try { renderSignSlipVehicleHours(signSlipVehicleDetails()); }
+      catch (error) { document.getElementById("signSlipAssignmentHint").textContent = error.message; }
+    }
+
+    async function prefillSignSlipFromAssignment() {
+      const dateValue = signSlipField("signSlipDate");
+      const code = signSlipField("signSlipSiteCode").trim();
+      const hint = document.getElementById("signSlipAssignmentHint");
+      if (!dateValue || !code) { hint.textContent = "請先選日期並填工地代號，再依派工預填。"; return; }
+      const site = state.worksites.find(item => item.code === code || item.name === code);
+      if (!site) { hint.textContent = "找不到唯一工地代號，請先確認工地管理。"; return; }
+      try {
+        const assignments = (await api(`/api/assignments?target_date=${encodeURIComponent(dateValue)}`))
+          .filter(item => Number(item.site_id) === Number(site.id) && item.status !== "cancelled");
+        if (assignments.length !== 1) { hint.textContent = `同日此工地有 ${assignments.length} 筆派工；無法安全預填，請自行確認逐台工時。`; return; }
+        const assignment = assignments[0];
+        const vehicles = getVehicleCounts([assignment.vehicle, assignment.equipment].filter(Boolean));
+        const count = vehicles.twoPointFive + vehicles.threePointZero + vehicles.fourPointFive;
+        if (!count) { hint.textContent = "派工未載明堆高機噸位與台數；請先在簽單填車輛，再手動填逐台工時。"; return; }
+        document.getElementById("signSlipV25").value = vehicles.twoPointFive;
+        document.getElementById("signSlipV30").value = vehicles.threePointZero;
+        document.getElementById("signSlipV45").value = vehicles.fourPointFive;
+        const start = String(assignment.start_time || "").slice(0, 5);
+        const end = String(assignment.end_time || "").slice(0, 5);
+        document.getElementById("signSlipStart").value = start;
+        document.getElementById("signSlipEnd").value = end;
+        if (!signSlipField("signSlipContent").trim()) document.getElementById("signSlipContent").value = assignment.work_item || "";
+        const minutes = start && end ? (Number(end.slice(0, 2)) * 60 + Number(end.slice(3)) - Number(start.slice(0, 2)) * 60 - Number(start.slice(3))) : 0;
+        const normal = minutes > 0 ? Math.min(8, Math.floor(minutes / 30) / 2) : 0;
+        renderSignSlipVehicleHours(Array.from({length: count}, () => ({normal_hours: normal, overtime_hours: 0})));
+        hint.textContent = `依派工預填 ${count} 台，每台正常 ${normal} 小時；休息、跨工地與加班尚未計入，請依現場簽單逐台修正後保存。`;
+      } catch (error) { hint.textContent = `派工預填失敗：${error.message}`; }
+    }
+
     function collectSignSlipPayload() {
       const vehicles = {
         twoPointFive: signSlipNum("signSlipV25"),
@@ -2755,6 +2843,7 @@
         site_code: signSlipField("signSlipSiteCode").trim() || null,
         location: signSlipField("signSlipLocation").trim() || null,
         vehicles,
+        vehicle_hours: signSlipVehicleDetails(),
         forklift_count: vehicles.twoPointFive + vehicles.threePointZero + vehicles.fourPointFive,
         normal_hours: signSlipNum("signSlipNormal"),
         overtime_hours: signSlipNum("signSlipOvertime"),
@@ -2773,6 +2862,10 @@
     function resetSignSlipForm() {
       document.getElementById("signSlipForm").reset();
       document.getElementById("signSlipId").value = "";
+      document.getElementById("signSlipVehicleHoursSection").hidden = true;
+      document.getElementById("signSlipVehicleHoursRows").innerHTML = "";
+      ["signSlipNormal", "signSlipOvertime", "signSlipTotal"].forEach(id => { document.getElementById(id).readOnly = false; });
+      document.getElementById("signSlipPricingShortcut").hidden = true;
       ["signSlipV25","signSlipV30","signSlipV45","signSlipTruck","signSlipNormal","signSlipOvertime","signSlipTotal"]
         .forEach(id => { document.getElementById(id).value = 0; });
       document.getElementById("signSlipFeedback").textContent = "";
@@ -2793,6 +2886,10 @@
       document.getElementById("signSlipNormal").value = row.normal_hours || 0;
       document.getElementById("signSlipOvertime").value = row.overtime_hours || 0;
       document.getElementById("signSlipTotal").value = row.total_hours || 0;
+      document.getElementById("signSlipVehicleHoursSection").hidden = true;
+      document.getElementById("signSlipVehicleHoursRows").innerHTML = "";
+      ["signSlipNormal", "signSlipOvertime", "signSlipTotal"].forEach(id => { document.getElementById(id).readOnly = false; });
+      if (row.vehicle_hours?.length) renderSignSlipVehicleHours(row.vehicle_hours);
       document.getElementById("signSlipStart").value = row.start_time || "";
       document.getElementById("signSlipEnd").value = row.end_time || "";
       document.getElementById("signSlipAmount").value = row.amount == null ? "" : row.amount;
@@ -2810,6 +2907,19 @@
         openDocumentTask(4);
         document.getElementById("signSlipForm").scrollIntoView({ behavior: "smooth" });
       }
+    }
+
+    async function openSignSlipPendingPricing() {
+      const button = document.getElementById("signSlipPricingShortcut");
+      const day = button.dataset.day;
+      const siteCode = button.dataset.siteCode;
+      openPricingGridShortcut(false);
+      document.getElementById("costGridMonth").value = day.slice(0, 7);
+      await loadCostGrid();
+      const sheets = costGrid.data?.sheets.filter(item => item.label === siteCode ||
+        (item.label.length >= 2 && siteCode.endsWith(item.label))) || [];
+      if (sheets.length === 1) { costGrid.label = sheets[0].label; renderCostGrid(); }
+      else document.getElementById("costGridStatus").textContent = `找不到 ${siteCode} 的唯一標別；簽單已保存，請手動選計價檔與標別核對，不會自行寫入。`;
     }
 
     async function deleteSignSlip(id) {
@@ -2902,7 +3012,13 @@
           feedback.textContent += " 注意：雲端備份未完成，重新部署前請先確認備份狀態。";
         }
         resetSignSlipForm();
+        document.getElementById("signSlipMonth").value = payload.slip_date.slice(0, 7);
         await loadSignSlips();
+        feedback.textContent = `簽單 ${payload.slip_no} 已保存；請到計價月表核對標黃待確認列。${result.backup_status === "saved" ? "資料庫雲端備份成功。" : "資料庫雲端備份未確認，部署前請先重試備份。"}`;
+        const shortcut = document.getElementById("signSlipPricingShortcut");
+        shortcut.dataset.day = payload.slip_date;
+        shortcut.dataset.siteCode = payload.site_code || "";
+        shortcut.hidden = !payload.site_code;
       } catch (error) {
         feedback.textContent = error.message;
       }

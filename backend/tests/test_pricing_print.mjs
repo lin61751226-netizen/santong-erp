@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import {existsSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {test} from 'node:test';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -175,7 +177,7 @@ test('October 53 legacy billing sheet matches the company Excel layout on one A4
       await page.setContent(html);
       await page.emulateMedia({media: 'print'});
       const pdf = await page.pdf({printBackground: true, preferCSSPageSize: true});
-      writeFileSync('/tmp/oct53-billing-print.pdf', pdf);
+      writeFileSync(join(tmpdir(), 'oct53-billing-print.pdf'), pdf);
       const document = await PDFDocument.load(pdf);
       const layout = await page.evaluate(() => {
         const sign = document.querySelector('.billing-sign').getBoundingClientRect();
