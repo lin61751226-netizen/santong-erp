@@ -1187,3 +1187,20 @@ body.map-open { overflow: hidden; }
 .worksite-board-detail p{margin:0 0 8px}.worksite-board-detail ul{margin:0;padding-left:1.2em}
 .worksite-board-card button{align-self:start}
 @media(max-width:600px){.worksite-board-grid{grid-template-columns:1fr}.worksite-board-card{padding:14px}}
+/* The finance workspace reuses original panels and save handlers. */
+#pricingWindowNav[hidden] { display: none; }
+#pricingWindowNav { background: #e8edf1; border: 1px solid #aebcc7; padding: 16px; border-radius: 8px; }
+#pricingWindowNav strong { display: block; background: #183f63; color: white; padding: 14px; margin: -16px -16px 14px; }
+#pricingWindowNav p { font-size: 13px; color: #536471; }
+#pricingWindowNav button { display: block; width: 100%; text-align: left; margin: 8px 0; }
+#pricingWindowNav button.is-active { background: #183f63; color: white; }
+@media (min-width: 1100px) {
+  body.pricing-window-mode #pricingWindowNav { position: fixed; left: 20px; top: 380px; width: 245px; max-height: calc(100vh - 400px); overflow-y: auto; z-index: 5; }
+  body.pricing-window-mode [data-workspace="pricing"].workspace-panel-active { margin-left: 270px; width: calc(100% - 270px); grid-column: 1 / -1; min-width: 0; }
+  body.pricing-window-mode #workspaceTools { margin-left: 270px; }
+}
+@media (max-width: 1099px) {
+  #pricingWindowNav { display: flex; gap: 8px; overflow-x: auto; align-items: center; margin-bottom: 16px; }
+  #pricingWindowNav strong, #pricingWindowNav p { display: none; }
+  #pricingWindowNav button { flex: 0 0 190px; margin: 0; }
+}

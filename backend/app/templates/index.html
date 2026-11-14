@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261114c">
+  <link rel="stylesheet" href="/static/app.css?v=20261114d">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -1603,6 +1603,22 @@
       const panels = workspacePanels(resolved);
       if (!panels.length) return;
       state.workspace = resolved;
+      if (document.body) {
+      document.body.classList.toggle('pricing-window-mode', resolved === 'pricing');
+      let pricingWindowNav = document.getElementById('pricingWindowNav');
+      if (!pricingWindowNav) {
+        pricingWindowNav = document.createElement('nav');
+        pricingWindowNav.id = 'pricingWindowNav';
+        pricingWindowNav.setAttribute('aria-label', '計價與收支工作視窗');
+        document.getElementById('workspaceTools').after(pricingWindowNav);
+      }
+      pricingWindowNav.hidden = resolved !== 'pricing';
+      if (resolved === 'pricing') {
+        pricingWindowNav.innerHTML = '<strong>計價與收支工作視窗</strong><p>選擇功能，於右側處理</p>' + panels.map((panel, index) =>
+          `<button type="button" onclick="setWorkspaceView(${index})" data-pricing-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
+        ).join('');
+      }
+      }
       document.getElementById("actionResult").hidden = true;
       const mainSelect = document.getElementById("workspaceMain");
       mainSelect.innerHTML = [...document.querySelectorAll("[data-workspace-tab]")].map(tab =>
@@ -1630,6 +1646,10 @@
       if (!panels.length) return;
       const index = Math.max(0, Math.min(Number(view) || 0, panels.length - 1));
       state.workspaceViews[state.workspace] = index;
+      document.querySelectorAll('[data-pricing-view]').forEach(button => {
+        button.classList.toggle('is-active', Number(button.dataset.pricingView) === index);
+        button.setAttribute('aria-pressed', String(Number(button.dataset.pricingView) === index));
+      });
       document.getElementById("workspaceView").value = String(index);
       document.querySelectorAll("[data-workspace]").forEach(panel => {
         const visible = panel === panels[index];
