@@ -60,6 +60,7 @@ from app.models import (
     WorkAssignment,
     WorkReportEvent,
     Worksite,
+    WorksiteForkliftCharge,
     WorksiteForkliftRate,
 )
 from app.schemas import (
@@ -1026,6 +1027,54 @@ def today_overview(
 ):
     """今日總覽。只讀彙整，不寫入考勤、草稿、備份或 Google Drive。"""
     return build_today_overview(session)
+
+
+@router.get("/monthly-revenue-estimate", dependencies=[Depends(_no_store)])
+async def monthly_revenue_estimate(
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin)),
+):
+    """Read saved, untaxed pricing through today; never count finance receipts twice."""
+    today = local_today()
+    first = today.replace(day=1)
+    site_charges = session.exec(select(WorksiteForkliftCharge).where(
+        WorksiteForkliftCharge.work_date >= first,
+        WorksiteForkliftCharge.work_date <= today,
+    )).all()
+    site_amount = round(sum(
+        item.manual_total_amount if item.manual_total_amount is not None
+        else item.normal_amount + item.overtime_amount for item in site_charges
+    ), 2)
+    document = session.exec(select(ManagedDocument).where(
+        ManagedDocument.category == "推高機計價",
+    ).order_by(ManagedDocument.created_at.desc(), ManagedDocument.id.desc())).first()
+    legacy_amount = None
+    legacy_days = 0
+    issue = None
+    if document:
+        try:
+            grid = await read_cost_hour_grid(
+                document_id=document.id, year=today.year, month=today.month,
+                session=session, actor=actor,
+            )
+            rows = [row for sheet in grid["sheets"] for row in sheet["rows"]
+                    if row["day"] <= today.isoformat()]
+            legacy_amount = round(sum(float(row["effective_total"]) for row in rows), 2)
+            legacy_days = len({row["day"] for row in rows
+                               if float(row["effective_total"]) != 0})
+        except HTTPException as exc:
+            issue = str(exc.detail)
+    else:
+        issue = "尚無已上傳的堆高機計價檔"
+    return {
+        "as_of": today.isoformat(), "month": first.strftime("%Y-%m"),
+        "tax_included": False, "complete": legacy_amount is not None,
+        "legacy_amount": legacy_amount, "legacy_document": document.original_file_name if document else None,
+        "legacy_days": legacy_days, "site_amount": site_amount,
+        "site_charge_count": len(site_charges),
+        "known_total": round(site_amount + (legacy_amount or 0), 2),
+        "issue": issue,
+    }
 
 
 @router.get("/worksite-board", dependencies=[Depends(_no_store)])

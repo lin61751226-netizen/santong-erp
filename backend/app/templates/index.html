@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261114">
+  <link rel="stylesheet" href="/static/app.css?v=20261114b">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -171,12 +171,19 @@
         <button type="button" onclick="loadTodayOverview()">重新整理</button>
       </div>
       <div id="todayBoardCards" class="today-grid"></div>
+      <section class="revenue-estimate" aria-label="本月預估營收">
+        <div><span class="eyebrow">每日更新</span><h3>本月已登錄預估營收</h3><p id="monthlyRevenuePeriod" class="muted">正在核對已存計價資料…</p></div>
+        <strong id="monthlyRevenueAmount">讀取中</strong>
+        <p id="monthlyRevenueDetail" class="muted">只計已存的未稅計價，不把收支收入重複加總。</p>
+        <button type="button" class="button-secondary" onclick="loadMonthlyRevenueEstimate()">重新核對</button>
+      </section>
       <div class="quick-actions" aria-label="常用工作捷徑">
         <button type="button" onclick="openNamedPanel('today-board')"><strong>今日總覽</strong><span>出勤與待辦</span></button>
         <button type="button" onclick="openNamedPanel('worksite-board')"><strong>工地工作台</strong><span>一頁核對七項</span></button>
         <button type="button" onclick="openTodayPanel('sign-slips')"><strong>當日簽單</strong><span>修正現場工時</span></button>
         <button type="button" onclick="openPricingGridShortcut(false)"><strong>計價月表</strong><span>確認簽單差異</span></button>
         <button type="button" onclick="openPricingGridShortcut(true)"><strong>A4 請款表</strong><span>預覽後再列印</span></button>
+        <button type="button" onclick="openNamedPanel('excel-library')"><strong>已上傳資料</strong><span>在 APP 預覽原檔</span></button>
       </div>
       <p id="todayBoardStatus" class="notice" role="status" aria-live="polite"></p>
     </section>
@@ -664,6 +671,14 @@
 
     <section class="panel span-12" data-workspace="pricing" id="panel-excel-editor" data-panel="excel-editor" data-nav-order="3" data-legacy="documents:5" data-nav-aliases="線上編輯,收支修改">
       <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">依檔案與月份處理計價、收支、薪資與排休；保存前逐列核對，原始 Excel 保留。</p></div></div>
+      <div class="data-workflow" aria-label="月資料處理選擇">
+        <div><label for="dataWorkflowKind">1. 要處理什麼</label><select id="dataWorkflowKind" onchange="changeDataWorkflowKind()"><option value="pricing">堆高機計價</option><option value="finance">收支明細</option><option value="payroll">員工薪資</option><option value="roster">員工排休</option></select></div>
+        <div><label for="dataWorkflowSource">2. 資料來源</label><select id="dataWorkflowSource" onchange="changeDataWorkflowSource()"></select></div>
+        <div><label for="dataWorkflowMonth">3. 作業月份</label><input id="dataWorkflowMonth" type="month" onchange="changeDataWorkflowMonth()"></div>
+        <button type="button" onclick="applyDataWorkflow()">顯示此月份</button>
+      </div>
+      <p id="dataWorkflowHint" class="muted">選擇資料類型與來源後，再於下方選檔案；所有修改仍要核對並保存。</p>
+      <details class="data-workflow-advanced"><summary>切換其他來源或檢查舊版入口</summary>
       <div class="cost-grid-tabs" role="tablist" aria-label="線上資料類型">
         <button type="button" id="excelModePricing" class="active" onclick="showExcelMode('pricing')">堆高機計價</button>
         <button type="button" id="excelModeSitepricing" onclick="showExcelMode('sitepricing')">國泰慈文計價</button>
@@ -672,10 +687,15 @@
         <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">舊快照薪資</button>
         <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">舊快照排休</button>
       </div>
+      </details>
+      <div class="data-workflow-scroll"><span>月表欄位較多時，可在表格內左右捲動。</span><button type="button" class="button-secondary button-compact" onclick="moveActiveDataTable(-1)">向左看</button><button type="button" class="button-secondary button-compact" onclick="moveActiveDataTable(1)">向右看</button></div>
+      <div class="uploaded-data-head"><h3>已上傳的公司資料</h3><button type="button" class="button-secondary button-compact" onclick="openNamedPanel('excel-library')">查看全部／上傳新檔</button></div>
+      <p id="uploadedDataStatus" class="muted">登入後列出已上傳的 Excel；可直接在 APP 預覽內容。</p>
+      <div id="uploadedDataCards" class="uploaded-data-cards"></div>
       <div id="costGridSection">
       <div class="cost-grid-toolbar">
         <div><label for="costGridDocument">推高機計價檔</label><select id="costGridDocument" onchange="loadCostGrid()"></select></div>
-        <div><label for="costGridMonth">月份</label><input id="costGridMonth" type="month" onchange="loadCostGrid()"></div>
+        <div><label for="costGridMonth">月份</label><input id="costGridMonth" type="month" onchange="syncDataWorkflowMonthFrom('costGridMonth'); loadCostGrid()"></div>
         <button type="button" class="button-secondary" onclick="loadCostGrid()">重新載入</button>
         <button type="button" class="button-secondary" onclick="openPricingPrint('legacy')">A4 計價表預覽／列印</button>
       </div>
@@ -716,7 +736,7 @@
       </div>
       <div id="worksitePricingSection" hidden>
         <div class="cost-grid-toolbar">
-          <div><label for="worksitePricingMonth">月份（自 115 年 11 月起）</label><input id="worksitePricingMonth" type="month" min="2026-11" onchange="loadWorksitePricing()"></div>
+          <div><label for="worksitePricingMonth">月份（自 115 年 11 月起）</label><input id="worksitePricingMonth" type="month" min="2026-11" onchange="syncDataWorkflowMonthFrom('worksitePricingMonth'); loadWorksitePricing()"></div>
           <button type="button" class="button-secondary" onclick="loadWorksitePricing()">重新載入</button>
           <button type="button" class="button-secondary" onclick="openPricingPrint('worksite')">A4 計價表預覽／列印</button>
         </div>
@@ -737,7 +757,7 @@
       <div id="companyWorkbookSection" hidden>
         <div class="cost-grid-toolbar">
           <div><label for="companyWorkbookDocument">Google Drive 公司 Excel 檔案</label><select id="companyWorkbookDocument" onchange="loadCompanyWorkbook()"></select></div>
-          <div><label for="companyWorkbookMonth">月份</label><input id="companyWorkbookMonth" type="month" value="2026-10" onchange="loadCompanyWorkbook()"></div>
+          <div><label for="companyWorkbookMonth">月份</label><input id="companyWorkbookMonth" type="month" onchange="syncDataWorkflowMonthFrom('companyWorkbookMonth'); loadCompanyWorkbook()"></div>
           <div><label for="companyWorkbookKind">工作表</label><select id="companyWorkbookKind" onchange="loadCompanyWorkbook()"><option value="finance">每月收支明細</option><option value="payroll">每月薪資</option><option value="roster">每月排休</option></select></div>
           <button type="button" class="button-secondary" onclick="loadCompanyWorkbook()">重新載入</button>
         </div>
@@ -754,7 +774,7 @@
       <div id="managementMonthGridSection" hidden>
         <div class="cost-grid-toolbar">
           <div><label for="managementGridSnapshot">全年管理 Excel 版本</label><select id="managementGridSnapshot" onchange="loadManagementMonthGrid()"></select></div>
-          <div><label for="managementGridMonth">月份</label><input id="managementGridMonth" type="month" onchange="loadManagementMonthGrid()"></div>
+          <div><label for="managementGridMonth">月份</label><input id="managementGridMonth" type="month" onchange="syncDataWorkflowMonthFrom('managementGridMonth'); loadManagementMonthGrid()"></div>
           <button type="button" class="button-secondary" onclick="loadManagementMonthGrid()">重新載入</button>
         </div>
         <p id="managementGridStatus" class="notice" role="status" aria-live="polite">先在「月度與年度管理對照」保存全年管理檔版本，再選月份。</p>
@@ -767,7 +787,7 @@
       <div class="form-grid">
         <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
         <div><label for="dataKind">處理資料</label><select id="dataKind" onchange="loadDocumentData(true)"><option value="finance">收支明細</option><option value="contacts">公司通訊錄</option></select></div>
-        <div><label for="dataMonth">月份（收支篩選）</label><input id="dataMonth" type="month" onchange="loadDocumentData(false,0)"></div>
+        <div><label for="dataMonth">月份（收支篩選）</label><input id="dataMonth" type="month" onchange="syncDataWorkflowMonthFrom('dataMonth'); loadDocumentData(false,0)"></div>
         <div><label for="dataSheet">來源工作表</label><select id="dataSheet" onchange="loadDocumentData(false,0)"><option value="">全部工作表</option></select></div>
         <div><label for="dataKeyword">搜尋</label><input id="dataKeyword" placeholder="公司、摘要或工地"></div>
         <div class="button-row"><button type="button" onclick="loadDocumentData(false,0)">查詢／重新載入</button><button type="button" class="button-secondary" onclick="editDocumentData()">新增資料</button></div>
@@ -1502,8 +1522,9 @@
   <script src="/static/editing_recovery.js?v=20261113b"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
   <script src="/static/pricing_print.js?v=20261112c"></script>
-  <script src="/static/management_month_grid.js?v=20261107"></script>
+  <script src="/static/management_month_grid.js?v=20261114b"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
+  <script src="/static/data_workflow.js?v=20261114b"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>
@@ -3083,6 +3104,7 @@
       document.getElementById("forkliftAttendanceFrom").value = `${currentMonth}-01`;
       document.getElementById("forkliftAttendanceTo").value = todayString();
       await loadMeta();
+      initDataWorkflow();
       document.getElementById("inspectionSite").innerHTML = '<option value="">全部工地</option>' +
         state.worksites.map(site => `<option value="${site.id}">${escapeHtml(site.name)}</option>`).join("");
       await Promise.all([
@@ -3154,6 +3176,7 @@
 
     async function loadTodayOverview() {
       const status = document.getElementById("todayBoardStatus");
+      loadMonthlyRevenueEstimate();
       try {
         const overview = await api("/api/today-overview");
         renderTodayOverview(overview);
@@ -3180,6 +3203,7 @@
         renderDataDocumentOptions();
         renderCostGridDocumentOptions();
         renderCompanyWorkbookOptions();
+        renderUploadedDataCards();
         rows.innerHTML = data.length ? data.map((item) => `
           <tr>
             <td>${escapeHtml(item.category)}</td>
@@ -3192,6 +3216,7 @@
         `).join("") : '<tr><td colspan="6" style="text-align:center;color:#888;">尚未保存公司 Excel 文件</td></tr>';
       } catch (error) {
         rows.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
+        document.getElementById("uploadedDataStatus").textContent = `無法更新上傳檔案清單：${error.message}。若下方仍有檔案，屬上次載入結果。`;
       }
     }
 

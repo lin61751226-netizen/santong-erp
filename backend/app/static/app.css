@@ -1108,6 +1108,36 @@ body.map-open { overflow: hidden; }
 .cost-grid-slip-reason input { display: block; width: min(500px, 100%); margin-top: 6px; }
 @media (max-width: 760px) { .quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1000px) { .quick-actions:has(button:nth-child(5)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Wide Excel sheets must shrink inside the panel, not push content outside the viewport. */
+.grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.grid > .panel, #panel-excel-editor, .cost-grid-sheet { min-width: 0; max-width: 100%; }
+.cost-grid-scroll { max-width: 100%; min-height: 220px; max-height: clamp(340px, 64vh, 760px); overflow: auto; scrollbar-gutter: stable; }
+#panel-excel-editor .data-editor-table { max-width: 100%; overflow: auto; scrollbar-gutter: stable; }
+.quick-actions, .quick-actions:has(button:nth-child(5)) { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
+.revenue-estimate { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px 20px; margin-top: 16px; padding: 18px 22px; border: 1px solid #9ebcaf; border-radius: 18px; background: linear-gradient(125deg, #f0f7f1, #fff8e9); }
+.revenue-estimate h3 { margin: 8px 0 0; }
+.revenue-estimate > strong { font-size: clamp(24px, 3vw, 38px); font-variant-numeric: tabular-nums; color: #174f3e; text-align: right; }
+.revenue-estimate > p { grid-column: 1 / -1; }
+.revenue-estimate > button { justify-self: start; }
+.data-workflow { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)) auto; gap: 12px; align-items: end; padding: 18px; border-radius: 16px; border: 1px solid #aec5b9; background: #edf5ee; }
+.data-workflow label { display: block; margin-bottom: 6px; font-weight: 700; }
+.data-workflow select, .data-workflow input { display: block; width: 100%; min-width: 0; }
+#dataWorkflowHint { margin: 9px 2px 14px; }
+.data-workflow-advanced { margin: 12px 0; }
+.data-workflow-advanced summary { cursor: pointer; color: #27654f; }
+.data-workflow-scroll { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; padding: 10px 12px; background: #f3f6f4; border-radius: 10px; }
+.data-workflow-scroll span { margin-right: auto; }
+.uploaded-data-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.uploaded-data-head h3 { margin: 0; }
+.uploaded-data-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 12px 0 20px; }
+.uploaded-data-card { display: grid; gap: 7px; min-width: 0; padding: 12px 14px; border: 1px solid #c7d6cb; border-radius: 12px; background: #fbfcf8; }
+.uploaded-data-card > span { color: #27654f; font-size: .82rem; font-weight: 700; }
+.uploaded-data-card > strong { overflow-wrap: anywhere; }
+.uploaded-data-card small { color: var(--muted); }
+.uploaded-data-card .button-row { margin-top: 3px; flex-wrap: wrap; }
+@media (max-width: 860px) { .data-workflow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .data-workflow { grid-template-columns: 1fr; } .revenue-estimate { grid-template-columns: 1fr; } .revenue-estimate > strong { text-align: left; } }
 .editor-recovery{margin:12px 0;padding:12px 16px;border:1px solid #c8d8ce;border-left:4px solid #215b49;border-radius:10px;background:#edf4ef}
 .editor-recovery p{margin:4px 0 8px;font-size:14px;line-height:1.6}
 .editor-recovery button{margin:2px 8px 2px 0}

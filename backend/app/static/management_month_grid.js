@@ -2,10 +2,11 @@ const managementGrid = {mode: 'pricing', data: null, edits: new Map(), pending: 
 
 function managementGridDirty() { return managementGrid.edits.size > 0; }
 
-function showExcelMode(mode) {
-  if (managementGridDirty() && managementGrid.mode !== mode && !confirm('薪資／排休月表格有未保存修改，確定切換嗎？')) return;
-  if (managementGrid.mode === 'workbook' && mode !== 'workbook' && companyWorkbookDirty() && !confirm('公司 Excel 月表格有未保存修改，確定切換嗎？')) return;
-  if (worksitePricingDirty() && managementGrid.mode === 'sitepricing' && mode !== 'sitepricing' && !confirm('國泰慈文計價有未保存修改，確定切換嗎？')) return;
+function showExcelMode(mode, {autoLoad = true} = {}) {
+  if (managementGridDirty() && managementGrid.mode !== mode && !confirm('薪資／排休月表格有未保存修改，確定切換嗎？')) return false;
+  if (managementGrid.mode === 'workbook' && mode !== 'workbook' && companyWorkbookDirty() && !confirm('公司 Excel 月表格有未保存修改，確定切換嗎？')) return false;
+  if (costGridDirty() && managementGrid.mode === 'pricing' && mode !== 'pricing' && !confirm('堆高機計價有未保存修改，確定切換嗎？')) return false;
+  if (worksitePricingDirty() && managementGrid.mode === 'sitepricing' && mode !== 'sitepricing' && !confirm('國泰慈文計價有未保存修改，確定切換嗎？')) return false;
   if (managementGrid.mode !== mode) managementGrid.edits.clear();
   managementGrid.mode = mode;
   for (const name of ['Pricing', 'Sitepricing', 'Workbook', 'Finance', 'Payroll', 'Roster']) {
@@ -16,21 +17,23 @@ function showExcelMode(mode) {
   document.getElementById('companyWorkbookSection').hidden = mode !== 'workbook';
   document.getElementById('dataEditorSection').hidden = mode !== 'finance';
   document.getElementById('managementMonthGridSection').hidden = !['payroll', 'roster'].includes(mode);
-  if (mode === 'finance') loadDocumentData(true);
+  if (typeof syncDataWorkflowFromMode === 'function') syncDataWorkflowFromMode(mode);
+  if (mode === 'finance' && autoLoad) loadDocumentData(true);
   if (mode === 'workbook') {
     renderCompanyWorkbookOptions();
-    if (document.getElementById('companyWorkbookDocument').value) loadCompanyWorkbook();
+    if (autoLoad && document.getElementById('companyWorkbookDocument').value) loadCompanyWorkbook();
   }
   if (mode === 'sitepricing') {
     const month = document.getElementById('worksitePricingMonth');
     if (!month.value) month.value = todayString().slice(0, 7) < '2026-11' ? '2026-11' : todayString().slice(0, 7);
-    loadWorksitePricing();
+    if (autoLoad) loadWorksitePricing();
   }
   if (mode === 'payroll' || mode === 'roster') {
     const month = document.getElementById('managementGridMonth');
     if (!month.value) month.value = todayString().slice(0, 7);
-    loadManagementGridSources();
+    if (autoLoad) loadManagementGridSources();
   }
+  return true;
 }
 
 async function loadManagementGridSources() {
