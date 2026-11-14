@@ -1,6 +1,31 @@
 /* Structured business fields only; the original Excel remains untouched. */
 const dataEditor = {data: null, row: null, initial: '', pending: null, busy: false, request: 0};
 
+function openDataLedgerWindow() {
+  if (showExcelMode('finance', {autoLoad: false}) === false) return;
+  document.getElementById('dataKind').value = 'finance';
+  const month = document.getElementById('dataWorkflowMonth').value;
+  if (month) document.getElementById('dataMonth').value = month;
+  loadDocumentData(false, 0);
+  document.getElementById('dataEditorSection').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function selectDataWindowKind(kind) {
+  document.getElementById('dataKind').value = kind;
+  loadDocumentData(true);
+}
+
+function renderDataWindowSummary(result) {
+  const money = value => `NT$ ${Number(value || 0).toLocaleString('zh-TW')}`;
+  const finance = result.kind === 'finance';
+  document.getElementById('dataWindowPeriod').textContent = finance ?
+    `${document.getElementById('dataMonth').value || '全部月份'}｜${result.document.name}` : '公司通訊錄';
+  document.getElementById('dataWindowTotal').textContent = String(result.dataset_total);
+  document.getElementById('dataWindowFiltered').textContent = String(result.total);
+  document.getElementById('dataWindowIncome').textContent = finance ? money(result.rows.reduce((sum, row) => sum + Number(row.values.income_amount || 0), 0)) : '不適用';
+  document.getElementById('dataWindowExpense').textContent = finance ? money(result.rows.reduce((sum, row) => sum + Number(row.values.expense_amount || 0), 0)) : '不適用';
+}
+
 function renderDataDocumentOptions() {
   const select = document.getElementById('dataDocument');
   const selected = select.value;
@@ -47,6 +72,7 @@ async function loadDocumentData(reset = false, offset = 0) {
     const result = await api(`/api/document-data/${id}?${params}`);
     if (request !== dataEditor.request) return;
     dataEditor.data = {...result, documentId: id};
+    renderDataWindowSummary(result);
     document.getElementById('dataSheet').innerHTML = '<option value="">全部工作表</option>' + result.sheets.map(value => `<option>${escapeHtml(value)}</option>`).join('');
     document.getElementById('dataSheet').value = sheet;
     const keys = kind === 'finance' ? ['entry_date','entry_type','category','summary','vendor_name','income_amount','expense_amount','project_name'] : ['name','category','contact_person','phone','mobile','email'];

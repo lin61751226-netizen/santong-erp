@@ -677,6 +677,7 @@
         <button type="button" onclick="applyDataWorkflow()">顯示此月份</button>
       </div>
       <p id="dataWorkflowHint" class="muted">選擇資料類型與月份後，再於下方開啟檔案；所有修改仍要核對並保存。</p>
+      <div class="ledger-entry"><span>需要直接新增、修改系統收支？</span><button type="button" class="button-secondary" onclick="openDataLedgerWindow()">開啟視窗式記帳工作台</button></div>
       <details class="data-workflow-advanced" id="dataWorkflowOtherSources">
         <summary>其他資料來源（系統資料／舊快照等）</summary>
         <div class="data-workflow-source">
@@ -802,7 +803,11 @@
         <button type="button" class="button-secondary" onclick="openLeaveSettings(true)">前往正式休假／排休設定</button>
       </div>
       <div id="dataEditorSection" hidden>
-      <p class="muted">修改收支與公司通訊錄，明確保存到資料庫。原始 Excel 不覆蓋，公式與巨集不變。</p>
+      <div class="ledger-window-title"><strong>三通工程行・記帳工作台</strong><span>網頁視窗版｜原始 Excel 保留</span></div>
+      <div class="ledger-window-toolbar"><button type="button" onclick="editDocumentData()">＋ 新增一筆</button><button type="button" class="button-secondary" onclick="loadDocumentData(false,0)">查詢／重新整理</button><button type="button" class="button-secondary" onclick="openNamedPanel('management-reports')">月報與統計</button></div>
+      <div class="ledger-window-grid">
+        <aside class="ledger-window-side" aria-label="資料分類"><h3>類別管理</h3><button type="button" onclick="selectDataWindowKind('finance')">收支明細</button><button type="button" onclick="selectDataWindowKind('contacts')">公司通訊錄</button><p>記錄仍保存於原系統；切換只更換目前查看的資料。</p></aside>
+        <div class="ledger-window-main"><h3>記一筆帳／查詢資料</h3><p class="muted">按「新增一筆」開啟完整表單，核對後才保存到資料庫；原始 Excel 不覆蓋。</p>
       <div class="form-grid">
         <div class="full"><label for="dataDocument">來源 Excel</label><select id="dataDocument" onchange="loadDocumentData(true)"></select></div>
         <div><label for="dataKind">處理資料</label><select id="dataKind" onchange="loadDocumentData(true)"><option value="finance">收支明細</option><option value="contacts">公司通訊錄</option></select></div>
@@ -813,6 +818,10 @@
       </div>
       <p id="dataStatus" class="muted" role="status">請選擇來源檔案並按查詢。尚未匯入的資料，請先至「收支與通訊錄 Excel 匯入」預覽匯入。</p>
       <p id="dataFeedback" class="notice" role="status" aria-live="polite"></p>
+        </div>
+        <aside class="ledger-window-summary" aria-label="目前資料概況"><h3>本月資料概況</h3><p id="dataWindowPeriod">請先選月份</p><dl><dt>已存總筆數</dt><dd id="dataWindowTotal">—</dd><dt>本月篩選筆數</dt><dd id="dataWindowFiltered">—</dd><dt>本頁收入</dt><dd id="dataWindowIncome">—</dd><dt>本頁支出</dt><dd id="dataWindowExpense">—</dd></dl><small>金額僅加總目前顯示的一頁，不代表整月總額；正式月報請開啟「月報與統計」。</small></aside>
+      </div>
+      <div class="ledger-window-recent"><h3>最近紀錄／查詢結果</h3><span>資料表可左右捲動；點「修改」可編輯原紀錄。</span></div>
       <div class="table-wrap data-editor-table"><table><thead id="dataHeaders"></thead><tbody id="dataRows"></tbody></table></div>
       <div class="reader-pagination"><button id="dataPrevious" type="button" class="button-secondary" onclick="changeDataPage(-1)" disabled>上一頁</button><button id="dataNext" type="button" class="button-secondary" onclick="changeDataPage(1)" disabled>下一頁</button></div>
       <div class="button-row"><button id="dataExport" type="button" onclick="exportDocumentData()" disabled>匯出新的 Excel 到 Drive</button><button id="dataBackup" type="button" class="button-secondary" onclick="retryDataBackup()">重試雲端備份</button></div>
@@ -1536,7 +1545,7 @@
   </div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
-  <script src="/static/document_data.js"></script>
+  <script src="/static/document_data.js?v=20261114c"></script>
   <script src="/static/cost_grid.js?v=20261113b"></script>
   <script src="/static/editing_recovery.js?v=20261113b"></script>
   <script src="/static/worksite_pricing.js?v=20261108b"></script>
