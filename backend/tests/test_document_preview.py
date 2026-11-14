@@ -1,6 +1,8 @@
+import re
 from datetime import date
 from io import BytesIO
 from unittest.mock import AsyncMock, patch
+from zipfile import ZipFile
 
 import openpyxl
 import pytest
@@ -50,6 +52,21 @@ def test_preview_paged_values_formula_warning_and_no_file_mutation():
     original = openpyxl.load_workbook(BytesIO(content))
     assert original["11509-53"]["D2"].value == "=B2*750"
     original.close()
+
+
+def test_preview_recovers_from_incorrect_a1_sheet_dimension():
+    output = BytesIO()
+    with ZipFile(BytesIO(workbook_bytes())) as source, ZipFile(output, "w") as target:
+        for member in source.infolist():
+            content = source.read(member.filename)
+            if member.filename == "xl/worksheets/sheet1.xml":
+                content, count = re.subn(rb'<dimension ref="A1:T45"\s*/>', b'<dimension ref="A1"/>', content)
+                assert count == 1
+            target.writestr(member, content)
+    data = preview_spreadsheet(output.getvalue(), "計價.xlsx", "11509-53", 41, 17)
+    assert data["total_rows"] == 45
+    assert data["total_columns"] == 20
+    assert data["rows"][-1]["cells"][-1]["text"] == "右下資料"
 
 
 @pytest.mark.parametrize("file_name,sheet,row,column", [

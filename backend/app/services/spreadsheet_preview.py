@@ -33,6 +33,12 @@ def preview_spreadsheet(content: bytes, file_name: str, sheet: str | None,
             raise ValueError("找不到指定工作表，請重新選擇")
         ws, source = values[selected], formulas[selected]
         total_rows, total_columns = max(ws.max_row or 1, 1), max(ws.max_column or 1, 1)
+        if total_rows == 1 or total_columns == 1:
+            # Some saved workbooks declare A1 while their sheet XML contains more cells.
+            ws.reset_dimensions()
+            source.reset_dimensions()
+            ws.calculate_dimension(force=True)
+            total_rows, total_columns = max(ws.max_row or 1, 1), max(ws.max_column or 1, 1)
         if row_start > total_rows or column_start > total_columns:
             raise ValueError("指定範圍超過工作表，請重新選擇工作表")
         row_end, column_end = min(row_start + 39, total_rows), min(column_start + 15, total_columns)
