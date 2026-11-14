@@ -1110,7 +1110,7 @@ body.map-open { overflow: hidden; }
 @media (max-width: 1000px) { .quick-actions:has(button:nth-child(5)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* Wide Excel sheets must shrink inside the panel, not push content outside the viewport. */
-.grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+@media (min-width: 981px) { .grid { grid-template-columns: repeat(12, minmax(0, 1fr)); } }
 .grid > .panel, #panel-excel-editor, .cost-grid-sheet { min-width: 0; max-width: 100%; }
 .cost-grid-scroll { max-width: 100%; min-height: 220px; max-height: clamp(340px, 64vh, 760px); overflow: auto; scrollbar-gutter: stable; }
 #panel-excel-editor .data-editor-table { max-width: 100%; overflow: auto; scrollbar-gutter: stable; }
@@ -1120,24 +1120,42 @@ body.map-open { overflow: hidden; }
 .revenue-estimate > strong { font-size: clamp(24px, 3vw, 38px); font-variant-numeric: tabular-nums; color: #174f3e; text-align: right; }
 .revenue-estimate > p { grid-column: 1 / -1; }
 .revenue-estimate > button { justify-self: start; }
-.data-workflow { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)) auto; gap: 12px; align-items: end; padding: 18px; border-radius: 16px; border: 1px solid #aec5b9; background: #edf5ee; }
+.data-workflow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; padding: 18px; border-radius: 16px; border: 1px solid #aec5b9; background: #edf5ee; }
 .data-workflow label { display: block; margin-bottom: 6px; font-weight: 700; }
-.data-workflow select, .data-workflow input { display: block; width: 100%; min-width: 0; }
+.data-workflow select, .data-workflow input, .data-workflow-source select { display: block; width: 100%; min-width: 0; }
 #dataWorkflowHint { margin: 9px 2px 14px; }
 .data-workflow-advanced { margin: 12px 0; }
-.data-workflow-advanced summary { cursor: pointer; color: #27654f; }
+.data-workflow-advanced summary, .uploaded-data-fold summary { cursor: pointer; color: #27654f; font-weight: 700; }
+.data-workflow-source { max-width: 480px; margin: 12px 0 4px; }
 .data-workflow-scroll { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; padding: 10px 12px; background: #f3f6f4; border-radius: 10px; }
 .data-workflow-scroll span { margin-right: auto; }
-.uploaded-data-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.uploaded-data-head h3 { margin: 0; }
-.uploaded-data-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 12px 0 20px; }
-.uploaded-data-card { display: grid; gap: 7px; min-width: 0; padding: 12px 14px; border: 1px solid #c7d6cb; border-radius: 12px; background: #fbfcf8; }
-.uploaded-data-card > span { color: #27654f; font-size: .82rem; font-weight: 700; }
-.uploaded-data-card > strong { overflow-wrap: anywhere; }
-.uploaded-data-card small { color: var(--muted); }
-.uploaded-data-card .button-row { margin-top: 3px; flex-wrap: wrap; }
-@media (max-width: 860px) { .data-workflow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .data-workflow { grid-template-columns: 1fr; } .revenue-estimate { grid-template-columns: 1fr; } .revenue-estimate > strong { text-align: left; } }
+.uploaded-data-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; margin-top: 18px; }
+.uploaded-data-head h3, .uploaded-data-head p { margin: 0; }
+.uploaded-data-head p { margin-left: auto; }
+.uploaded-data-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 12px 0; }
+.uploaded-data-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "mark name action" "mark meta action"; column-gap: 12px; row-gap: 2px; align-items: center; min-width: 0; padding: 14px 16px; border: 1px solid #c7d6cb; border-radius: 14px; background: #fbfcf8; }
+.uploaded-data-card.is-current { border: 2px solid #1e4d3d; background: #f3faf6; }
+.uploaded-data-mark { grid-area: mark; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 10px; background: #1e4d3d; color: #fff; font-weight: 800; }
+.uploaded-data-name { grid-area: name; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.uploaded-data-name strong { overflow-wrap: anywhere; }
+.uploaded-data-badge { display: inline-flex; align-items: center; padding: 0 8px; border-radius: 999px; background: #1e4d3d; color: #fff; font-style: normal; font-size: .78rem; font-weight: 700; white-space: nowrap; }
+.uploaded-data-badge.is-old { background: #e7eee9; color: #1e4d3d; }
+.uploaded-data-meta { grid-area: meta; color: var(--muted); }
+.uploaded-data-actions { grid-area: action; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.uploaded-data-fold { margin: 4px 0; padding: 8px 0; border-top: 1px dashed #c7d6cb; }
+.uploaded-data-fold[hidden] { display: none; }
+.uploaded-data-fold summary { cursor: pointer; font-weight: 700; color: #27654f; }
+.uploaded-data-fold summary small { float: right; max-width: 62%; font-weight: 500; color: var(--muted); text-align: right; }
+.uploaded-data-fold summary::after { content: ""; display: block; clear: both; }
+.uploaded-data-fold > p { margin: 10px 0; }
+@media (max-width: 860px) { .data-workflow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .data-workflow > button { grid-column: 1 / -1; } }
+@media (max-width: 720px) {
+  .uploaded-data-card { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "mark name" "mark meta" "action action"; }
+  .uploaded-data-actions { justify-content: flex-start; }
+  .uploaded-data-head p { margin-left: 0; }
+  .uploaded-data-fold summary small { float: none; display: block; max-width: none; text-align: left; }
+}
+@media (max-width: 560px) { .data-workflow { grid-template-columns: minmax(0, 1fr); } .revenue-estimate { grid-template-columns: 1fr; } .revenue-estimate > strong { text-align: left; } }
 .editor-recovery{margin:12px 0;padding:12px 16px;border:1px solid #c8d8ce;border-left:4px solid #215b49;border-radius:10px;background:#edf4ef}
 .editor-recovery p{margin:4px 0 8px;font-size:14px;line-height:1.6}
 .editor-recovery button{margin:2px 8px 2px 0}
