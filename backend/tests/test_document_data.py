@@ -93,6 +93,25 @@ def test_save_history_provenance_and_retry(ctx):
     assert save(ctx, data).status_code == 409
 
 
+def test_window_new_finance_survives_fresh_session_and_edit(ctx):
+    data = payload(ctx, summary='TEST ONLY - isolated window save', entry_date='2026-11-14')
+    data.update(record_id=None, expected_revision=None)
+    response = save(ctx, data)
+    assert response.status_code == 200, response.text
+    record_id = response.json()['record_id']
+    with Session(ctx.session.bind) as fresh:
+        assert fresh.get(FinanceEntry, record_id).summary == 'TEST ONLY - isolated window save'
+    row = next(row for row in listed(ctx)['rows'] if row['id'] == record_id)
+    values = {key: value if value is not None else '' for key, value in row['values'].items()}
+    values['invoice_date'] = row['values']['invoice_date']
+    updated = dict(data, record_id=record_id, expected_revision=row['revision'], request_id=str(uuid4()),
+                   values=dict(values, summary='TEST ONLY - edited and retained'))
+    response = save(ctx, updated)
+    assert response.status_code == 200, response.text
+    with Session(ctx.session.bind) as fresh:
+        assert fresh.get(FinanceEntry, record_id).summary == 'TEST ONLY - edited and retained'
+
+
 def test_finance_month_filter_preserves_dataset_total(ctx):
     all_rows = listed(ctx, 'finance')
     month = all_rows['rows'][0]['values']['entry_date'][:7]

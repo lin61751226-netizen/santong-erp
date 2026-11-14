@@ -13,6 +13,27 @@
   --shadow: 0 18px 45px rgba(52, 44, 32, 0.08);
 }
 
+/* Shared administration rhythm; component-specific print sheets stay separate. */
+.shell > .panel { margin-bottom:20px; }
+.panel > h2 { margin:0 0 10px; font-size:24px; line-height:1.4; }
+.panel > .muted { margin:0 0 20px; max-width:80ch; }
+.panel-header { gap:16px; flex-wrap:wrap; }
+.panel .form-grid { gap:18px 24px; align-items:start; }
+.panel label { display:block; margin-bottom:6px; font-weight:600; }
+.panel input, .panel select, .panel textarea { min-width:0; max-width:100%; }
+.panel .table-wrap { border:1px solid var(--line); border-radius:8px; }
+.panel table th { font-size:14px; letter-spacing:.02em; white-space:nowrap; }
+.panel table td { font-size:16px; line-height:1.55; vertical-align:top; }
+.panel table tbody tr:nth-child(even) { background:rgba(30,77,61,.035); }
+.panel table tbody tr:hover { background:rgba(30,77,61,.07); }
+.workspace-tools { flex-wrap:wrap; }
+.workspace-tools select { min-width:0; }
+@media (max-width:650px) {
+  .panel > h2 { font-size:22px; }
+  .panel .form-grid { grid-template-columns:minmax(0,1fr); gap:14px; }
+  .workspace-tools select { width:100%; }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1195,12 +1216,38 @@ body.map-open { overflow: hidden; }
 #pricingWindowNav button { display: block; width: 100%; text-align: left; margin: 8px 0; }
 #pricingWindowNav button.is-active { background: #183f63; color: white; }
 @media (min-width: 1100px) {
-  body.pricing-window-mode #pricingWindowNav { position: fixed; left: 20px; top: 380px; width: 245px; max-height: calc(100vh - 400px); overflow-y: auto; z-index: 5; }
-  body.pricing-window-mode [data-workspace="pricing"].workspace-panel-active { margin-left: 270px; width: calc(100% - 270px); grid-column: 1 / -1; min-width: 0; }
-  body.pricing-window-mode #workspaceTools { margin-left: 270px; }
+  body.pricing-window-mode .shell { display:grid; grid-template-columns:230px minmax(0,1fr); gap:20px; align-items:start; }
+  body.pricing-window-mode .shell > .hero { grid-column:1/-1; grid-row:1; margin-bottom:0; }
+  body.pricing-window-mode .nav-shell { grid-column:1/-1; grid-row:2; margin-bottom:0; }
+  body.pricing-window-mode #pricingWindowNav { position:sticky; top:180px; grid-column:1; grid-row:3; width:auto; max-height:calc(100vh - 200px); overflow-y:auto; }
+  body.pricing-window-mode [data-workspace="pricing"].workspace-panel-active { margin:0; width:100%; grid-column:2; grid-row:3; min-width:0; }
+}
+body.pricing-window-mode #workspaceTools { display:none; }
+body.pricing-window-mode .panel { padding:24px; border-radius:12px; box-shadow:0 8px 24px rgba(30,50,65,.05); }
+body.pricing-window-mode .panel > h2 { margin-top:0; font-size:24px; }
+body.pricing-window-mode #pricingWindowNav button { font-size:16px; padding:12px; border-radius:7px; line-height:1.45; }
+body.pricing-window-mode .ledger-window-grid { grid-template-columns:minmax(0,1.7fr) minmax(190px,1fr); }
+body.pricing-window-mode .ledger-window-side { grid-column:1/-1; flex-direction:row; flex-wrap:wrap; align-items:center; padding:10px; }
+body.pricing-window-mode .ledger-window-side h3, body.pricing-window-mode .ledger-window-side p { display:none; }
+body.pricing-window-mode .ledger-window-summary { grid-column:auto; overflow-wrap:anywhere; }
+@media (max-width: 650px) {
+  body.pricing-window-mode .panel { padding:16px; }
+  body.pricing-window-mode .ledger-window-grid { grid-template-columns:minmax(0,1fr); }
+  body.pricing-window-mode .nav-shell { position:static; }
 }
 @media (max-width: 1099px) {
   #pricingWindowNav { display: flex; gap: 8px; overflow-x: auto; align-items: center; margin-bottom: 16px; }
   #pricingWindowNav strong, #pricingWindowNav p { display: none; }
   #pricingWindowNav button { flex: 0 0 190px; margin: 0; }
+}
+@media (max-width:650px) {
+  .hero { gap:8px; }
+  .hero-card, .hero-side { padding:12px 16px; border-radius:12px; }
+  .hero h1 { font-size:22px; line-height:1.4; margin:4px 0; }
+  .hero .eyebrow, .hero-copy { display:none; }
+  .user-chip { flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+  .user-chip .button-row { gap:6px; }
+  .user-chip button { padding:6px 10px; font-size:14px; }
+  .nav-search input { min-height:42px; font-size:16px; }
+  .nav-search > label { font-size:14px; }
 }
