@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261114b">
+  <link rel="stylesheet" href="/static/app.css?v=20261114c">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -670,28 +670,47 @@
     </section>
 
     <section class="panel span-12" data-workspace="pricing" id="panel-excel-editor" data-panel="excel-editor" data-nav-order="3" data-legacy="documents:5" data-nav-aliases="線上編輯,收支修改">
-      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">依檔案與月份處理計價、收支、薪資與排休；保存前逐列核對，原始 Excel 保留。</p></div></div>
+      <div class="panel-header"><div><h2>Excel 線上資料處理</h2><p class="muted">選好類型和月份，下面只會出現對應的檔案；原始 Excel 一律保留。</p></div></div>
       <div class="data-workflow" aria-label="月資料處理選擇">
-        <div><label for="dataWorkflowKind">1. 要處理什麼</label><select id="dataWorkflowKind" onchange="changeDataWorkflowKind()"><option value="pricing">堆高機計價</option><option value="finance">收支明細</option><option value="payroll">員工薪資</option><option value="roster">員工排休</option></select></div>
-        <div><label for="dataWorkflowSource">2. 資料來源</label><select id="dataWorkflowSource" onchange="changeDataWorkflowSource()"></select></div>
-        <div><label for="dataWorkflowMonth">3. 作業月份</label><input id="dataWorkflowMonth" type="month" onchange="changeDataWorkflowMonth()"></div>
+        <div><label for="dataWorkflowKind">1. 要處理什麼</label><select id="dataWorkflowKind" onchange="changeDataWorkflowKind()"><option value="pricing">計價</option><option value="finance">收支明細</option><option value="payroll">薪資</option><option value="roster">排休</option></select></div>
+        <div><label for="dataWorkflowMonth">2. 作業月份</label><input id="dataWorkflowMonth" type="month" onchange="changeDataWorkflowMonth()"></div>
         <button type="button" onclick="applyDataWorkflow()">顯示此月份</button>
       </div>
-      <p id="dataWorkflowHint" class="muted">選擇資料類型與來源後，再於下方選檔案；所有修改仍要核對並保存。</p>
-      <details class="data-workflow-advanced"><summary>切換其他來源或檢查舊版入口</summary>
-      <div class="cost-grid-tabs" role="tablist" aria-label="線上資料類型">
-        <button type="button" id="excelModePricing" class="active" onclick="showExcelMode('pricing')">堆高機計價</button>
-        <button type="button" id="excelModeSitepricing" onclick="showExcelMode('sitepricing')">國泰慈文計價</button>
-        <button type="button" id="excelModeWorkbook" onclick="showExcelMode('workbook')">公司 Excel 月表格</button>
-        <button type="button" id="excelModeFinance" onclick="showExcelMode('finance')">系統收支／通訊錄</button>
-        <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">舊快照薪資</button>
-        <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">舊快照排休</button>
-      </div>
+      <p id="dataWorkflowHint" class="muted">選擇資料類型與月份後，再於下方開啟檔案；所有修改仍要核對並保存。</p>
+      <details class="data-workflow-advanced" id="dataWorkflowOtherSources">
+        <summary>其他資料來源（系統資料／舊快照等）</summary>
+        <div class="data-workflow-source">
+          <label for="dataWorkflowSource">資料來源</label>
+          <select id="dataWorkflowSource" onchange="changeDataWorkflowSource()"></select>
+          <p class="muted">收合時沿用已上傳的 Excel 原檔。展開後可改系統收支、國泰慈文獨立計價或舊快照，既有保存方式不變。</p>
+        </div>
+        <p class="muted">切換其他來源或檢查舊版入口</p>
+        <div class="cost-grid-tabs" role="tablist" aria-label="線上資料類型">
+          <button type="button" id="excelModePricing" class="active" onclick="showExcelMode('pricing')">堆高機計價</button>
+          <button type="button" id="excelModeSitepricing" onclick="showExcelMode('sitepricing')">國泰慈文計價</button>
+          <button type="button" id="excelModeWorkbook" onclick="showExcelMode('workbook')">公司 Excel 月表格</button>
+          <button type="button" id="excelModeFinance" onclick="showExcelMode('finance')">系統收支／通訊錄</button>
+          <button type="button" id="excelModePayroll" onclick="showExcelMode('payroll')">舊快照薪資</button>
+          <button type="button" id="excelModeRoster" onclick="showExcelMode('roster')">舊快照排休</button>
+        </div>
       </details>
       <div class="data-workflow-scroll"><span>月表欄位較多時，可在表格內左右捲動。</span><button type="button" class="button-secondary button-compact" onclick="moveActiveDataTable(-1)">向左看</button><button type="button" class="button-secondary button-compact" onclick="moveActiveDataTable(1)">向右看</button></div>
-      <div class="uploaded-data-head"><h3>已上傳的公司資料</h3><button type="button" class="button-secondary button-compact" onclick="openNamedPanel('excel-library')">查看全部／上傳新檔</button></div>
+      <div class="uploaded-data-head"><h3 id="uploadedDataHeading">已上傳的公司資料</h3><p id="uploadedDataScope" class="muted">只列此類型相關檔案，每份只顯示最新版。</p><button type="button" class="button-secondary button-compact" onclick="openNamedPanel('excel-library')">查看全部／上傳新檔</button></div>
       <p id="uploadedDataStatus" class="muted">登入後列出已上傳的 Excel；可直接在 APP 預覽內容。</p>
       <div id="uploadedDataCards" class="uploaded-data-cards"></div>
+      <details id="uploadedDataHistory" class="uploaded-data-fold" hidden>
+        <summary><span id="uploadedDataHistorySummary">歷史版本</span><small id="uploadedDataHistoryNote"></small></summary>
+        <div id="uploadedDataHistoryBody" class="uploaded-data-cards"></div>
+      </details>
+      <details id="uploadedDataExports" class="uploaded-data-fold" hidden>
+        <summary><span id="uploadedDataExportsSummary">系統匯出紀錄</span><small id="uploadedDataExportsNote"></small></summary>
+        <div id="uploadedDataExportsBody" class="uploaded-data-cards"></div>
+      </details>
+      <details id="uploadedDataUpload" class="uploaded-data-fold">
+        <summary>上傳新檔案</summary>
+        <p class="muted">新檔仍從公司 Excel 文件庫上傳到 Google Drive，不覆蓋舊檔，並保留版本紀錄與操作稽核。</p>
+        <button type="button" class="button-secondary" onclick="openNamedPanel('excel-library')">查看全部／上傳新檔</button>
+      </details>
       <div id="costGridSection">
       <div class="cost-grid-toolbar">
         <div><label for="costGridDocument">推高機計價檔</label><select id="costGridDocument" onchange="loadCostGrid()"></select></div>
@@ -1524,7 +1543,7 @@
   <script src="/static/pricing_print.js?v=20261112c"></script>
   <script src="/static/management_month_grid.js?v=20261114b"></script>
   <script src="/static/company_workbook_grid.js?v=20261107b"></script>
-  <script src="/static/data_workflow.js?v=20261114b"></script>
+  <script src="/static/data_workflow.js?v=20261114c"></script>
   <script src="/static/management_reports.js"></script>
   <script src="/static/leave_settings.js"></script>
   <script src="/static/assignment_settings.js"></script>

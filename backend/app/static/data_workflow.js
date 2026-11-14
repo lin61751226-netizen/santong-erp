@@ -36,6 +36,7 @@ function syncDataWorkflowFromMode(mode) {
     roster: '下方選已存的全年管理版本；排休修訂不是正式請假核准。',
   };
   document.getElementById('dataWorkflowHint').textContent = hints[mode];
+  renderUploadedDataCards();
 }
 
 function initDataWorkflow() {
@@ -58,6 +59,7 @@ function changeDataWorkflowKind() {
   document.getElementById('dataWorkflowSource').innerHTML = dataWorkflowSources[kind].map(([value, label]) =>
     `<option value="${value}">${escapeHtml(label)}</option>`).join('');
   document.getElementById('dataWorkflowSource').value = source;
+  renderUploadedDataCards();
   applyDataWorkflow();
 }
 
@@ -127,40 +129,231 @@ function moveActiveDataTable(direction) {
   if (scroller) scroller.scrollLeft += direction * Math.max(260, Math.round(scroller.clientWidth * .7));
 }
 
+const dataWorkflowKindLabels = {pricing: '計價', finance: '收支明細', payroll: '薪資', roster: '排休'};
+let dataWorkflowOpenId = null;
+
+function dataWorkflowDocumentId(item) {
+  const id = Number(item?.id);
+  return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+function dataWorkflowIsExport(item) {
+  const name = String(item?.original_file_name || '');
+  return item?.category === '線上資料匯出' || name.includes('線上資料匯出');
+}
+
+function dataWorkflowExportToken(item) {
+  return (String(item?.original_file_name || '').match(/線上資料匯出_([A-Za-z0-9]+)/) || [])[1] || '';
+}
+
+function dataWorkflowNormalizeStem(name) {
+  let stem = String(name || '').replace(/\.[^.]+$/i, '').trim();
+  let previous = '';
+  while (stem && stem !== previous) {
+    previous = stem;
+    stem = stem
+      .replace(/_線上編輯_\d{8}_\d{6}_\d+$/i, '')
+      .replace(/_\d{8}_\d{6}(?:_\d+)?$/, '')
+      .replace(/[ _]*[（(]\d+[)）]$/, '')
+      .replace(/_(?:最終修正版|修正版|修訂版|最新版)$/, '')
+      .replace(/(計價)\d{4}$/, '$1');
+  }
+  return stem || String(name || '');
+}
+
+function dataWorkflowFamilyLabel(name) {
+  const stem = dataWorkflowNormalizeStem(name);
+  const parts = stem.split('_').filter(Boolean);
+  if (parts.length > 1) return parts[parts.length - 1];
+  const mark = stem.match(/(?:推|堆)高機計價|收支明細|全年管理|薪資|排休/);
+  return mark ? mark[0] : stem;
+}
+
+function dataWorkflowDocumentMatchesKind(item, kind) {
+  if (!item || dataWorkflowIsExport(item)) return false;
+  const name = String(item.original_file_name || '');
+  const category = String(item.category || '');
+  if (kind === 'pricing') return category === '推高機計價' || (/計價/.test(name) && /[推堆]高機/.test(name));
+  if (kind === 'finance') {
+    return category === '收支明細'
+      || name.startsWith('三通公司通訊錄_收支明細表_堆高機')
+      || name.startsWith('三通公司收支明細表_六和')
+      || (category === '通訊錄與年度管理' && name.includes('收支明細'));
+  }
+  if (kind === 'payroll' || kind === 'roster') {
+    return category === '通訊錄與年度管理' && /\.xlsx$/i.test(name);
+  }
+  return false;
+}
+
+function dataWorkflowExportMatchesKind(item, kind) {
+  if (!dataWorkflowIsExport(item)) return false;
+  const name = String(item.original_file_name || '');
+  const token = dataWorkflowExportToken(item).toLowerCase();
+  if (token) {
+    if (kind === 'finance') return token === 'finance' || token === 'contacts';
+    if (kind === 'payroll') return token === 'payroll';
+    if (kind === 'roster') return token === 'roster';
+    if (kind === 'pricing') return token === 'pricing' || token === 'cost';
+    return false;
+  }
+  if (kind === 'finance') return /收支|通訊錄/.test(name);
+  if (kind === 'payroll') return /薪資/.test(name);
+  if (kind === 'roster') return /排休/.test(name);
+  return false;
+}
+
+function dataWorkflowPartition(documents, kind) {
+  const current = [];
+  const history = [];
+  const exports = [];
+  const families = new Map();
+  for (const item of documents || []) {
+    if (dataWorkflowIsExport(item)) {
+      if (dataWorkflowExportMatchesKind(item, kind)) exports.push(item);
+      continue;
+    }
+    if (!dataWorkflowDocumentMatchesKind(item, kind)) continue;
+    const key = dataWorkflowNormalizeStem(item.original_file_name);
+    if (!families.has(key)) families.set(key, []);
+    families.get(key).push(item);
+  }
+  for (const items of families.values()) {
+    const sorted = [...items].sort((a, b) => dataWorkflowDocumentId(b) - dataWorkflowDocumentId(a));
+    current.push(sorted[0]);
+    history.push(...sorted.slice(1));
+  }
+  current.sort((a, b) => dataWorkflowDocumentId(b) - dataWorkflowDocumentId(a));
+  history.sort((a, b) => dataWorkflowDocumentId(b) - dataWorkflowDocumentId(a));
+  exports.sort((a, b) => dataWorkflowDocumentId(b) - dataWorkflowDocumentId(a));
+  return {current, history, exports};
+}
+
+function dataWorkflowHistoryNote(items) {
+  const groups = [];
+  for (const item of [...items].sort((a, b) => dataWorkflowDocumentId(a) - dataWorkflowDocumentId(b))) {
+    const label = dataWorkflowFamilyLabel(item.original_file_name);
+    let group = groups.find(row => row.label === label);
+    if (!group) {
+      group = {label, ids: []};
+      groups.push(group);
+    }
+    group.ids.push(dataWorkflowDocumentId(item));
+  }
+  return groups.map(group => `${group.ids.map(id => `#${id}`).join('、')} ${group.label}`).join('，');
+}
+
+function dataWorkflowExportNote(items) {
+  const tokens = [];
+  for (const item of items) {
+    const token = dataWorkflowExportToken(item);
+    if (token && !tokens.includes(token)) tokens.push(token);
+  }
+  return tokens.length ? `線上資料匯出 ${tokens.join('／')}，不列入主清單` : '不列入主清單';
+}
+
+function dataWorkflowActiveDocumentId() {
+  const kind = document.getElementById('dataWorkflowKind')?.value;
+  const mode = document.getElementById('dataWorkflowSource')?.value;
+  if (mode === 'sitepricing' || mode === 'finance' || mode === 'payroll' || mode === 'roster') return 0;
+  const sourceId = kind === 'pricing' || mode === 'pricing'
+    ? document.getElementById('costGridDocument')?.value
+    : document.getElementById('companyWorkbookDocument')?.value;
+  const id = Number(sourceId);
+  return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+function dataWorkflowText(id, text) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = text;
+}
+
+function dataWorkflowCard(item, {latest = false, active = false} = {}) {
+  const id = dataWorkflowDocumentId(item);
+  const opened = dataWorkflowOpenId === id;
+  const actions = opened
+    ? `<button type="button" class="button-secondary button-compact" onclick="openManagedDocument(${id})">預覽</button>
+       <button type="button" class="button-compact" onclick="openUploadedDataForMonth(${id})">處理這個月</button>`
+    : `<button type="button" class="button-secondary button-compact" onclick="openUploadedDataCard(${id})">開啟</button>`;
+  const badge = latest
+    ? `<em class="uploaded-data-badge">最新 #${id}</em>`
+    : `<em class="uploaded-data-badge is-old">#${id}</em>`;
+  return `<article class="uploaded-data-card${active ? ' is-current' : ''}" data-document-id="${id}">
+    <span class="uploaded-data-mark" aria-hidden="true">X</span>
+    <div class="uploaded-data-name"><strong title="${escapeAttr(item.original_file_name)}">${escapeHtml(item.original_file_name)}</strong>${badge}</div>
+    <small class="uploaded-data-meta">${escapeHtml(formatTW(item.created_at))} 上傳${active ? ' · 目前使用中' : ''}</small>
+    <div class="uploaded-data-actions">${actions}</div>
+  </article>`;
+}
+
+function openUploadedDataCard(id) {
+  const next = Number(id);
+  dataWorkflowOpenId = dataWorkflowOpenId === next ? null : next;
+  renderUploadedDataCards();
+}
+
 function renderUploadedDataCards() {
   const cards = document.getElementById('uploadedDataCards');
   if (!cards) return;
-  const docs = [...(state.managedDocuments || [])].sort((a, b) => b.id - a.id).slice(0, 12);
-  document.getElementById('uploadedDataStatus').textContent = docs.length ?
-    `已上傳 ${state.managedDocuments.length} 份；下列顯示最新 ${docs.length} 份。預覽在 APP 內讀取原檔，不會修改內容。` :
-    '尚無已上傳 Excel。請先到公司 Excel 文件庫上傳，原檔會保留在 Google Drive。';
-  cards.innerHTML = docs.map(item => `<article class="uploaded-data-card">
-    <span>${escapeHtml(item.category)}</span><strong title="${escapeAttr(item.original_file_name)}">${escapeHtml(item.original_file_name)}</strong>
-    <small>版本 #${item.id} · ${formatTW(item.created_at)}</small>
-    <div class="button-row"><button type="button" class="button-secondary button-compact" onclick="openManagedDocument(${item.id})">在 APP 預覽</button>
-    <button type="button" class="button-compact" onclick="openUploadedDataForMonth(${item.id})">選月份處理</button></div>
-  </article>`).join('');
+  const kind = document.getElementById('dataWorkflowKind')?.value || 'pricing';
+  const label = dataWorkflowKindLabels[kind] || '資料';
+  const {current, history, exports} = dataWorkflowPartition(state.managedDocuments, kind);
+  const activeId = dataWorkflowActiveDocumentId();
+  dataWorkflowText('uploadedDataHeading', `${label}的檔案`);
+  dataWorkflowText('uploadedDataScope', `只列${label}相關檔案，每份只顯示最新版。`);
+  const status = document.getElementById('uploadedDataStatus');
+  if (status) {
+    status.textContent = current.length
+      ? `最新版 ${current.length} 份${history.length ? `，較舊版本 ${history.length} 份收在下方` : ''}。預覽在 APP 內讀取原檔，不會修改內容。`
+      : `此類型尚無已上傳的 Excel。請展開「上傳新檔案」，或到公司 Excel 文件庫上傳；原檔會保留在 Google Drive。`;
+  }
+  cards.innerHTML = current.map(item => dataWorkflowCard(item, {
+    latest: true, active: dataWorkflowDocumentId(item) === activeId,
+  })).join('');
+  const historyNode = document.getElementById('uploadedDataHistory');
+  const exportNode = document.getElementById('uploadedDataExports');
+  if (historyNode) historyNode.hidden = history.length === 0;
+  if (exportNode) exportNode.hidden = exports.length === 0;
+  dataWorkflowText('uploadedDataHistorySummary', `歷史版本（${history.length} 份）`);
+  dataWorkflowText('uploadedDataHistoryNote', dataWorkflowHistoryNote(history));
+  dataWorkflowText('uploadedDataExportsSummary', `系統匯出紀錄（${exports.length} 份）`);
+  dataWorkflowText('uploadedDataExportsNote', dataWorkflowExportNote(exports));
+  const historyBody = document.getElementById('uploadedDataHistoryBody');
+  const exportBody = document.getElementById('uploadedDataExportsBody');
+  if (historyBody) {
+    historyBody.innerHTML = history.map(item => dataWorkflowCard(item, {
+      active: dataWorkflowDocumentId(item) === activeId,
+    })).join('');
+  }
+  if (exportBody) exportBody.innerHTML = exports.map(item => dataWorkflowCard(item)).join('');
 }
 
 async function openUploadedDataForMonth(id) {
   const item = state.managedDocuments.find(row => row.id === id);
   if (!item) return;
+  const kind = document.getElementById('dataWorkflowKind')?.value;
+  const month = document.getElementById('dataWorkflowMonth')?.value;
   if (item.category === '推高機計價') {
     if (showExcelMode('pricing', {autoLoad: false}) === false) return;
     document.getElementById('costGridDocument').value = String(id);
+    if (month) document.getElementById('costGridMonth').value = month;
     await loadCostGrid();
   } else if (item.original_file_name.toLowerCase().endsWith('.xlsx') &&
              ['通訊錄與年度管理', '收支明細'].includes(item.category)) {
     if (showExcelMode('workbook', {autoLoad: false}) === false) return;
-    if (item.category === '收支明細') document.getElementById('companyWorkbookKind').value = 'finance';
+    const workbookKind = kind === 'payroll' || kind === 'roster' || kind === 'finance' ? kind :
+      (item.category === '收支明細' ? 'finance' : document.getElementById('companyWorkbookKind').value);
+    document.getElementById('companyWorkbookKind').value = workbookKind;
     document.getElementById('companyWorkbookDocument').value = String(id);
+    if (month) document.getElementById('companyWorkbookMonth').value = month;
     syncDataWorkflowFromMode('workbook');
     await loadCompanyWorkbook();
   } else {
     openManagedDocument(id);
     return;
   }
-  document.getElementById('panel-excel-editor').scrollIntoView({behavior: 'smooth', block: 'start'});
+  document.getElementById('panel-excel-editor')?.scrollIntoView?.({behavior: 'smooth', block: 'start'});
+  renderUploadedDataCards();
 }
 
 async function loadMonthlyRevenueEstimate() {
