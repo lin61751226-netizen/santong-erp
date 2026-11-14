@@ -93,8 +93,8 @@ function visibleKey(panels) {
 
 test('every existing function stays reachable in one of seven groups', () => {
   const panels = loadPanels();
-  assert.equal(panels.length, 36);
-  assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 36);
+  assert.equal(panels.length, 37);
+  assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 37);
   const groups = [...navHtml.matchAll(/data-workspace-tab="([^"]+)"[^>]*>([^<]+)/g)].map((match) => match[2]);
   assert.deepEqual(groups, ['今日總覽', '人員與考勤', '派工與工地', '堆高機', '日誌與簽單', '計價與收支', '文件與設定']);
   for (const title of keptTitles) assert.ok(panels.some((panel) => panel.title === title), title);

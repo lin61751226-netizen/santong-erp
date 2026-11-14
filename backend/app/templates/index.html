@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261113b">
+  <link rel="stylesheet" href="/static/app.css?v=20261114">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -149,6 +149,19 @@
       <pre id="actionResultBody" aria-live="polite"></pre>
     </details>
 
+    <section id="panel-worksite-board" class="panel span-12" data-workspace="today" data-panel="worksite-board" data-nav-order="1" data-nav-aliases="工地工作台,工地缺漏,每日工地">
+      <div class="panel-header">
+        <div><span class="eyebrow">每日現場</span><h2>今日工地工作台</h2><p class="muted">依日期與工地看資料及待處理項目；狀態只讀，原紀錄仍在各功能保存。</p></div>
+        <div class="button-row">
+          <label>日期 <input id="worksiteBoardDate" type="date" onchange="loadWorksiteBoard()"></label>
+          <label>工地 <select id="worksiteBoardSite" onchange="loadWorksiteBoard()"></select></label>
+          <button type="button" onclick="loadWorksiteBoard()">重新整理</button>
+        </div>
+      </div>
+      <p id="worksiteBoardStatus" class="notice" role="status" aria-live="polite"></p>
+      <div id="worksiteBoardCards" class="worksite-board-grid"></div>
+    </section>
+
     <section id="panel-today-board" class="panel span-12" data-workspace="today" data-panel="today-board" data-nav-order="0" data-legacy="overview:home" data-nav-aliases="首頁,今天,總覽">
       <div class="panel-header">
         <div>
@@ -160,6 +173,7 @@
       <div id="todayBoardCards" class="today-grid"></div>
       <div class="quick-actions" aria-label="常用工作捷徑">
         <button type="button" onclick="openNamedPanel('today-board')"><strong>今日總覽</strong><span>出勤與待辦</span></button>
+        <button type="button" onclick="openNamedPanel('worksite-board')"><strong>工地工作台</strong><span>一頁核對七項</span></button>
         <button type="button" onclick="openTodayPanel('sign-slips')"><strong>當日簽單</strong><span>修正現場工時</span></button>
         <button type="button" onclick="openPricingGridShortcut(false)"><strong>計價月表</strong><span>確認簽單差異</span></button>
         <button type="button" onclick="openPricingGridShortcut(true)"><strong>A4 請款表</strong><span>預覽後再列印</span></button>
@@ -167,7 +181,7 @@
       <p id="todayBoardStatus" class="notice" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="panel span-12" data-workspace="today" id="panel-system-stats" data-panel="system-stats" data-nav-order="1" data-legacy="overview:0" data-nav-aliases="人數,統計,員工數">
+    <section class="panel span-12" data-workspace="today" id="panel-system-stats" data-panel="system-stats" data-nav-order="2" data-legacy="overview:0" data-nav-aliases="人數,統計,員工數">
       <div class="panel-header">
         <div>
           <h2>系統總覽</h2>
@@ -1496,6 +1510,7 @@
   <script src="/static/photo_import.js"></script>
   <script src="/static/drive_photo_index.js"></script>
   <script src="/static/photo_classification.js"></script>
+  <script src="/static/worksite_board.js?v=20261114"></script>
   <script>
     const state = {
       actor: null,
@@ -3050,6 +3065,7 @@
     });
 
     async function bootstrap() {
+      document.getElementById("worksiteBoardDate").value = todayString();
       document.getElementById("workDate").value = todayString();
       document.getElementById("journalDate").value = todayString();
       document.getElementById("costImportDate").value = todayString();
@@ -3071,6 +3087,7 @@
         state.worksites.map(site => `<option value="${site.id}">${escapeHtml(site.name)}</option>`).join("");
       await Promise.all([
         loadDashboard(),
+        loadWorksiteBoard(),
         loadWorksiteJournals(),
         loadEmployees(),
         loadAssignments(),
@@ -3109,6 +3126,7 @@
       state.actor = data.actor;
       state.employees = data.employees;
       state.worksites = data.worksites;
+      initWorksiteBoard();
       PhotoAlbumImport.configure({ sites: state.worksites, actor: state.actor, api,
         today: todayString(), refresh: loadPhotoUploads });
       DrivePhotoIndex.configure({ sites: state.worksites, actor: state.actor, api, refresh: loadPhotoUploads });

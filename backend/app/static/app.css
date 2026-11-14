@@ -1091,6 +1091,7 @@ body.map-open { overflow: hidden; }
 .cost-grid-stale { color: #a43732; font-weight: 700; }
 #costGridReview { white-space: pre-wrap; max-height: 260px; overflow: auto; }
 .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0 6px; }
+.quick-actions:has(button:nth-child(5)) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .quick-actions button { display: grid; gap: 4px; min-height: 92px; padding: 15px; text-align: left; background: #eff4ed; color: #173d34; border: 1px solid #b5c9bb; border-radius: 12px; }
 .quick-actions button strong { font-size: 1.1rem; }
 .quick-actions button span { font-size: .85rem; }
@@ -1106,6 +1107,17 @@ body.map-open { overflow: hidden; }
 .cost-grid-slip-reason { margin: 10px 0; padding: 12px; background: #fff3d7; border: 1px solid #dabd76; border-radius: 8px; }
 .cost-grid-slip-reason input { display: block; width: min(500px, 100%); margin-top: 6px; }
 @media (max-width: 760px) { .quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .quick-actions:has(button:nth-child(5)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .editor-recovery{margin:12px 0;padding:12px 16px;border:1px solid #c8d8ce;border-left:4px solid #215b49;border-radius:10px;background:#edf4ef}
 .editor-recovery p{margin:4px 0 8px;font-size:14px;line-height:1.6}
 .editor-recovery button{margin:2px 8px 2px 0}
+.worksite-board-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:16px}
+.worksite-board-card{display:flex;flex-direction:column;gap:10px;min-width:0;padding:16px;border:1px solid #c8d6cc;border-radius:13px;background:#f7faf6}
+.worksite-board-card.is-warning{border-left:4px solid #c97731;background:#fff8ee}
+.worksite-board-card-head{display:flex;align-items:start;justify-content:space-between;gap:8px}
+.worksite-board-card-head h3{margin:0;font-size:1.15rem}
+.worksite-board-card-head span{font-size:.85rem;font-weight:700;color:#315d50;text-align:right}
+.worksite-board-detail{flex:1;line-height:1.5;overflow-wrap:anywhere}
+.worksite-board-detail p{margin:0 0 8px}.worksite-board-detail ul{margin:0;padding-left:1.2em}
+.worksite-board-card button{align-self:start}
+@media(max-width:600px){.worksite-board-grid{grid-template-columns:1fr}.worksite-board-card{padding:14px}}

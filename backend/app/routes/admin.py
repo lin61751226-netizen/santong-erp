@@ -112,6 +112,7 @@ from app.services.line import notify_employees, process_webhook_event
 from app.services.google_drive import GoogleDriveWorklogError, google_drive_worklog_service
 from app.services.login_alias import LoginAliasError, save_login_alias
 from app.services.today_overview import build_today_overview
+from app.services.worksite_board import build_worksite_board
 from app.services.cost_workbook import (
     CostWorkbookError,
     MonthHourUpdate,
@@ -558,6 +559,7 @@ def get_options(
             "name": actor.name,
             "role": actor.role,
             "login_alias": actor.login_alias,
+            "home_site_id": actor.home_site_id,
         },
         "employees": [
             {
@@ -1024,6 +1026,22 @@ def today_overview(
 ):
     """今日總覽。只讀彙整，不寫入考勤、草稿、備份或 Google Drive。"""
     return build_today_overview(session)
+
+
+@router.get("/worksite-board", dependencies=[Depends(_no_store)])
+def worksite_board(
+    target_date: date,
+    site_id: int,
+    session: Session = Depends(get_session),
+    actor: Employee = Depends(require_roles(Role.owner, Role.admin, Role.site_manager)),
+):
+    """Selected site/day only; this endpoint never reclassifies group text or writes data."""
+    site = session.get(Worksite, site_id)
+    if site is None:
+        raise HTTPException(status_code=404, detail="找不到工地")
+    if actor.role == Role.site_manager and actor.home_site_id != site_id:
+        raise HTTPException(status_code=403, detail="無權查看此工地")
+    return build_worksite_board(session, target_date, site)
 
 
 @router.get("/employees")
