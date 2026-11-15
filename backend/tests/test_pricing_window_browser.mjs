@@ -47,6 +47,16 @@ test('pricing window switches original panels at desktop and mobile widths', asy
       await page.screenshot({path:`outputs/pricing-window/${workspace}-390.png`,fullPage:false});
     }
     await page.setViewportSize({width:1440,height:950});
+    for(const workspace of ['dispatch','people','fleet','journals']) {
+      await page.evaluate(value=>setWorkspace(value,false),workspace);
+      const panel=page.locator('[data-workspace]:visible');
+      const bounds=await panel.boundingBox();
+      const nav=await page.locator('#workWindowNav').boundingBox();
+      assert.ok(bounds.width>650, `${workspace} content must keep the main column width`);
+      assert.ok(bounds.x>=nav.x+nav.width, `${workspace} sidebar must not overlap content`);
+      assert.ok(bounds.x+bounds.width<=1441, `${workspace} content must stay within viewport`);
+      await page.screenshot({path:`outputs/pricing-window/${workspace}-1440.png`,fullPage:false});
+    }
     await page.evaluate(()=>setWorkspace('finance',false));
     await page.locator('#workWindowNav button').first().click();
     assert.equal(await page.evaluate(()=>window.testExcelMode),'finance');
