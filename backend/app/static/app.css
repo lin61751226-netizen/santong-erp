@@ -1284,6 +1284,7 @@ body.work-window-focus .hero { display:none; }
   body.work-window-mode .workspace-nav { flex:1; flex-wrap:wrap; }
   body.work-window-mode #workWindowNav, body.work-window-mode #pricingWindowNav { grid-column:1; grid-row:3/5; position:sticky; top:16px; max-height:calc(100vh - 32px); overflow:auto; }
   body.work-window-mode #workWindowBar { grid-column:2; grid-row:3; }
+  body.work-window-mode .shell > .grid { display:block; grid-column:2; grid-row:4; min-width:0; width:100%; }
   body.work-window-mode [data-workspace].workspace-panel-active { grid-column:2; grid-row:4; width:100%; min-width:0; margin:0; }
   body.work-window-mode #actionResult { grid-column:1/-1; grid-row:5; }
   body.work-window-focus .workspace-panel-active { max-height:calc(100vh - 160px); overflow:auto; scrollbar-gutter:stable; }
