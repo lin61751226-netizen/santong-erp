@@ -15,6 +15,7 @@ from app.routes.auth import router as auth_router
 from app.routes.editing_drafts import router as editing_drafts_router
 from app.routes.forklift import router as forklift_router
 from app.routes.finance_imports import router as finance_import_router
+from app.routes.workbook_archive import router as workbook_archive_router
 from app.routes.document_data import router as document_data_router
 from app.routes.management_reports import router as management_reports_router
 from app.routes.management_workbook_grid import router as management_workbook_grid_router
@@ -93,6 +94,7 @@ app.include_router(line_management_api_router)
 app.include_router(line_management_page_router)
 app.include_router(forklift_router)
 app.include_router(finance_import_router)
+app.include_router(workbook_archive_router)
 app.include_router(document_data_router)
 app.include_router(management_reports_router)
 app.include_router(management_workbook_grid_router)

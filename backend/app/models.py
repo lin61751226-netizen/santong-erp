@@ -4,7 +4,7 @@ from datetime import date, datetime, time
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import JSON, Column, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, LargeBinary, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -593,6 +593,24 @@ class FinanceImportBatch(SQLModel, table=True):
     contact_skipped: int = 0
     warning_rows: list[dict] = Field(default_factory=list, sa_column=Column(JSON))
     imported_by_id: Optional[int] = Field(default=None, foreign_key="employee.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class WorkbookArchive(SQLModel, table=True):
+    """Exact, immutable Excel source stored separately from booked finance entries."""
+
+    __table_args__ = (UniqueConstraint("source_document_id", "content_sha256", name="uq_workbook_archive_version"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_document_id: int = Field(foreign_key="manageddocument.id", index=True)
+    content_sha256: str = Field(index=True)
+    ledger_scope: str = Field(index=True)
+    source_role: str
+    file_name: str
+    size_bytes: int
+    sheet_names: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    content: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    archived_by_id: int = Field(foreign_key="employee.id")
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 

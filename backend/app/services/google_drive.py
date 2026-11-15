@@ -46,6 +46,7 @@ PRESERVED_DATABASE_TABLES = (
     "costgridamountadjustment",
     "invoiceprintrevision",
     "managementworkbooksnapshot",
+    "workbookarchive",
     "documentdatarevision",
     "documentdataexport",
     "businesscontact",
