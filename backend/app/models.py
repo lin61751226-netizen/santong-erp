@@ -614,6 +614,28 @@ class WorkbookArchive(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
+class FinancePendingReview(SQLModel, table=True):
+    """Excel money row awaiting a human category; excluded from posted totals."""
+
+    __table_args__ = (UniqueConstraint("archive_id", "source_sheet", "source_row", name="uq_finance_pending_source"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    archive_id: int = Field(foreign_key="workbookarchive.id", index=True)
+    source_sheet: str
+    source_row: int
+    entry_date: date = Field(index=True)
+    entry_type: str
+    category: Optional[str] = None
+    summary: Optional[str] = None
+    counterparty: Optional[str] = None
+    payment_method: Optional[str] = None
+    income_amount: float = 0
+    expense_amount: float = 0
+    status: str = Field(default="pending", index=True)
+    finance_entry_id: Optional[int] = Field(default=None, foreign_key="financeentry.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DocumentDataRevision(SQLModel, table=True):
     """線上資料修改的不可覆寫歷史，同時保護重送與後續 Excel 匯入。"""
 

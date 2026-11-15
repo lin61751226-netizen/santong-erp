@@ -611,6 +611,19 @@
           <tbody id="financeEntryRows"></tbody>
         </table>
       </div>
+      <h3 style="margin-top:20px;">待確認收支（未入帳）</h3>
+      <p class="muted">六和 10 月原始交易保留日期、金額和來源列號；先逐筆補類別，再按「確認入帳」。期初結餘不列入收入。</p>
+      <div class="button-row">
+        <label for="financePendingMonth">月份 <input id="financePendingMonth" type="month" value="2026-10"></label>
+        <button type="button" class="button-secondary" onclick="loadFinancePending()">載入待確認清單</button>
+      </div>
+      <p id="financePendingFeedback" class="notice" role="status" aria-live="polite">載入後可逐筆補類別。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>來源列</th><th>日期</th><th>類型</th><th>摘要／對象</th><th>收入</th><th>支出</th><th>收支類別</th><th>操作</th></tr></thead>
+          <tbody id="financePendingRows"></tbody>
+        </table>
+      </div>
     </section>
 
     <section class="panel span-12" data-workspace="journals" id="panel-sign-slips" data-panel="sign-slips" data-nav-order="1" data-legacy="documents:4" data-nav-aliases="簽單,當日簽單">
@@ -3495,6 +3508,51 @@
       } catch (error) {
         rows.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message)}</td></tr>`;
       }
+    }
+
+    async function loadFinancePending() {
+      const month = document.getElementById("financePendingMonth").value;
+      const rows = document.getElementById("financePendingRows");
+      const feedback = document.getElementById("financePendingFeedback");
+      try {
+        const data = await api(`/api/finance-pending?month=${encodeURIComponent(month)}`);
+        const pending = data.filter(item => item.status === "pending");
+        rows.innerHTML = pending.length ? pending.map(item => `
+          <tr>
+            <td>${escapeHtml(item.source_sheet)} #${item.source_row}</td>
+            <td>${escapeHtml(item.date)}</td><td>${escapeHtml(item.type)}</td>
+            <td>${escapeHtml(item.summary || "-")}<br>${escapeHtml(item.counterparty || "-")}</td>
+            <td>${Number(item.income).toLocaleString()}</td><td>${Number(item.expense).toLocaleString()}</td>
+            <td><input id="pendingCategory${item.id}" aria-label="第 ${item.source_row} 列收支類別" value="${escapeAttr(item.category || "")}" placeholder="請填實際類別" style="min-width:8rem"></td>
+            <td><button type="button" class="button-secondary" onclick="savePendingCategory(${item.id})">保存類別</button>
+              <button type="button" ${item.category ? "" : "disabled"} onclick="bookPendingFinance(${item.id})">確認入帳</button></td>
+          </tr>`).join("") : '<tr><td colspan="8">此月份沒有待確認交易。</td></tr>';
+        feedback.textContent = `${month} 待確認 ${pending.length} 筆；尚未計入正式月報。`;
+      } catch (error) {
+        feedback.textContent = error.message;
+      }
+    }
+
+    async function savePendingCategory(id) {
+      const feedback = document.getElementById("financePendingFeedback");
+      const category = document.getElementById(`pendingCategory${id}`).value.trim();
+      if (!category) { feedback.textContent = "請先填寫實際收支類別。"; return; }
+      try {
+        await api(`/api/finance-pending/${id}/category`, { method: "PATCH", body: JSON.stringify({ category }) });
+        await loadFinancePending();
+        feedback.textContent = `第 ${id} 筆類別已保存，尚未入帳。`;
+      } catch (error) { feedback.textContent = error.message; }
+    }
+
+    async function bookPendingFinance(id) {
+      if (!confirm("確認將此筆交易寫入正式收支及月報？請先核對日期、金額、類別。")) return;
+      const feedback = document.getElementById("financePendingFeedback");
+      try {
+        await api(`/api/finance-pending/${id}/book`, { method: "POST" });
+        await loadFinancePending();
+        await loadFinanceEntries();
+        feedback.textContent = "已確認入帳，並從待確認清單移除。";
+      } catch (error) { feedback.textContent = error.message; }
     }
 
     async function loadCostHourTargets() {
