@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     restore_db_result = await google_drive_worklog_service.restore_database_snapshot()
-    logger.info("Google Drive 資料庫快照復原結果：%s", restore_db_result.get("status"))
+    logger.info("資料庫啟動檢查結果：%s", restore_db_result.get("status"))
+    if settings.database_storage_mode == "persistent" and restore_db_result.get("status") != "persistent_ready":
+        raise RuntimeError("持久磁碟資料庫不存在或損壞，已停止啟動以保護歷史資料")
     if (
         settings.environment == "production"
         and settings.database_url.startswith("sqlite:///")

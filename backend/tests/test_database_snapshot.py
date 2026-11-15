@@ -265,6 +265,64 @@ class DatabaseSnapshotTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(service._database_record_counts(local)["attendanceevent"], 3)
             self.assertFalse(local.with_name(f".{local.name}.restore").exists())
 
+    async def test_persistent_database_is_validated_without_downloading_snapshot(self) -> None:
+        service = GoogleDriveWorklogService()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local = Path(temp_dir) / "persistent.sqlite3"
+            _create_database(local, attendance_rows=2)
+            connection = sqlite3.connect(local)
+            try:
+                connection.execute("CREATE TABLE employee (id INTEGER PRIMARY KEY)")
+                connection.execute("INSERT INTO employee DEFAULT VALUES")
+                connection.commit()
+            finally:
+                connection.close()
+            with (
+                patch.object(settings, "database_storage_mode", "persistent"),
+                patch.object(settings, "database_url", f"sqlite:///{local.as_posix()}"),
+                patch.object(service, "_download_database_snapshot") as download,
+            ):
+                result = await service.restore_database_snapshot()
+            self.assertEqual(result["status"], "persistent_ready")
+            self.assertEqual(service._database_record_counts(local)["attendanceevent"], 2)
+            download.assert_not_called()
+
+    async def test_persistent_database_missing_or_invalid_fails_closed(self) -> None:
+        service = GoogleDriveWorklogService()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local = Path(temp_dir) / "persistent.sqlite3"
+            with (
+                patch.object(settings, "database_storage_mode", "persistent"),
+                patch.object(settings, "database_url", f"sqlite:///{local.as_posix()}"),
+                patch.object(service, "_download_database_snapshot") as download,
+            ):
+                missing = await service.restore_database_snapshot()
+                local.write_bytes(b"not a sqlite database")
+                corrupt = await service.restore_database_snapshot()
+            self.assertEqual(missing["status"], "failed")
+            self.assertEqual(corrupt["status"], "failed")
+            download.assert_not_called()
+
+    async def test_persistent_database_without_employee_rows_fails_closed(self) -> None:
+        service = GoogleDriveWorklogService()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local = Path(temp_dir) / "persistent.sqlite3"
+            _create_database(local, attendance_rows=1)
+            connection = sqlite3.connect(local)
+            try:
+                connection.execute("CREATE TABLE employee (id INTEGER PRIMARY KEY)")
+                connection.commit()
+            finally:
+                connection.close()
+            with (
+                patch.object(settings, "database_storage_mode", "persistent"),
+                patch.object(settings, "database_url", f"sqlite:///{local.as_posix()}"),
+                patch.object(service, "_download_database_snapshot") as download,
+            ):
+                result = await service.restore_database_snapshot()
+            self.assertEqual(result["error"], "PersistentDatabaseCorrupt")
+            download.assert_not_called()
+
     def test_backup_rejects_snapshot_with_fewer_preserved_records(self) -> None:
         service = GoogleDriveWorklogService()
         with tempfile.TemporaryDirectory() as temp_dir:

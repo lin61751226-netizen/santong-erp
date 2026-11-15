@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -98,6 +98,9 @@ def test_approval_audits_backs_up_and_links_to_calendar_report_and_assignment_gu
     client, session, worker, site, backup, notify = ctx
     created = client.post('/api/leave-requests', json=payload())
     leave_id = created.json()['leave_request_id']
+    leave = session.get(LeaveRequest, leave_id)
+    leave.requested_at = datetime(2026, 10, 8)
+    session.add(leave); session.commit()
     assert all('核准排休' not in str(row) for row in report(session, None, '2026-11', 'roster')['rows'])
     decision = client.post(f'/api/leave-requests/{leave_id}/decision', json={'status': 'approved', 'review_note': '核准'})
     assert decision.status_code == 200 and decision.json()['backup_status'] == 'saved'
