@@ -1251,3 +1251,54 @@ body.pricing-window-mode .ledger-window-summary { grid-column:auto; overflow-wra
   .nav-search input { min-height:42px; font-size:16px; }
   .nav-search > label { font-size:14px; }
 }
+
+/* Shared window chrome: original forms stay mounted when changing views. */
+.work-window-bar { display:none; }
+body.work-window-mode { background:linear-gradient(135deg,#e6eeeb,#eef1f4); }
+body.work-window-mode .shell { width:calc(100% - 32px); max-width:1800px; }
+body.work-window-mode .hero-card { border-radius:8px; box-shadow:none; }
+body.work-window-mode .hero h1 { font-size:24px; margin:0; }
+body.work-window-mode .hero-copy, body.work-window-mode .hero .eyebrow { display:none; }
+body.work-window-mode .nav-shell { position:static; border-radius:8px; box-shadow:none; }
+body.work-window-mode #workspaceTools { display:none; }
+.work-window-bar { align-items:center; justify-content:space-between; gap:12px; padding:12px 20px; background:#173f49; color:#fff; border-radius:10px 10px 0 0; }
+.work-window-bar small { display:block; color:#bdd7d9; font-size:12px; margin-bottom:3px; }
+.work-window-bar strong { font-size:18px; }
+.work-window-bar button { background:#fff; color:#173f49; flex-shrink:0; }
+body.work-window-mode .work-window-bar { display:flex; }
+#workWindowNav[hidden] { display:none; }
+#workWindowNav, body.work-window-mode #pricingWindowNav { padding:14px; border:1px solid #cad7d8; border-radius:10px; background:#f7faf9; }
+#workWindowNav strong, body.work-window-mode #pricingWindowNav strong { display:block; padding:10px 4px; margin:0; background:none; color:#173f49; }
+#workWindowNav p, body.work-window-mode #pricingWindowNav p { font-size:12px; color:#647979; margin:0 0 12px; }
+#workWindowNav button, body.work-window-mode #pricingWindowNav button { display:block; width:100%; margin:4px 0; padding:12px; text-align:left; font-size:15px; line-height:1.5; border:1px solid transparent; background:transparent; color:#334f53; border-radius:6px; }
+#workWindowNav button:hover, body.work-window-mode #pricingWindowNav button:hover { background:#e7f0ed; }
+#workWindowNav button.is-active, body.work-window-mode #pricingWindowNav button.is-active { background:#dcece6; color:#154f3c; border-color:#a9cabd; font-weight:700; }
+body.work-window-mode .workspace-panel-active { border-radius:0 0 10px 10px; border:1px solid #cad7d8; padding:22px; box-shadow:0 10px 24px #173f4908; }
+body.work-window-focus .hero { display:none; }
+@media (min-width:1100px) {
+  body.work-window-mode .shell { display:grid; grid-template-columns:220px minmax(0,1fr); gap:0 18px; align-items:start; }
+  body.work-window-mode .shell > .hero { grid-column:1/-1; grid-row:1; margin:0 0 12px; }
+  body.work-window-mode .nav-shell { grid-column:1/-1; grid-row:2; margin:0 0 16px; display:flex; align-items:center; gap:18px; }
+  body.work-window-mode .nav-search { width:230px; flex-shrink:0; }
+  body.work-window-mode .nav-search > label { display:none; }
+  body.work-window-mode .workspace-nav { flex:1; flex-wrap:wrap; }
+  body.work-window-mode #workWindowNav, body.work-window-mode #pricingWindowNav { grid-column:1; grid-row:3/5; position:sticky; top:16px; max-height:calc(100vh - 32px); overflow:auto; }
+  body.work-window-mode #workWindowBar { grid-column:2; grid-row:3; }
+  body.work-window-mode [data-workspace].workspace-panel-active { grid-column:2; grid-row:4; width:100%; min-width:0; margin:0; }
+  body.work-window-mode #actionResult { grid-column:1/-1; grid-row:5; }
+  body.work-window-focus .workspace-panel-active { max-height:calc(100vh - 160px); overflow:auto; scrollbar-gutter:stable; }
+}
+@media (max-width:1099px) {
+  #workWindowNav, body.work-window-mode #pricingWindowNav { display:flex; gap:6px; overflow:auto; margin-bottom:12px; }
+  #workWindowNav strong, #workWindowNav p, body.work-window-mode #pricingWindowNav strong, body.work-window-mode #pricingWindowNav p { display:none; }
+  #workWindowNav button, body.work-window-mode #pricingWindowNav button { flex:0 0 175px; margin:0; }
+}
+@media (max-width:650px) {
+  body.work-window-mode .shell { width:calc(100% - 16px); }
+  body.work-window-mode .workspace-panel-active { padding:14px; }
+  .work-window-bar { padding:12px; align-items:flex-start; }
+  .work-window-bar strong { font-size:16px; overflow-wrap:anywhere; }
+  .work-window-bar button { font-size:12px; padding:8px; }
+}
+body.work-window-mode #workWindowNav[hidden], body.work-window-mode #pricingWindowNav[hidden] { display:none; }
+@media print { #workWindowBar, #workWindowNav, #pricingWindowNav { display:none!important; } }

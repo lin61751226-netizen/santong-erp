@@ -11,16 +11,16 @@ test('pricing window switches original panels at desktop and mobile widths', asy
   mkdirSync('outputs/pricing-window',{recursive:true});
   try {
     const page=await browser.newPage();
-    await page.setContent(html.replace('{{ app_name }}','三通工程自動化管理系統（本機測試）').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<link\b[^>]*>/gi,''));
+    await page.setContent(html.replaceAll('{{ app_name }}','三通工程自動化管理系統（本機測試）').replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi,'').replace(/<link\b[^>]*>/gi,''));
     await page.addStyleTag({content:css});
-    await page.addScriptTag({content:`const state={workspaceViews:{}};const managementReports={sourcesLoaded:true};const escapeHtml=v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;');const escapeAttr=escapeHtml;${navigation}`});
+    await page.addScriptTag({content:`const state={workspaceViews:{}};const managementReports={sourcesLoaded:true};const escapeHtml=v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;');const escapeAttr=escapeHtml;function showExcelMode(mode){window.testExcelMode=mode};${navigation}`});
     await page.locator('#loginOverlay').evaluate(x=>x.hidden=true);
     await page.addStyleTag({content:'#loginOverlay{display:none!important}'});
-    for(const width of [1440,390]) {
+    for(const width of [1440,1100,768,390]) {
       await page.setViewportSize({width,height:950});
       await page.evaluate(()=>setWorkspace('pricing',false));
-      assert.equal(await page.locator('#pricingWindowNav button').count(),7);
-      for(const index of [2,3,4]) {
+      assert.equal(await page.locator('#pricingWindowNav button').count(),3);
+      for(const index of [0,1,2]) {
         await page.locator(`[data-pricing-view="${index}"]`).click();
         assert.equal(await page.locator('[data-workspace="pricing"]:visible').count(),1);
         assert.equal(await page.locator(`[data-pricing-view="${index}"]`).getAttribute('aria-pressed'),'true');
@@ -37,10 +37,27 @@ test('pricing window switches original panels at desktop and mobile widths', asy
     }
     await page.evaluate(()=>setWorkspace('today',false));
     assert.equal(await page.locator('#pricingWindowNav').isVisible(),false);
-    for(const workspace of ['today','people','dispatch','fleet','journals','files']) {
+    for(const workspace of ['today','people','dispatch','fleet','journals','finance','files']) {
       await page.evaluate(value=>setWorkspace(value,false),workspace);
       assert.equal(await page.locator('[data-workspace]:visible').count(),1);
+      assert.ok(await page.locator('#workWindowNav button').count()>0);
+      await page.locator('#workWindowNav button').last().click();
+      assert.equal(await page.locator('[data-workspace]:visible').count(),1);
+      assert.equal(await page.locator('#workWindowTitle').textContent(),await page.locator('[data-workspace]:visible h2').first().textContent());
       await page.screenshot({path:`outputs/pricing-window/${workspace}-390.png`,fullPage:false});
     }
+    await page.setViewportSize({width:1440,height:950});
+    await page.evaluate(()=>setWorkspace('finance',false));
+    await page.locator('#workWindowNav button').first().click();
+    assert.equal(await page.evaluate(()=>window.testExcelMode),'finance');
+    assert.equal(await page.locator('[data-workspace]:visible').getAttribute('data-panel'),'excel-editor');
+    await page.evaluate(()=>setWorkspace('pricing',false));
+    await page.locator('[data-pricing-view="2"]').click();
+    await page.locator('#workWindowFocus').click();
+    assert.equal(await page.locator('.hero').isVisible(),false);
+    assert.equal(await page.locator('#workWindowFocus').getAttribute('aria-pressed'),'true');
+    await page.screenshot({path:'outputs/pricing-window/focus-1440.png'});
+    await page.locator('#workWindowFocus').click();
+    assert.equal(await page.locator('.hero').isVisible(),true);
   } finally {await browser.close();}
 });

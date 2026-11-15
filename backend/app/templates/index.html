@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20261114e">
+  <link rel="stylesheet" href="/static/app.css?v=20261115a">
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 </head>
 <body>
@@ -125,12 +125,13 @@
       </div>
       <nav class="workspace-nav" aria-label="後台功能導覽">
         <button type="button" class="workspace-tab is-active" data-workspace-tab="today" onclick="setWorkspace('today')">今日總覽</button>
-        <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
         <button type="button" class="workspace-tab" data-workspace-tab="dispatch" onclick="setWorkspace('dispatch')">派工與工地</button>
-        <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機</button>
         <button type="button" class="workspace-tab" data-workspace-tab="journals" onclick="setWorkspace('journals')">日誌與簽單</button>
-        <button type="button" class="workspace-tab" data-workspace-tab="pricing" onclick="setWorkspace('pricing')">計價與收支</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="pricing" onclick="setWorkspace('pricing')">計價</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="finance" onclick="setWorkspace('finance')">收支</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="fleet" onclick="setWorkspace('fleet')">堆高機</button>
         <button type="button" class="workspace-tab" data-workspace-tab="files" onclick="setWorkspace('files')">文件與設定</button>
+        <button type="button" class="workspace-tab" data-workspace-tab="people" onclick="setWorkspace('people')">人員與考勤</button>
       </nav>
       <div class="mobile-workspace-nav">
         <label for="workspaceMain">功能區</label>
@@ -148,6 +149,10 @@
       <button type="button" class="button-secondary button-compact" onclick="document.getElementById('actionResult').hidden = true">關閉提示</button>
       <pre id="actionResultBody" aria-live="polite"></pre>
     </details>
+    <header id="workWindowBar" class="work-window-bar">
+      <div><small id="workWindowGroup">三通工作台</small><strong id="workWindowTitle">今日總覽</strong></div>
+      <button type="button" id="workWindowFocus" class="button-secondary" aria-pressed="false" onclick="toggleWorkWindowFocus()">展開工作視窗</button>
+    </header>
 
     <section id="panel-worksite-board" class="panel span-12" data-workspace="today" data-panel="worksite-board" data-nav-order="1" data-nav-aliases="工地工作台,工地缺漏,每日工地">
       <div class="panel-header">
@@ -567,7 +572,7 @@
       </div>
     </section>
 
-    <section class="panel span-12" data-workspace="pricing" id="panel-finance-import" data-panel="finance-import" data-nav-order="2" data-legacy="documents:3" data-nav-aliases="收支匯入,通訊錄匯入">
+    <section class="panel span-12" data-workspace="finance" id="panel-finance-import" data-panel="finance-import" data-nav-order="0" data-legacy="documents:3" data-nav-aliases="收支匯入,通訊錄匯入">
       <div class="panel-header">
         <div>
           <h2>收支與通訊錄資料匯入</h2>
@@ -830,21 +835,21 @@
       </div>
     </section>
 
-    <section id="panel-invoice-overprint" class="panel span-12" data-workspace="pricing" data-panel="invoice-overprint" data-nav-order="5" data-nav-aliases="發票,三聯式,套印,印模,校正">
+    <section id="panel-invoice-overprint" class="panel span-12" data-workspace="finance" data-panel="invoice-overprint" data-nav-order="2" data-nav-aliases="發票,三聯式,套印,印模,校正">
       <div class="panel-header"><div><h2>三聯式發票套印</h2><p class="muted">紙張寬高可保存；實際樣張195 × 103 mm（含裝訂邊）。填寫內容、白紙試印、保存校正及草稿。</p></div></div>
       <p>只列印欄位內容，不重印底圖、框線或發票號碼。首次使用請先白紙試印，再調整全域X／Y與各欄座標。</p>
       <a href="/invoice-overprint" target="_blank" rel="noopener">開啟三聯式發票套印工作台</a>
       <p class="muted">限已登入管理者。草稿不代表正式開票、不會改寫計價、收支或施工簽單。</p>
     </section>
 
-    <section id="panel-envelope-overprint" class="panel span-12" data-workspace="pricing" data-panel="envelope-overprint" data-nav-order="6" data-nav-aliases="信封,直式信封,寄信,郵寄,信封套印">
+    <section id="panel-envelope-overprint" class="panel span-12" data-workspace="finance" data-panel="envelope-overprint" data-nav-order="3" data-nav-aliases="信封,直式信封,寄信,郵寄,信封套印">
       <div class="panel-header"><div><h2>直式信封套印</h2><p class="muted">直式信封 100 × 200 mm，收件人手動輸入，寄件人預設三通工程行（桃園）。</p></div></div>
       <p>依中華郵政直式信封配置：收件人郵遞區號於右上、地址於右中、姓名於正中；寄件人於左側、郵遞區號於左下。首次使用請先白紙試印、對信封微調。</p>
       <a href="/envelope-print" target="_blank" rel="noopener">開啟直式信封套印工作台</a>
       <p class="muted">限已登入管理者。只印收件與寄件資訊，不涉計價與收支。</p>
     </section>
 
-    <section id="managementReportsPanel" class="panel span-12" data-workspace="pricing" data-panel="management-reports" data-nav-order="4" data-legacy="documents:6" data-nav-aliases="月度對照,年度,薪資,排休表">
+    <section id="managementReportsPanel" class="panel span-12" data-workspace="finance" data-panel="management-reports" data-nav-order="1" data-legacy="documents:6" data-nav-aliases="月度對照,年度,薪資,排休表">
       <div class="panel-header"><div><h2>月度與年度管理對照</h2><p class="muted">七種報表依月份查詢。Excel版本、正式收支與實際出勤分開保存，避免覆蓋既有紀錄。</p></div></div>
       <div class="form-grid">
         <div class="full"><label for="reportSource">全年管理 Excel</label><select id="reportSource" onchange="changeReportSource()"><option value="">按重新整理載入文件</option></select></div>
@@ -1581,7 +1586,14 @@
     };
 
     const legacyDocumentTasks = {0: "pricing-hours", 1: "pricing-month", 2: "excel-library", 3: "finance-import", 4: "sign-slips", 5: "excel-editor", 6: "management-reports"};
-    const workspaceDefaults = {today: 0, journals: 0, pricing: 0, files: 0};
+    const workspaceDefaults = {today: 0, journals: 0, pricing: 0, finance: 0, files: 0};
+
+    function toggleWorkWindowFocus() {
+      const active = document.body.classList.toggle('work-window-focus');
+      const button = document.getElementById('workWindowFocus');
+      button.setAttribute('aria-pressed', String(active));
+      button.textContent = active ? '還原工作視窗' : '展開工作視窗';
+    }
 
     function workspacePanels(workspace) {
       return [...document.querySelectorAll(`[data-workspace="${workspace}"]`)].sort((left, right) =>
@@ -1603,6 +1615,20 @@
       const panels = workspacePanels(resolved);
       if (!panels.length) return;
       state.workspace = resolved;
+      document.body.classList.add('work-window-mode');
+      const groupName = document.querySelector(`[data-workspace-tab="${resolved}"]`)?.textContent || '工作台';
+      document.getElementById('workWindowGroup').textContent = groupName;
+      let workNav = document.getElementById('workWindowNav');
+      if (!workNav) {
+        workNav = document.createElement('nav');
+        workNav.id = 'workWindowNav';
+        workNav.setAttribute('aria-label', '工作視窗功能');
+        document.getElementById('workspaceTools').after(workNav);
+      }
+      workNav.hidden = resolved === 'pricing';
+      workNav.innerHTML = '<strong>' + escapeHtml(groupName) + '</strong><p>選擇要處理的項目</p>' + (resolved === 'finance' ? '<button type="button" onclick="openFinanceLedger()">收支記帳／線上編輯 ↗</button>' : '') + panels.map((panel, index) =>
+        `<button type="button" onclick="setWorkspaceView(${index})" data-window-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
+      ).join('');
       if (document.body) {
       document.body.classList.toggle('pricing-window-mode', resolved === 'pricing');
       let pricingWindowNav = document.getElementById('pricingWindowNav');
@@ -1646,6 +1672,12 @@
       if (!panels.length) return;
       const index = Math.max(0, Math.min(Number(view) || 0, panels.length - 1));
       state.workspaceViews[state.workspace] = index;
+      document.getElementById('workWindowTitle').textContent = panels[index].querySelector('h2')?.textContent || '工作視窗';
+      document.querySelectorAll('[data-window-view]').forEach(button => {
+        const active = Number(button.dataset.windowView) === index;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', String(active));
+      });
       document.querySelectorAll('[data-pricing-view]').forEach(button => {
         button.classList.toggle('is-active', Number(button.dataset.pricingView) === index);
         button.setAttribute('aria-pressed', String(Number(button.dataset.pricingView) === index));
@@ -1681,6 +1713,11 @@
       openNamedPanel("excel-editor");
       showExcelMode("pricing");
       if (printHint) document.getElementById("costGridStatus").textContent = "先選計價檔、月份與標別，確認已保存資料後，按「A4 計價表預覽／列印」；不會自動送印。";
+    }
+
+    function openFinanceLedger() {
+      openNamedPanel('excel-editor');
+      showExcelMode('finance');
     }
 
     function openPanelFor(elementId) {

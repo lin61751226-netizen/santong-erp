@@ -57,6 +57,7 @@ function fixture() {
   const controls = new Map();
   const state = {workspace: 'today', workspaceViews: {}};
   const document = {
+    body: {classList: {add() {}, toggle() {}}},
     getElementById(id) {
       if (id === 'reassignmentRows') return {closest: () => panels.find((panel) => panel.dataset.panel === 'reassignment')};
       if (!controls.has(id)) controls.set(id, {value: '', hidden: false, textContent: '', innerHTML: ''});
@@ -91,12 +92,12 @@ function visibleKey(panels) {
   return visible[0].dataset.panel;
 }
 
-test('every existing function stays reachable in one of seven groups', () => {
+test('every existing function stays reachable in one of eight groups', () => {
   const panels = loadPanels();
   assert.equal(panels.length, 37);
   assert.equal(new Set(panels.map((panel) => panel.dataset.panel)).size, 37);
   const groups = [...navHtml.matchAll(/data-workspace-tab="([^"]+)"[^>]*>([^<]+)/g)].map((match) => match[2]);
-  assert.deepEqual(groups, ['今日總覽', '人員與考勤', '派工與工地', '堆高機', '日誌與簽單', '計價與收支', '文件與設定']);
+  assert.deepEqual(groups, ['今日總覽', '派工與工地', '日誌與簽單', '計價', '收支', '堆高機', '文件與設定', '人員與考勤']);
   for (const title of keptTitles) assert.ok(panels.some((panel) => panel.title === title), title);
   assert.ok(html.includes('id="navSearch"'));
   assert.ok(html.includes('openDocumentTask(0)'));
@@ -149,7 +150,7 @@ test('old document indexes still open the same functions', () => {
   }
   context.setWorkspace('pricing');
   context.setWorkspaceView(999);
-  assert.equal(visibleKey(panels), 'envelope-overprint');
+  assert.equal(visibleKey(panels), 'excel-editor');
 });
 
 test('reassignment results reveal their own panel', () => {
@@ -164,7 +165,7 @@ test('search jumps to a function by name or alias', () => {
   assert.equal(context.searchNav('').length, 0);
   assert.equal(context.searchNav('簽單')[0].key, 'sign-slips');
   assert.equal(context.searchNav('檢查簽單與計價金額')[0].key, 'pricing-month');
-  assert.equal(context.searchNav('檢查簽單與計價金額')[0].group, '計價與收支');
+  assert.equal(context.searchNav('檢查簽單與計價金額')[0].group, '計價');
   assert.ok(context.searchNav('請假').some((item) => item.key === 'leave'));
   assert.ok(context.searchNav('點檢').some((item) => item.key === 'inspections'));
   assert.equal(context.searchNav('登入名稱')[0].key, 'users');
