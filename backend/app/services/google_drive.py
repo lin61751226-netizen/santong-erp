@@ -542,6 +542,24 @@ class GoogleDriveWorklogService:
 
     async def restore_database_snapshot(self) -> dict:
         target = self._sqlite_path()
+        if settings.database_storage_mode == "persistent":
+            if target is None or not target.is_file() or target.stat().st_size == 0:
+                return {"status": "failed", "error": "PersistentDatabaseMissing"}
+            try:
+                connection = sqlite3.connect(f"file:{target.as_posix()}?mode=ro", uri=True)
+                try:
+                    healthy = connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+                    employee_table = connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='employee'"
+                    ).fetchone() is not None
+                    employee_rows = connection.execute("SELECT COUNT(*) FROM employee").fetchone()[0] if employee_table else 0
+                finally:
+                    connection.close()
+            except sqlite3.DatabaseError:
+                return {"status": "failed", "error": "PersistentDatabaseCorrupt"}
+            if not healthy or not employee_table or employee_rows == 0:
+                return {"status": "failed", "error": "PersistentDatabaseCorrupt"}
+            return {"status": "persistent_ready", "bytes": target.stat().st_size}
         if target is None or not self.is_configured():
             return {"status": "skipped", "reason": "非 SQLite 或 Google Drive 未設定"}
         with tempfile.TemporaryDirectory() as temp_dir:

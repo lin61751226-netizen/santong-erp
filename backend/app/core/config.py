@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     app_name: str = "三通工程自動化管理系統"
     environment: str = "development"
     database_url: str = f"sqlite:///{(DATA_DIR / 'santong.db').as_posix()}"
+    database_storage_mode: Literal["snapshot", "persistent"] = "snapshot"
     default_actor_code: str = "ADMIN001"
     public_base_url: str = _default_public_base_url()
     timezone: str = "Asia/Taipei"
