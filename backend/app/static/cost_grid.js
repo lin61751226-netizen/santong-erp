@@ -36,6 +36,7 @@ async function loadCostGrid() {
   costGrid.label = null;
   costGridReviewReset();
   document.getElementById('costGridTabs').innerHTML = '';
+  document.getElementById('costGridSlipComparison').hidden = true;
   document.getElementById('costGridSheet').innerHTML = '';
   if (!documentId || !month) return;
   const request = ++costGrid.request;
@@ -82,6 +83,23 @@ function renderCostGrid() {
   if (!active) return;
   const rate = active.rates;
   const formatMoney = value => Number(value || 0).toLocaleString('zh-TW', {maximumFractionDigits: 2});
+  const comparison = document.getElementById('costGridSlipComparison');
+  const pending = active.rows.filter(row => row.pending_sign_slip);
+  comparison.hidden = pending.length === 0;
+  comparison.innerHTML = pending.length ? `<strong>此標別有 ${pending.length} 日與已存簽單待核對</strong>
+    <p>目前金額是月表已存的核定未稅額；重算金額依簽單工時與此計價檔費率計算。請在下方標黃日期按「帶入簽單」或「核對簽單金額」，核對後才保存；此清單不會自行改帳。</p>
+    <div class="cost-grid-slip-comparison-scroll"><table><thead><tr><th>日期／簽單</th><th>月表工時<br>正常／加班</th><th>簽單工時<br>正常／加班</th><th>目前核定</th><th>簽單重算</th><th>簽認金額</th><th>差異</th></tr></thead><tbody>${pending.map(row => {
+      const slip = row.pending_sign_slip;
+      if (slip.conflict) return `<tr><th>${escapeHtml(row.day.slice(5))}</th><td colspan="6">${escapeHtml(slip.reason || '簽單資料衝突，請先人工核對')}</td></tr>`;
+      const delta = slip.signed_amount == null ? null : Number(slip.signed_amount) - Number(slip.proposed_formula_amount || 0);
+      return `<tr><th>${escapeHtml(row.day.slice(5))}｜${escapeHtml(slip.slip_no)}</th>
+        <td>${formatMoney(row.normal_hours)}／${formatMoney(row.overtime_hours)}</td>
+        <td>${formatMoney(slip.normal_hours)}／${formatMoney(slip.overtime_hours)}</td>
+        <td>${formatMoney(row.effective_total ?? row.total)}</td>
+        <td>${formatMoney(slip.proposed_formula_amount)}</td>
+        <td>${slip.signed_amount == null ? '未填' : formatMoney(slip.signed_amount)}</td>
+        <td>${delta === null ? '待核對' : `${delta > 0 ? '+' : ''}${formatMoney(delta)}`}</td></tr>`;
+    }).join('')}</tbody></table></div>` : '';
   const rows = active.rows.map(row => {
     const values = costGridCurrent(row);
     const weekday = new Date(`${row.day}T12:00:00`).getDay();

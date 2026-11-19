@@ -17,7 +17,7 @@ test('month grid edits, previews, confirms and saves without losing the selected
     const page = await browser.newPage();
     await page.setContent(`
       <select id="costGridDocument"></select><input id="costGridMonth" type="month">
-      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSheet"></div>
+      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSlipComparison" hidden></div><div id="costGridSheet"></div>
       <section id="costGridAdjustment" hidden><h3 id="costGridAdjustmentTitle"></h3><p id="costGridAdjustmentFormula"></p>
         <input id="costGridAdjustmentAmount" type="number" min="0" max="1000000000" step="0.01" oninput="editCostGridAdjustment()">
         <input id="costGridAdjustmentReason" oninput="editCostGridAdjustment()">
@@ -71,7 +71,7 @@ test('53 adjustment previews 6000 to 6400 and saves without changing Excel hours
     const page = await browser.newPage();
     await page.setContent(`
       <select id="costGridDocument"></select><input id="costGridMonth" type="month">
-      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSheet"></div>
+      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSlipComparison" hidden></div><div id="costGridSheet"></div>
       <section id="costGridAdjustment" hidden><h3 id="costGridAdjustmentTitle"></h3><p id="costGridAdjustmentFormula"></p>
         <input id="costGridAdjustmentAmount" type="number" min="0" max="1000000000" step="0.01" oninput="editCostGridAdjustment()">
         <input id="costGridAdjustmentReason" oninput="editCostGridAdjustment()">
@@ -134,7 +134,7 @@ test('saved slip stages one yellow row, requires a reason, and confirms hours pl
     const page = await browser.newPage();
     await page.setContent(`
       <select id="costGridDocument"></select><input id="costGridMonth" type="month">
-      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSheet"></div>
+      <p id="costGridStatus"></p><div id="costGridTabs"></div><div id="costGridSlipComparison" hidden></div><div id="costGridSheet"></div>
       <section id="costGridAdjustment" hidden><h3 id="costGridAdjustmentTitle"></h3><p id="costGridAdjustmentFormula"></p>
         <input id="costGridAdjustmentAmount"><input id="costGridAdjustmentReason">
         <button id="costGridAdjustmentSave"></button><div id="costGridAdjustmentReview" hidden></div></section>
@@ -173,6 +173,11 @@ test('saved slip stages one yellow row, requires a reason, and confirms hours pl
     });
     await page.addScriptTag({path: script});
     await page.evaluate(async () => {renderCostGridDocumentOptions(); await loadCostGrid();});
+    assert.match(await page.locator('#costGridSlipComparison').innerText(), /此標別有 1 日與已存簽單待核對/);
+    assert.match(await page.locator('#costGridSlipComparison').innerText(), /6,000/);
+    assert.match(await page.locator('#costGridSlipComparison').innerText(), /3,200/);
+    assert.match(await page.locator('#costGridSlipComparison').innerText(), /3,600/);
+    assert.match(await page.locator('#costGridSlipComparison').innerText(), /\+400/);
     assert.match(await page.locator('#costGridSheet tr.cost-grid-pending').innerText(), /簽單 S11/);
     await page.getByRole('button', {name: '帶入簽單'}).click();
     assert.equal(await page.locator('input[data-field="normal_hours"]').inputValue(), '4');
@@ -186,5 +191,6 @@ test('saved slip stages one yellow row, requires a reason, and confirms hours pl
     assert.equal(posted.body.rows[0].normal_hours, 4);
     assert.equal(posted.body.sign_slip_amount_reason, '依當日簽認單');
     assert.match(await page.locator('#costGridStatus').innerText(), /備份成功/);
+    assert.equal(await page.locator('#costGridSlipComparison').isVisible(), false);
   } finally { await browser.close(); }
 });

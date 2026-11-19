@@ -113,6 +113,9 @@ test('October 53 legacy billing sheet matches the company Excel layout on one A4
       assert.match(html, /總計（未稅）/);
       assert.match(html, /含稅請款金額 NT\$/);
       assert.match(html, /@page\s*\{[^}]*size:\s*A4 portrait/);
+      assert.match(html, /@page\s*\{[^}]*margin:\s*25mm 19mm/);
+      assert.match(html, /\.page\s*\{[^}]*width:\s*172mm/);
+      assert.match(html, /tbody tr\s*\{\s*height:\s*6\.15mm/);
       assert.match(html, /#1f4e79/i);
       assert.match(html, /#2e75b6/i);
       assert.match(html, /#d6e4f0/i);
@@ -144,6 +147,7 @@ test('October 53 legacy billing sheet matches the company Excel layout on one A4
       assert.ok(header.indexOf('加班<br>時數') < header.indexOf('加班<br>金額'));
       assert.ok(header.indexOf('加班<br>金額') < header.indexOf('備註'));
       assert.doesNotMatch(header, /支援/);
+      assert.equal((html.match(/style="width:16\.666[57]%"/g) || []).length, 6);
 
       const texts = marker => rowCells(html, marker).cells.map(cell => cell.text);
       assert.deepEqual(texts(billingDate('2026-10-01')), ['10月1日(週四)', '16', '12,000', '0', '', '']);

@@ -73,7 +73,7 @@ function pricingPrintLegacyHtml(data, sheet) {
   ));
   const columns = showSupport
     ? [['date', '18%'], ['hours', '9%'], ['money', '12%'], ['hours', '9%'], ['money', '12%'], ['hours', '9%'], ['money', '12%'], ['note', '19%']]
-    : [['date', '20%'], ['hours', '13%'], ['money', '16%'], ['hours', '13%'], ['money', '16%'], ['note', '22%']];
+    : [['date', '16.6667%'], ['hours', '16.6667%'], ['money', '16.6667%'], ['hours', '16.6667%'], ['money', '16.6667%'], ['note', '16.6665%']];
   const headers = ['日期', '正常<br>時數', '正常<br>金額', '加班<br>時數', '加班<br>金額'];
   if (showSupport) headers.push('支援<br>時數', '支援<br>金額');
   headers.push('備註');
@@ -117,25 +117,27 @@ function pricingPrintLegacyHtml(data, sheet) {
     <tr class="grand"><td class="label" colspan="2">總計（未稅）</td><td class="boxed untaxed">${safe(pricingPrintAmount(untaxed))}</td>${tail}</tr>
     <tr class="grand"><td class="label" colspan="2">含稅請款金額 NT$</td><td class="boxed taxed">${safe(pricingPrintAmount(taxed))}</td>${tail}</tr>`;
   return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>${safe(title)}</title><style>
-    @page { size: A4 portrait; margin: 9mm 11mm; }
+    @page { size: A4 portrait; margin: 25mm 19mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html, body { margin: 0; color: #000; font-family: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", "Noto Sans CJK TC", "WenQuanYi Micro Hei", sans-serif; }
     body { background: #e9edf1; }
     .toolbar { position: sticky; top: 0; background: #1f4e79; color: #fff; padding: 10px 16px; text-align: center; font-size: 14px; }
     .toolbar button { margin-left: 12px; padding: 8px 16px; border: 0; border-radius: 6px; background: #fff; color: #1f4e79; font: inherit; cursor: pointer; }
-    .page { width: 188mm; margin: 12px auto; padding: 8mm 0 6mm; background: #fff; box-shadow: 0 8px 30px #9aa8b6; }
+    .page { width: 172mm; margin: 12px auto; padding: 0 0 6mm; background: #fff; box-shadow: 0 8px 30px #9aa8b6; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10pt; line-height: 1.2; }
     th, td { border: 1px solid #c8c8c8; padding: 0.45mm 1.1mm; vertical-align: middle; }
     tr.title th { background: #1f4e79; color: #fff; border-color: #1f4e79; font-size: 13pt; font-weight: 700; letter-spacing: 0.04em; text-align: center; padding: 2.4mm 2mm; }
     thead tr:last-child th { background: #2e75b6; color: #fff; border-color: #2e75b6; font-weight: 700; text-align: center; font-size: 9.5pt; padding: 1mm 0.4mm; }
+    tbody tr { height: 6.15mm; }
     td.date { background: #d6e4f0; color: #1f4e79; text-align: left; padding-left: 1.4mm; }
     td.hours { background: #fff; color: #000; text-align: center; }
     td.money { background: #ebf5fb; color: #000; text-align: right; padding-right: 1.5mm; }
     td.note { background: #fff; color: #000; text-align: left; font-size: 8pt; }
     tbody tr.off td { background: #fff0f0; color: #c00000; }
+    tr.subtotal { height: 6.15mm; }
     tr.subtotal td { background: #fff2cc; color: #1f4e79; font-weight: 700; }
     tr.subtotal td.label, tr.grand td.label { text-align: center; }
-    tr.grand td { background: #fce4d6; color: #c00000; font-weight: 700; height: 8.2mm; border-color: #e4c8b8; }
+    tr.grand td { background: #fce4d6; color: #c00000; font-weight: 700; height: 10mm; border-color: #e4c8b8; }
     tr.grand td.label { font-size: 11pt; }
     tr.grand td.boxed { border: 2px solid #222; background: #fce4d6; color: #c00000; text-align: right; font-weight: 700; padding-right: 1.6mm; }
     tr.grand td.boxed.untaxed { font-size: 13pt; }

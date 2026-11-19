@@ -1089,6 +1089,15 @@ body.map-open { overflow: hidden; }
 .cost-grid-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 5px 0 10px; }
 .cost-grid-tabs button { white-space: nowrap; background: #e9f0ed; color: #183d36; border: 1px solid #a8beb5; }
 .cost-grid-tabs button.active { background: #176b58; color: white; }
+.cost-grid-slip-comparison { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid #d5bc74; border-radius: 10px; background: #fff8e8; }
+.cost-grid-slip-comparison[hidden] { display: none; }
+.cost-grid-slip-comparison > strong { color: #63450d; }
+.cost-grid-slip-comparison p { margin: 5px 0 9px; font-size: .86rem; }
+.cost-grid-slip-comparison-scroll { max-height: 220px; overflow: auto; }
+.cost-grid-slip-comparison table { width: 100%; min-width: 650px; border-collapse: collapse; font-size: .83rem; font-variant-numeric: tabular-nums; }
+.cost-grid-slip-comparison th, .cost-grid-slip-comparison td { padding: 5px 7px; border: 1px solid #dfd1ab; text-align: right; }
+.cost-grid-slip-comparison th:first-child { text-align: left; }
+.cost-grid-slip-comparison thead th { background: #f5e8c3; }
 .cost-grid-caption { background: #174969; color: white; padding: 12px 16px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .cost-grid-caption span { font-size: .9rem; }
 .cost-grid-scroll { overflow: auto; max-height: 64vh; border: 1px solid #b4c4ca; }
