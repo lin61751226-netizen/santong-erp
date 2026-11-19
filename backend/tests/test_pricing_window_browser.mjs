@@ -21,7 +21,8 @@ test('pricing window switches original panels at desktop and mobile widths', asy
       await page.evaluate(()=>setWorkspace('pricing',false));
       assert.equal(await page.locator('#pricingWindowNav button').count(),3);
       for(const index of [0,1,2]) {
-        await page.locator(`[data-pricing-view="${index}"]`).click();
+        if(width<1100) await page.locator('#workspaceView').selectOption(String(index));
+        else await page.locator(`[data-pricing-view="${index}"]`).click();
         assert.equal(await page.locator('[data-workspace="pricing"]:visible').count(),1);
         assert.equal(await page.locator(`[data-pricing-view="${index}"]`).getAttribute('aria-pressed'),'true');
       }
@@ -32,7 +33,12 @@ test('pricing window switches original panels at desktop and mobile widths', asy
         const nav=await page.locator('#pricingWindowNav').boundingBox();
         assert.ok(nav.x+nav.width<=bounds.x,'sidebar must not overlap content');
         assert.equal(await page.locator('#workspaceTools').isVisible(),false);
+      } else if(width<1100) {
+        assert.equal(await page.locator('#pricingWindowNav').isVisible(),false);
+        assert.equal(await page.locator('#workspaceTools').isVisible(),true);
+        assert.equal(await page.locator('#workWindowBar').isVisible(),false);
       }
+      await page.evaluate(()=>window.scrollTo(0,0));
       await page.screenshot({path:`outputs/pricing-window/${width}.png`,fullPage:false});
     }
     await page.evaluate(()=>setWorkspace('today',false));
@@ -41,11 +47,16 @@ test('pricing window switches original panels at desktop and mobile widths', asy
       await page.evaluate(value=>setWorkspace(value,false),workspace);
       assert.equal(await page.locator('[data-workspace]:visible').count(),1);
       assert.ok(await page.locator('#workWindowNav button').count()>0);
-      await page.locator('#workWindowNav button').last().click();
+      await page.locator('#workspaceView').selectOption(String(await page.locator('#workspaceView option').count()-1));
       assert.equal(await page.locator('[data-workspace]:visible').count(),1);
       assert.equal(await page.locator('#workWindowTitle').textContent(),await page.locator('[data-workspace]:visible h2').first().textContent());
+      assert.equal(await page.locator('#workWindowNav').isVisible(),false);
+      assert.equal(await page.locator('#workspaceTools').isVisible(),true);
       await page.screenshot({path:`outputs/pricing-window/${workspace}-390.png`,fullPage:false});
     }
+    await page.locator('.account-actions summary').click();
+    assert.equal(await page.locator('.account-actions .button-row').isVisible(),true);
+    await page.locator('.account-actions summary').click();
     await page.setViewportSize({width:1440,height:950});
     for(const workspace of ['dispatch','people','fleet','journals']) {
       await page.evaluate(value=>setWorkspace(value,false),workspace);

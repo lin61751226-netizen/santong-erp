@@ -1254,6 +1254,15 @@ body.pricing-window-mode .ledger-window-summary { grid-column:auto; overflow-wra
 
 /* Shared window chrome: original forms stay mounted when changing views. */
 .work-window-bar { display:none; }
+.account-actions { position:relative; flex:0 0 auto; }
+.hero-side { overflow:visible; }
+.hero-side::after { pointer-events:none; }
+.account-actions summary { cursor:pointer; list-style:none; padding:9px 13px; border:1px solid var(--brand); border-radius:10px; color:var(--brand); background:#fff; font-weight:700; white-space:nowrap; }
+.account-actions summary::-webkit-details-marker { display:none; }
+.account-actions summary::after { content:" ▾"; }
+.account-actions[open] summary { background:var(--brand-soft); }
+.account-actions .button-row { position:absolute; right:0; top:calc(100% + 6px); z-index:35; display:grid; width:max-content; min-width:170px; padding:8px; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:var(--shadow); }
+.account-actions .button-row button { width:100%; text-align:left; }
 body.work-window-mode { background:linear-gradient(135deg,#e6eeeb,#eef1f4); }
 body.work-window-mode .shell { width:calc(100% - 32px); max-width:1800px; }
 body.work-window-mode .hero-card { border-radius:8px; box-shadow:none; }
@@ -1290,16 +1299,45 @@ body.work-window-focus .hero { display:none; }
   body.work-window-focus .workspace-panel-active { max-height:calc(100vh - 160px); overflow:auto; scrollbar-gutter:stable; }
 }
 @media (max-width:1099px) {
-  #workWindowNav, body.work-window-mode #pricingWindowNav { display:flex; gap:6px; overflow:auto; margin-bottom:12px; }
-  #workWindowNav strong, #workWindowNav p, body.work-window-mode #pricingWindowNav strong, body.work-window-mode #pricingWindowNav p { display:none; }
-  #workWindowNav button, body.work-window-mode #pricingWindowNav button { flex:0 0 175px; margin:0; }
+  body.work-window-mode #workWindowNav, body.work-window-mode #pricingWindowNav, body.work-window-mode #workWindowBar { display:none; }
+  body.work-window-mode #workspaceTools:not([hidden]) { display:flex; margin:0 0 12px; padding:10px 14px; border:1px solid var(--line); border-radius:12px; background:var(--panel); }
+  body.work-window-mode #workspaceTools select { flex:1; width:auto; }
+  body.work-window-mode #workspaceViewHint { display:none; }
+  body.work-window-mode .workspace-panel-active { border-radius:12px; scroll-margin-top:125px; }
+}
+@media (min-width:651px) and (max-width:1099px) {
+  body.work-window-mode .hero { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+  body.work-window-mode .hero-card { padding:10px 14px; }
+  body.work-window-mode .hero h1 { font-size:20px; }
+  body.work-window-mode .hero-side .muted { display:none; }
+  body.work-window-mode .nav-shell { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:8px; align-items:center; }
+  body.work-window-mode .mobile-workspace-nav { grid-column:1; grid-row:1; margin:0; }
+  body.work-window-mode .nav-search { grid-column:2; grid-row:1; }
+  body.work-window-mode .nav-search > label { display:none; }
+  body.work-window-mode .nav-search input { min-height:48px; }
 }
 @media (max-width:650px) {
   body.work-window-mode .shell { width:calc(100% - 16px); }
-  body.work-window-mode .workspace-panel-active { padding:14px; }
-  .work-window-bar { padding:12px; align-items:flex-start; }
-  .work-window-bar strong { font-size:16px; overflow-wrap:anywhere; }
-  .work-window-bar button { font-size:12px; padding:8px; }
+  body.work-window-mode .hero { gap:4px; margin-bottom:8px; }
+  body.work-window-mode .hero-card:first-child { padding:2px 8px; border:0; background:transparent; box-shadow:none; }
+  body.work-window-mode .hero h1 { font-size:19px; line-height:1.35; }
+  body.work-window-mode .hero-side { padding:8px 12px; }
+  body.work-window-mode .user-chip { flex-wrap:nowrap; }
+  body.work-window-mode .user-chip > div:first-child { min-width:0; }
+  body.work-window-mode .user-chip > div:first-child > .muted { display:none; }
+  body.work-window-mode #userChipName { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:14px; }
+  body.work-window-mode .account-actions summary { padding:7px 10px; font-size:13px; }
+  body.work-window-mode .nav-shell { display:flex; flex-direction:column; gap:6px; position:sticky; top:0; z-index:25; margin:0 -8px 8px; padding:8px; background:#e7eeeb; border-bottom:1px solid var(--line); }
+  body.work-window-mode .mobile-workspace-nav { order:0; padding:6px 10px; margin:0; box-shadow:none; border-radius:10px; }
+  body.work-window-mode .mobile-workspace-nav label { font-size:13px; }
+  body.work-window-mode .mobile-workspace-nav select { flex:1; min-width:0; font-size:16px; }
+  body.work-window-mode .nav-search { order:1; }
+  body.work-window-mode .nav-search > label { display:none; }
+  body.work-window-mode .nav-search input { min-height:40px; font-size:15px; }
+  body.work-window-mode #workspaceTools:not([hidden]) { gap:8px; padding:8px 10px; }
+  body.work-window-mode #workspaceTools label { font-size:13px; }
+  body.work-window-mode #workspaceTools select { min-width:0; font-size:16px; }
+  body.work-window-mode .workspace-panel-active { padding:14px; scroll-margin-top:122px; }
 }
 body.work-window-mode #workWindowNav[hidden], body.work-window-mode #pricingWindowNav[hidden] { display:none; }
 @media print { #workWindowBar, #workWindowNav, #pricingWindowNav { display:none!important; } }

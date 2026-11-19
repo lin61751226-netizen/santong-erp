@@ -101,11 +101,14 @@
             <strong id="userChipName">-</strong>
             <div id="userChipMeta" class="muted"></div>
           </div>
-          <div class="button-row">
-            <button type="button" class="button-secondary button-compact" onclick="openChangePassword(false)">修改密碼</button>
-            <button type="button" class="button-secondary button-compact" onclick="openLoginAlias()">登入名稱</button>
-            <button type="button" class="button-secondary button-compact" onclick="logout()">登出</button>
-          </div>
+          <details class="account-actions">
+            <summary>帳號設定</summary>
+            <div class="button-row">
+              <button type="button" class="button-secondary button-compact" onclick="openChangePassword(false)">修改密碼</button>
+              <button type="button" class="button-secondary button-compact" onclick="openLoginAlias()">登入名稱</button>
+              <button type="button" class="button-secondary button-compact" onclick="logout()">登出</button>
+            </div>
+          </details>
         </div>
         <div class="badge-list">
           <span class="badge">LINE webhook</span>
@@ -141,7 +144,7 @@
 
     <div id="workspaceTools" class="workspace-tools" hidden>
       <label for="workspaceView">選擇操作</label>
-      <select id="workspaceView" onchange="setWorkspaceView(this.value)"></select>
+      <select id="workspaceView" onchange="setWorkspaceView(this.value, true)"></select>
       <span id="workspaceViewHint" class="muted"></span>
     </div>
     <details id="actionResult" class="action-result" hidden>
@@ -1640,7 +1643,7 @@
       }
       workNav.hidden = resolved === 'pricing';
       workNav.innerHTML = '<strong>' + escapeHtml(groupName) + '</strong><p>選擇要處理的項目</p>' + (resolved === 'finance' ? '<button type="button" onclick="openFinanceLedger()">收支記帳／線上編輯 ↗</button>' : '') + panels.map((panel, index) =>
-        `<button type="button" onclick="setWorkspaceView(${index})" data-window-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
+        `<button type="button" onclick="setWorkspaceView(${index}, true)" data-window-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
       ).join('');
       if (document.body) {
       document.body.classList.toggle('pricing-window-mode', resolved === 'pricing');
@@ -1654,7 +1657,7 @@
       pricingWindowNav.hidden = resolved !== 'pricing';
       if (resolved === 'pricing') {
         pricingWindowNav.innerHTML = '<strong>計價與收支工作視窗</strong><p>選擇功能，於右側處理</p>' + panels.map((panel, index) =>
-          `<button type="button" onclick="setWorkspaceView(${index})" data-pricing-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
+          `<button type="button" onclick="setWorkspaceView(${index}, true)" data-pricing-view="${index}">${escapeHtml(panel.querySelector('h2')?.textContent || '操作')}</button>`
         ).join('');
       }
       }
@@ -1680,7 +1683,7 @@
       if (shouldScroll) window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
-    function setWorkspaceView(view) {
+    function setWorkspaceView(view, shouldScroll = false) {
       const panels = workspacePanels(state.workspace);
       if (!panels.length) return;
       const index = Math.max(0, Math.min(Number(view) || 0, panels.length - 1));
@@ -1701,6 +1704,7 @@
         panel.hidden = !visible;
         panel.classList.toggle("workspace-panel-active", visible);
       });
+      if (shouldScroll) panels[index].scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (panels[index]?.id === "managementReportsPanel" && !managementReports.loadingSources && !managementReports.sourcesLoaded) loadReportSources();
     }
 
